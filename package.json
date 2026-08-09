@@ -27,7 +27,7 @@
     "check:one-client": "tsx tools/check-one-client.ts",
     "sync:function": "tsx tools/sync-edge-function.ts",
     "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; for fn in analyse invite resolve-location; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'",
-    "package": "wxt build && cd .output/chrome-mv3 && zip -qr ../../rightmove-house-hunt.zip . && echo \"wrote rightmove-house-hunt.zip\"",
+    "package": "wxt build && cd .output/chrome-mv3 && zip -qr ../../house-hunt.zip . && echo \"wrote house-hunt.zip\"",
     "check:travel": "tsx tools/check-travel.ts",
     "check:rls": "tsx tools/check-rls.ts",
     "smoke:sweep": "tsx tools/smoke-sweep.ts",
