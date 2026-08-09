@@ -1,8 +1,8 @@
-# Privacy policy — Rightmove house hunt
+# Privacy policy — House hunt
 
 *Last updated: 9 August 2026*
 
-Rightmove house hunt is a private, invite-only Chrome extension for people renting a home
+House hunt is a private, invite-only Chrome extension for people renting a home
 together. This policy describes every piece of data it handles and why. It is written to be read,
 not to be survived.
 

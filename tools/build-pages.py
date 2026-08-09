@@ -69,8 +69,8 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Privacy policy — Rightmove house hunt</title>
-<meta name="description" content="What the Rightmove house hunt Chrome extension collects, why, and who can see it.">
+<title>Privacy policy — House hunt</title>
+<meta name="description" content="What the House hunt Chrome extension collects, why, and who can see it.">
 <style>{style}</style>
 </head>
 <body>

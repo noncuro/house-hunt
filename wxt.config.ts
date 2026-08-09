@@ -34,7 +34,7 @@ export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-react'],
   manifest: {
-    name: 'Rightmove house hunt',
+    name: 'House hunt',
     description: 'Travel times and shared verdicts on Rightmove listings.',
     icons: {
       16: '/icon/16.png',

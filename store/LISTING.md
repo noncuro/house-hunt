@@ -8,7 +8,7 @@ the keyboard. Visibility: **Unlisted**. Category: **Productivity**. Language: **
 ## Name
 
 ```
-Rightmove house hunt
+House hunt
 ```
 
 ## Summary (132 characters max — this is 108)
@@ -22,7 +22,7 @@ Commute times, floorplan facts and one shared verdict per flat, on the Rightmove
 ```
 Renting a place with someone else means the same three arguments on every listing: how long is it actually to work, how big is it really, and did we already say no to this one.
 
-Rightmove house hunt answers all three on the listing page itself.
+House hunt answers all three on the listing page itself.
 
 TRAVEL TIMES THAT ARE COMPARABLE
 Add the places that matter — work, the in-laws, the climbing gym — and every listing shows how long it takes to each on foot, by bike and by public transport. Transport times come from Transport for London and are all measured the same way, a weekday 09:00 departure, so two flats can honestly be compared. Hover any transport time to see which lines you would ride.
