@@ -403,12 +403,26 @@ function ProjectRows({ projects, activeId }: { projects: ProjectSummary[]; activ
    *
    *  A shortlist, a places list or a sweep left over from the hunt you switched away from is the
    *  failure the spec names outright: nothing from the previous project may remain on screen.
-   *  `clear()` rather than `invalidateQueries()` for the reason sign-out uses it — invalidation
-   *  leaves the old rows painted until the refetch lands, and those rows are another project's
-   *  flats. The reply carries the new state, so the shell does not have to ask again for it. */
+   *  Not `invalidateQueries()`: invalidation leaves the old rows painted until the refetch lands,
+   *  and those rows are another project's flats. The reply carries the new state, so the shell does
+   *  not have to ask again for it.
+   *
+   *  The order below is load-bearing, and getting it wrong is why this button did nothing at all.
+   *  `client.clear()` removes every query from the cache *without notifying its observers*, so the
+   *  mounted `useAuth` is left holding an orphaned query while the `setQueryData` after it builds a
+   *  fresh one that nothing is watching. Zero notifications, so the shell never re-renders: the
+   *  switch lands in the database and the screen keeps naming the hunt you just left. Sign-out runs
+   *  the same two lines and survives only because it is called from the component that reads the
+   *  auth query, so its own state change re-renders it and `useQuery` re-attaches on the way past.
+   *  This is a leaf, and gets no such rescue.
+   *
+   *  So: write the auth state into the query that already exists, which does notify, and *reset*
+   *  the rest rather than removing it. Reset keeps the observers attached and hands them
+   *  `undefined` before their refetch lands, which is what the spec asks for — the previous hunt's
+   *  flats are blanked rather than left painted. */
   function reload(next: AuthState) {
-    client.clear();
     client.setQueryData<AuthState>(shellKeys.auth, next);
+    void client.resetQueries({ predicate: (query) => query.queryKey[0] !== shellKeys.auth[0] });
   }
 
   const setActive = useMutation({

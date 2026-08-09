@@ -117,8 +117,14 @@ export function useSignOut() {
   return useMutation({
     mutationFn: () => ask({ type: 'auth:sign-out' }),
     onSuccess() {
-      client.clear();
+      // Same order, and for the same reason, as `reload` in Project.tsx: `clear()` removes queries
+      // without notifying their observers, so writing the auth state afterwards lands on a query
+      // nothing is watching. This one happens to work today only because it is called from the
+      // component that reads the auth query, which re-renders on the mutation's own state change
+      // and re-attaches on the way past. That is an accident of where it is called, not a
+      // property of the code, and it stops being true the moment sign-out moves into a menu.
       client.setQueryData<AuthState>(keys.auth, { status: 'signed-out' });
+      void client.resetQueries({ predicate: (query) => query.queryKey[0] !== keys.auth[0] });
     },
   });
 }
@@ -174,11 +180,17 @@ export function useRate(person: string | null) {
       // in quick succession runs three mutations at once; with a whole-list snapshot each, the
       // first one to fail would restore a list from before the other two were rated and silently
       // undo them. Roll back the one thing this mutation touched and nothing else.
+      //
+      // Matched on the property alone, never on `person`. A project holds ONE verdict per property
+      // — `person` is who last set it, not whose copy this is. Filtering by it meant that rating a
+      // flat somebody else had already rated appended a second verdict instead of replacing theirs,
+      // and everything downstream reads `verdicts[0]`: the card kept their rating and their colour,
+      // `groupOf` short-circuits on any 'no' so it stayed in the rejected pile, and `enthusiasm`
+      // summed both. It looked like the click had done nothing until the refetch landed.
       const before =
         client
           .getQueryData<ShortlistEntry[]>(keys.shortlist)
-          ?.find((e) => e.rightmoveId === rightmoveId)
-          ?.verdicts.find((v) => v.person === person) ?? null;
+          ?.find((e) => e.rightmoveId === rightmoveId)?.verdicts[0] ?? null;
 
       const optimistic: Verdict = {
         rightmoveId,
@@ -190,7 +202,7 @@ export function useRate(person: string | null) {
       client.setQueryData<ShortlistEntry[]>(keys.shortlist, (current) =>
         (current ?? []).map((entry) =>
           entry.rightmoveId === rightmoveId
-            ? { ...entry, verdicts: [...entry.verdicts.filter((v) => v.person !== person), optimistic] }
+            ? { ...entry, verdicts: [optimistic] }
             : entry,
         ),
       );
@@ -205,13 +217,7 @@ export function useRate(person: string | null) {
       client.setQueryData<ShortlistEntry[]>(keys.shortlist, (current) =>
         (current ?? []).map((entry) =>
           entry.rightmoveId === context.rightmoveId
-            ? {
-                ...entry,
-                verdicts: [
-                  ...entry.verdicts.filter((v) => v.person !== person),
-                  ...(context.before ? [context.before] : []),
-                ],
-              }
+            ? { ...entry, verdicts: context.before ? [context.before] : [] }
             : entry,
         ),
       );

@@ -100,7 +100,7 @@ export function Detail({
         {!entry.postcode ? (
           <p className="dim">No postcode on this listing.</p>
         ) : places.length === 0 ? (
-          <p className="dim">Add places in the extension popup.</p>
+          <p className="dim">Add places in Settings.</p>
         ) : travel === null ? (
           <p className="dim working">Working…</p>
         ) : (

@@ -114,9 +114,17 @@ async function readProfile(userId: string, fallbackEmail: string): Promise<Sessi
 }
 
 async function readMemberships(): Promise<ProjectSummary[]> {
+  // Filtered by user here, not left to RLS. `read_project_member` is `is_member(project_id) OR
+  // is_admin()`, so for an admin this returns *everybody's* memberships — and the picker then
+  // lists hunts they are not in, each with an Open button. Switching to one succeeds, because the
+  // write is to the admin's own profile row, and every scoped query afterwards is denied; that
+  // surfaces as an empty shortlist rather than as an error. RLS is the ceiling on what a query is
+  // allowed to return, never the definition of what this one means.
+  const session = await requireSession();
   const { data, error } = await supabase
     .from('project_member')
     .select('role, project:project_id (id, name, monthly_cap_usd, max_members)')
+    .eq('user_id', session.user.id)
     .order('joined_at');
   fail('reading your projects', error);
   return (data ?? []).flatMap((row: any) => {
