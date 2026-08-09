@@ -1,0 +1,9 @@
+
+/* A caveat that belongs to a whole section rather than to any one row in it — today, that every
+   public-transport number is measured at the same weekday hour. Said once under the heading
+   instead of on each row, where three copies of the same sentence would crowd out the numbers. */
+.rm-section-note {
+  margin: -2px 0 8px;
+  font-size: 11px;
+  color: #93a1af;
+}

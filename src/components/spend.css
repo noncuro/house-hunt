@@ -1,0 +1,31 @@
+/* Money states, in both surfaces. Deliberately not the flag palette: ⛔ red and ⚠️ amber mean
+   something specific about a *flat* (don't bother viewing / raise it at the viewing), and a spent
+   budget is not a fact about the property. It reads as a notice, not as a verdict. */
+
+.rm-spend-warning {
+  margin: 8px 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #fdf7ec;
+  border: 1px solid #ecdcbd;
+  color: #7a5c22;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.rm-capped {
+  margin: 8px 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: #f2f5f8;
+  border: 1px solid #dbe3ea;
+  color: #3d4c5a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.rm-capped-rest {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #7b8a99;
+}

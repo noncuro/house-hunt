@@ -1,0 +1,31 @@
+/* Flags, shared by the panel, the shortlist cards and the compare table — see Flags.tsx. */
+
+.rm-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+/* inline-flex so a claim can never be split from its own confidence mark by the container's gap. */
+.rm-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Red is "do not bother viewing": no bath, nowhere to sit outside. */
+.rm-flag-red {
+  color: #b23a48;
+}
+
+/* Amber is "raise it at the viewing". The same amber the panel already uses for a missing
+   floorplan, so the two kinds of caution read as one thing rather than two. */
+.rm-flag-yellow {
+  color: #8a5a12;
+}
+
+.rm-flag-good {
+  color: #1a7f5a;
+}

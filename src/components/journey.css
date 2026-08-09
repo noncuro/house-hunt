@@ -1,0 +1,108 @@
+/* Journey rendering, shared by the panel and the shortlist page — see Journey.tsx. */
+
+/* A transit journey: how long it takes, which lines you ride, and what it costs you in changes
+   and walking. One row per distinct route — see Routes in Journey.tsx. */
+/* A grid, not a wrapping row. The old version let a long journey's chips wrap into the next
+   route's chips with nothing between them, so two options read as one heap. Here every route
+   occupies its own row and the totals line up in a column you can read straight down, which is
+   the comparison the tooltip exists for. */
+.rm-routes {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 10px;
+  align-items: baseline;
+}
+
+.rm-route {
+  display: contents;
+}
+
+.rm-route-total {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  /* Right-aligned so 1h 2m and 1h 13m agree on where their digits are. */
+  text-align: right;
+}
+
+/* The lines and the summary share the second column, and the summary drops below the lines when
+   the ride is long rather than pushing the row wider than the tooltip. */
+.rm-route-lines {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.rm-route-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rm-route-arrow {
+  color: #93a1af;
+  font-size: 12px;
+}
+
+.rm-route-quiet {
+  grid-column: 2;
+  font-size: 11px;
+  color: #93a1af;
+  font-variant-numeric: tabular-nums;
+}
+
+.rm-leg-walk {
+  color: #6b7a89;
+  font-variant-numeric: tabular-nums;
+}
+
+.rm-leg-line {
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.rm-leg-mins {
+  opacity: 0.8;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One map button per row: the destination is the same whichever way you'd travel. */
+.rm-maps {
+  background: none;
+  border: none;
+  padding: 0 0 0 2px;
+  color: #93a1af;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.rm-maps:hover {
+  color: #4a7fb5;
+}
+
+.rm-modes {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  white-space: nowrap;
+}
+
+.rm-mode {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The transit basis, as an aside inside a section heading. The headings are uppercase, small and
+   grey; this has to read as a footnote *within* one rather than as part of the title, so it drops
+   the letter-spacing and takes a dotted underline to say it is hoverable. */
+.rm-basis {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  cursor: help;
+}

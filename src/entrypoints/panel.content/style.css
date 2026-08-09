@@ -1,0 +1,384 @@
+/* Everything lives inside a shadow root, so Rightmove's CSS can't leak in and ours can't leak
+   out. Class names are ours, never theirs — their hashed CSS-module names change every deploy. */
+
+.rm-panel,
+.rm-reopen {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483000;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: #12263a;
+}
+
+.rm-panel {
+  width: 320px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #d8e0e8;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(18 38 58 / 18%);
+  padding: 12px 14px 14px;
+}
+
+.rm-reopen {
+  background: #00deb6;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgb(18 38 58 / 22%);
+}
+
+.rm-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.rm-address {
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+/* One fact per line. Wrapped into a row they ran together into a paragraph you had to parse;
+   stacked, each is a thing you either read or skip. */
+.rm-facts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  margin-top: 4px;
+  color: #4a5b6c;
+}
+
+/* Facts that belong together share a line; everything else gets its own. */
+.rm-fact-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rm-collapse {
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: #7b8a99;
+  padding: 0 2px;
+}
+
+.rm-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 2px;
+}
+
+/* The hub fix sits tight under the address rather than in the chip row below it — the dial is
+   already a strong enough mark that it doesn't need the gap the chips get. */
+.rm-row-hub {
+  margin: 6px 0 0;
+}
+
+.rm-chip {
+  border: 1px solid #d8e0e8;
+  border-radius: 999px;
+  background: #f5f8fa;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: inherit;
+}
+
+.rm-chip-action {
+  cursor: pointer;
+}
+
+.rm-chip-action:hover {
+  background: #e8f0f5;
+}
+
+/* A missing floorplan is a finding, not a gap — it should read as a warning, not as absence. */
+.rm-chip-warn {
+  background: #fdf3e6;
+  border-color: #f0d3a8;
+  color: #8a5a12;
+  font-weight: 650;
+}
+
+
+.rm-retry {
+  background: none;
+  border: 1px solid currentcolor;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font: inherit;
+  font-size: 11px;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* A price cut is the one listing-history event worth catching your eye. */
+.rm-reduced {
+  color: #1a7f5a;
+  font-weight: 650;
+}
+
+.rm-station {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.rm-lines {
+  display: inline-flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* Official TfL line colours, set inline from the line id. Bordered so Northern's black and the
+   Circle's yellow both stay visible against white. */
+.rm-line-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 15%);
+}
+
+/* A claim the model read off the photos, and the rings that say how sure it was. They are one
+   thing on the line, so the row's own 10px gap can't separate a claim from its own mark. The
+   dot that used to do this job is gone — see Confidence.tsx. */
+.rm-claim {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.rm-section {
+  margin-top: 12px;
+  border-top: 1px solid #eef2f5;
+  padding-top: 8px;
+}
+
+.rm-section h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #7b8a99;
+  font-weight: 650;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* A caveat that belongs to the whole section, sitting in its heading rather than above its rows.
+   As a paragraph it was the largest thing in the section and pushed every number down. */
+.rm-section-note {
+  font-weight: 400;
+}
+
+.rm-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.rm-value {
+  color: #4a5b6c;
+  text-align: right;
+  flex-shrink: 0;
+  max-width: 62%;
+  white-space: nowrap;
+}
+
+.rm-bad {
+  color: #b23a48;
+}
+
+/* The one place we say something is better than fine — a main room worth the rent. */
+.rm-good {
+  color: #1a7f5a;
+  font-weight: 650;
+}
+
+.rm-empty,
+.rm-dim {
+  color: #93a1af;
+}
+
+/* Loading states pulse, because a still "Working…" is indistinguishable from a stuck one. */
+.rm-working {
+  animation: rm-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes rm-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Marks a size parsed out of prose rather than published as data — worth less trust. */
+.rm-approx {
+  border-bottom: 1px dotted #93a1af;
+}
+
+/* The rating buttons themselves (`.rm-ratings`, `.rm-rate*`) live with the component that renders
+   them, in components/ratings.css, so the panel and the shortlist cannot drift apart on what a
+   verdict looks like. Only what is particular to this panel stays here. */
+
+/* Declared after `.rm-panel` on purpose: both selectors are one class deep, so source order is
+   what decides the background. Move these above it and the tint silently stops working.
+   The verdict tints the whole panel, so which pile a place is in is legible before you read a
+   word of it. Kept faint — this is a background, not a highlight. */
+.rm-mood-love {
+  background: #f2fbf7;
+  border-color: #bfe6d4;
+}
+
+.rm-mood-maybe {
+  background: #fffcf4;
+  border-color: #efe0bd;
+}
+
+.rm-mood-no {
+  background: #f7f8f9;
+}
+
+/* A place one of you rejected reads as closed at a glance. The decision bar keeps its colour so
+   changing your mind is still one click — greying that out would make it look broken. */
+.rm-panel-rejected > *:not(.rm-decide) {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+/* The decision stays reachable from anywhere in a panel that scrolls. */
+.rm-decide {
+  position: sticky;
+  bottom: -14px;
+  margin: 12px -14px -14px;
+  padding: 10px 14px 12px;
+  background: inherit;
+  border-top: 1px solid #e6ecf1;
+  backdrop-filter: blur(2px);
+}
+
+.rm-note-add {
+  margin-top: 8px;
+}
+
+
+/* An existing note is text you can click, not a form control sitting open. */
+.rm-note-text {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  text-align: left;
+  background: #f5f8fa;
+  border: 1px solid #e3eaf0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  cursor: text;
+  white-space: pre-wrap;
+}
+
+.rm-note-text:hover {
+  border-color: #c7d5e0;
+}
+
+.rm-note {
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid #d8e0e8;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  resize: vertical;
+  box-sizing: border-box;
+  color: inherit;
+}
+
+.rm-error {
+  margin-top: 10px;
+  background: #fdf0f1;
+  border: 1px solid #f0c8cc;
+  color: #b23a48;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+}
+
+/* Line names as pills in their own colour, so the dot in the row and the name in the tooltip
+   teach each other. Deliberately not grouped by mode — what matters is which lines you can get
+   on, not who runs them. */
+.rm-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rm-line-pill {
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* The price leads; how long it has sat is context beside it, not a headline of its own. */
+.rm-price {
+  font-weight: 650;
+  color: #12263a;
+}
+
+.rm-since {
+  font-size: 11px;
+  align-self: center;
+}
+
+/* Signed out, or signed in with no project chosen. One line, sized like a line — the full panel
+   chrome around a single sentence would read as a panel that failed to load its contents. */
+.rm-signed-out {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rm-signed-out-how {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #7b8a99;
+}
+
+/* Failures interrupt. An optimistic UI has already told you the save worked, so the correction
+   has to be impossible to miss, and an error one does not time out. */
+.rm-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483002;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 320px;
+}
+
+/* The look of a toast is shared — see components/toast.css. Only the stack's geometry is
+   the panel's own: it floats over Rightmove's page, so it needs their z-index ceiling. */
+

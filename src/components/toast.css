@@ -1,0 +1,51 @@
+/* What a toast looks like, in one place.
+ *
+ *  This was copied into the panel's stylesheet and the shortlist's, and a third view — the sweep
+ *  panel — was about to make it three. The copies had already drifted: the shortlist's had lost
+ *  the entrance animation, so the same component slid in on a listing page and appeared abruptly
+ *  on the shortlist. Imported by Toast.tsx, the way Hint.tsx imports hint.css, so anywhere that
+ *  renders the component gets the look with it.
+ *
+ *  Only the *appearance* lives here. Where the stack sits and how wide it is stays with each
+ *  view, because a shadow-root panel pinned over Rightmove and a full page of our own genuinely
+ *  want different geometry and different z-indexes. Each stylesheet keeps its own `.rm-toasts`. */
+
+.rm-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 10px 26px rgb(18 38 58 / 26%);
+  animation: rm-toast-in 160ms ease-out;
+}
+
+@keyframes rm-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.rm-toast-error {
+  background: #b23a48;
+  color: #fff;
+}
+
+.rm-toast-info {
+  background: #12263a;
+  color: #f4f8fb;
+}
+
+.rm-toast-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}

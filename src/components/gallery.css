@@ -1,0 +1,96 @@
+/* Moved out of the shortlist's stylesheet when the gallery became shared. It now also opens over
+   Rightmove itself, from the panel, where the shortlist's stylesheet does not exist — so the
+   styles travel with the component. */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  /* Above everything, including the panel that opened it. On the shortlist a small number would
+     do; in the panel it has to clear the near-ceiling stack the panel uses to sit over Rightmove
+     in the first place, and 2000 put the gallery *behind* the panel that opened it. One number
+     rather than one per view, because the two views cannot then disagree about which is in front. */
+  z-index: 2147483003;
+  background: rgb(10 20 30 / 94%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: lightbox-in 140ms ease-out;
+}
+
+@keyframes lightbox-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Floorplans are greyscale-plus-alpha PNGs: black line work on nothing at all. Over a dark
+   backdrop the plan is very nearly invisible, which is the same trap that made the model call
+   one "almost entirely obscured" until png.ts flattened it. Photos are opaque, so the white
+   costs them nothing. */
+.lightbox-image {
+  background: #fff;
+  max-width: 88vw;
+  max-height: 84vh;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 45%);
+}
+
+.lightbox-close,
+.lightbox-step {
+  position: absolute;
+  background: rgb(255 255 255 / 12%);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  border-radius: 999px;
+  line-height: 1;
+}
+
+.lightbox-close {
+  top: 18px;
+  right: 22px;
+  width: 36px;
+  height: 36px;
+  font-size: 22px;
+}
+
+.lightbox-step {
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  font-size: 28px;
+}
+
+.lightbox-prev {
+  left: 18px;
+}
+
+.lightbox-next {
+  right: 18px;
+}
+
+.lightbox-close:hover,
+.lightbox-step:hover {
+  background: rgb(255 255 255 / 24%);
+}
+
+.lightbox-bar {
+  position: absolute;
+  bottom: 20px;
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  color: #fff;
+  font-size: 13px;
+  background: rgb(0 0 0 / 35%);
+  padding: 6px 14px;
+  border-radius: 999px;
+}
+
+.lightbox-bar .dim {
+  color: rgb(255 255 255 / 65%);
+}
+
+/* How long it has sat is context beside the price, not a headline of its own — same as the
+   panel. */

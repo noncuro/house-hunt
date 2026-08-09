@@ -1,0 +1,63 @@
+/* Moved out of the panel's own stylesheet when Stations.tsx became shared. The markup travels
+   with its styles, or the shortlist gets the component and none of the layout. */
+
+.rm-station {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.rm-lines {
+  display: inline-flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* Official TfL line colours, set inline from the line id. Bordered so Northern's black and the
+   Circle's yellow both stay visible against white. */
+.rm-line-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 15%);
+}
+
+/* Line names as pills in their own colour, so the dot in the row and the name in the tooltip
+   teach each other. Deliberately not grouped by mode — what matters is which lines you can get
+   on, not who runs them. */
+.rm-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rm-line-pill {
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* The row itself, and the greys either side of it. The panel defines these too, for everything
+   else it lays out; repeated here so the shortlist gets a station list that looks like one. */
+.rm-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.rm-value {
+  color: #4a5b6c;
+  text-align: right;
+  flex-shrink: 0;
+  max-width: 62%;
+  white-space: nowrap;
+}
+
+.rm-empty,
+.rm-dim {
+  color: #93a1af;
+}

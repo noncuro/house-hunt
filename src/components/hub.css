@@ -1,0 +1,77 @@
+/* The hub fix, shared by the panel and the shortlist page — see Hub.tsx.
+
+   Self-contained on purpose: `rm-dim` and `rm-approx` are defined in the panel's stylesheet and
+   nowhere else, so a component that leans on them renders grey in the panel and black on the
+   shortlist. Everything here is `rm-hub-`. */
+
+.rm-hub {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+/* The dial has to survive a 320px panel, so it is sized in the same range as the text beside it
+   and drawn with only three marks — ring, north tick, needle. Anything finer turns to mud. */
+.rm-hub-dial {
+  flex: none;
+  display: block;
+}
+
+.rm-hub-ring {
+  fill: none;
+  stroke: #c3ccd5;
+  stroke-width: 1.4;
+}
+
+.rm-hub-north {
+  stroke: #93a1af;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.rm-hub-needle {
+  fill: #4a7fb5;
+}
+
+/* The blunt end of the needle, kept faint: it says which way is "from" without competing with
+   the point, which is the thing being read. */
+.rm-hub-tail {
+  fill: #c3ccd5;
+}
+
+.rm-hub-name {
+  font-variant-numeric: tabular-nums;
+}
+
+.rm-hub-none {
+  color: #93a1af;
+}
+
+/* A still "placing…" is indistinguishable from a stuck one, and the panel's own pulse is defined
+   in its stylesheet alone — so this carries its own. */
+.rm-hub-working {
+  animation: rm-hub-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes rm-hub-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* A failed read of the project's neighbourhoods, which must not look like the grey of "nothing
+   nearby" — they render in the same slot and mean opposite things. Same red the panel and the
+   shortlist both use for a broken read, spelled here because neither stylesheet reaches both. */
+.rm-hub-failed {
+  color: #b23a48;
+}
+
+/* Marks a fix taken from Rightmove's deliberately fuzzed pin rather than from the postcode. */
+.rm-hub-approx {
+  border-bottom: 1px dotted #93a1af;
+}

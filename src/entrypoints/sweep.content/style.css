@@ -1,0 +1,340 @@
+/* The sweep panel. Rendered into a shadow root, so none of this reaches Rightmove's own page —
+   the few rules that do are injected separately from index.tsx.
+
+   It sits bottom-left rather than top-right, which is where the listing panel goes. That is not
+   an aesthetic choice: on a search page the right-hand column is Rightmove's map and filters, and
+   the two panels are never on screen together anyway, so the corner is free and the muscle memory
+   stays unambiguous. */
+
+.rm-sweep {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 2147483000;
+  width: 300px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 12px 14px 14px;
+  border-radius: 12px;
+  background: #fff;
+  color: #12263a;
+  box-shadow: 0 12px 34px rgb(18 38 58 / 30%);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.rm-sweep * {
+  box-sizing: border-box;
+}
+
+.rm-sweep-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rm-sweep-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.rm-sweep-hide {
+  background: none;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: #5b6b7b;
+}
+
+.rm-sweep-collapsed {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 2147483000;
+}
+
+.rm-sweep-collapsed button {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: #12263a;
+  color: #fff;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgb(18 38 58 / 32%);
+}
+
+/* --- the readiness signal -------------------------------------------------------------- */
+
+/* Loud on purpose. This is the one thing on the panel that has to be legible without reading:
+   turning the page before the write has landed loses a page of sightings with no error anywhere. */
+.rm-sweep-ready {
+  margin: 10px 0;
+  padding: 9px 11px;
+  border-radius: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.rm-sweep-ready strong {
+  font-size: 13px;
+}
+
+.rm-sweep-ready-yes {
+  background: #e6f6ef;
+  color: #115c43;
+  box-shadow: inset 0 0 0 1px #1a7f5a;
+}
+
+.rm-sweep-ready-wait {
+  background: #f1f4f7;
+  color: #5b6b7b;
+}
+
+.rm-sweep-ready-no {
+  background: #fdecee;
+  color: #8d2733;
+  box-shadow: inset 0 0 0 1px #b23a48;
+  font-weight: 650;
+}
+
+/* --- counts ----------------------------------------------------------------------------- */
+
+.rm-sweep-counts {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  color: #5b6b7b;
+}
+
+.rm-sweep-counts strong {
+  color: #12263a;
+  font-size: 14px;
+}
+
+.rm-sweep-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  color: #35485c;
+}
+
+/* --- the paced opener ------------------------------------------------------------------- */
+
+.rm-sweep-go {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  border: none;
+  border-radius: 9px;
+  padding: 9px 11px;
+  background: #12263a;
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rm-sweep-go:hover {
+  background: #1c3c5a;
+}
+
+.rm-sweep-go small {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.rm-sweep-note {
+  margin: 0 0 8px;
+  color: #5b6b7b;
+}
+
+/* Still waiting on an answer, and saying so. A still line is indistinguishable from a stuck one,
+   which is how "reading the neighbourhoods" comes to read as "there are none". */
+.rm-sweep-working {
+  animation: rm-sweep-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes rm-sweep-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* --- finishing the sweep ---------------------------------------------------------------- */
+
+.rm-sweep-finish {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e3e9ee;
+}
+
+.rm-sweep-finish button {
+  border: 1px solid #12263a;
+  border-radius: 9px;
+  padding: 7px 11px;
+  background: #fff;
+  color: #12263a;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.rm-sweep-finish button:disabled {
+  border-color: #d3dbe2;
+  color: #9aa8b5;
+  cursor: not-allowed;
+}
+
+.rm-sweep-finish small {
+  color: #5b6b7b;
+}
+
+.rm-sweep-done {
+  margin: 10px 0 0;
+  color: #115c43;
+  font-weight: 650;
+}
+
+/* --- warnings and errors ---------------------------------------------------------------- */
+
+.rm-sweep-warn {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff6e5;
+  color: #6b4c07;
+  box-shadow: inset 0 0 0 1px #e0b155;
+}
+
+.rm-sweep-broken {
+  box-shadow: 0 12px 34px rgb(18 38 58 / 30%), inset 0 0 0 2px #b23a48;
+}
+
+.rm-sweep-broken p {
+  margin: 6px 0 0;
+}
+
+/* --- the hub list ------------------------------------------------------------------------ */
+
+.rm-sweep-hubs {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e3e9ee;
+}
+
+.rm-sweep-hubs summary {
+  cursor: pointer;
+  color: #5b6b7b;
+  font-weight: 650;
+}
+
+.rm-sweep-hubs ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rm-sweep-hubs li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rm-sweep-hubs a {
+  color: #12263a;
+  font-weight: 650;
+}
+
+.rm-sweep-hubs small {
+  color: #7d8b98;
+  white-space: nowrap;
+}
+
+.rm-sweep-here a {
+  color: #1a7f5a;
+}
+
+.rm-sweep-nourl {
+  color: #9aa8b5;
+}
+
+/* Where the toast stack sits. The look of a toast itself is shared — components/toast.css. */
+.rm-toasts {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 2147483002;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 300px;
+}
+
+/* The panel's own pager. The primary action once a page is recorded, and deliberately the largest
+   thing under the readiness line: paging with Rightmove's own control leaves __NEXT_DATA__
+   describing the page you just left, which the panel then has to refuse to record. A full
+   navigation has nothing to go stale. */
+.rm-sweep-next {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: #12263a;
+  border-radius: 8px;
+  color: #fff;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.rm-sweep-next:hover {
+  background: #1c3a56;
+}
+
+.rm-sweep-next small {
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+/* A reload offered inside a sentence, so it reads as the way out of the warning rather than as a
+   separate control to go looking for. */
+.rm-sweep-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 650;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

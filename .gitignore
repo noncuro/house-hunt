@@ -1,0 +1,22 @@
+node_modules/
+.output/
+.wxt/
+stats.html
+
+# Saved Rightmove pages for the smoke harness. Not committed: their content is theirs.
+.fixtures/
+
+# The admin address and the project name for one deployment. Copy supabase/seed.example.sql to
+# this path and edit it; the example is what is committed.
+supabase/seed.sql
+
+# Scratch analysis run against real listings.
+research/
+
+# Secrets. This rule used to live in the parent repository's .gitignore and did not come with the
+# split — for a while this repo would have committed a database password on the first `git add -A`.
+# .env.example is the committed template and is deliberately un-ignored.
+.env
+.env.*
+!.env.example
+supabase/.env

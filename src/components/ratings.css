@@ -1,0 +1,99 @@
+/* The look of a rating, shared by the panel's shadow root and the shortlist page. It lives with
+   the component rather than in either surface's stylesheet, because the two of them drifted apart
+   on the wording of a verdict once already and the styling drifted with it. */
+
+.rm-verdict-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.rm-verdict-none {
+  color: #93a1af;
+}
+
+.rm-verdict-rating {
+  font-weight: 650;
+}
+
+.rm-rating-no {
+  color: #b23a48;
+}
+
+.rm-rating-maybe {
+  color: #8a6d2f;
+}
+
+.rm-rating-love {
+  color: #1a7f5a;
+}
+
+/* Who set it, and when. Quieter than the rating but never absent — the attribution is the whole
+   mitigation for one shared verdict, so it is not allowed to be a hover-only fact. */
+.rm-verdict-by {
+  color: #93a1af;
+  font-size: 11px;
+}
+
+.rm-ratings {
+  display: flex;
+  gap: 4px;
+}
+
+.rm-rate {
+  flex: 1;
+  border: 1px solid #d8e0e8;
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 4px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* In a row shared with the note field the buttons keep their own width; stretched to a third of
+   a metre each they read as the page rather than as a control. */
+.rm-ratings-compact {
+  flex: 0 0 auto;
+}
+
+.rm-ratings-compact .rm-rate {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.rm-rate:hover:not(:disabled) {
+  background: #f5f8fa;
+}
+
+.rm-rate:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.rm-rate-on {
+  background: #12263a;
+  border-color: #12263a;
+  color: #fff;
+}
+
+/* A rating that has been clicked but not yet acknowledged by the database. It reads as pressed
+   straight away — waiting on a round trip to respond to a click feels broken — and the stripe
+   says the other laptop hasn't seen it yet. */
+.rm-rate-pending {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgb(255 255 255 / 22%) 0 6px,
+    transparent 6px 12px
+  );
+  animation: rm-pending 700ms linear infinite;
+}
+
+@keyframes rm-pending {
+  to {
+    background-position: 17px 0;
+  }
+}

@@ -1,0 +1,32 @@
+/* The confidence bars, shared by the panel and the shortlist page — see Confidence.tsx. */
+
+.rm-cf {
+  display: inline-flex;
+  align-items: center;
+  /* Every claim it marks sits on a text line, and a mark that rides the baseline sits noticeably
+     high against lower-case words. */
+  vertical-align: -2px;
+  flex: none;
+  cursor: help;
+}
+
+.rm-cf-bars {
+  flex: none;
+}
+
+/* Reached and not-reached, and the second is why this works.
+ *
+ *  The rings this replaced filled from the centre out, so the mark shrank as confidence fell and
+ *  a low reading came out as a speck — invisible exactly when it mattered most. Here the unreached
+ *  bars are still drawn, in grey, so the footprint is identical at every level and a single blue
+ *  bar reads as "one of three" rather than as a stray dot.
+ *
+ *  Grey rather than a paler blue: the empty bars are the scale, not a weaker version of the
+ *  answer, and a blue ramp would invite reading the shade instead of counting the bars. */
+.rm-cf-on {
+  fill: #2e648f;
+}
+
+.rm-cf-off {
+  fill: #cfd9e2;
+}

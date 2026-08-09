@@ -1,0 +1,71 @@
+/* Injected into the page (not a shadow root) because it restyles Rightmove's own cards. Every
+   selector is namespaced under .rm- so nothing of theirs is touched by accident. */
+
+.rm-verdict {
+  position: relative;
+}
+
+.rm-verdict-bar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.rm-pill {
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.5;
+  color: #fff;
+  background: #12263a;
+  border: none;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgb(18 38 58 / 35%);
+}
+
+.rm-pill-no {
+  background: #b23a48;
+}
+
+.rm-pill-love {
+  background: #1a7f5a;
+}
+
+.rm-pill-maybe {
+  background: #7b8a99;
+}
+
+/* The only interactive thing we add — everything else on the card is read-only. */
+.rm-pill-open {
+  background: #fff;
+  color: #12263a;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.rm-pill-open:hover {
+  background: #00deb6;
+}
+
+/* Rejected listings are dimmed rather than hidden — you can still see what you said no to. */
+.rm-verdict-no {
+  opacity: 0.42;
+  filter: grayscale(0.7);
+}
+
+.rm-verdict-no:hover {
+  opacity: 1;
+  filter: none;
+}
+
+.rm-verdict-love {
+  outline: 2px solid #1a7f5a;
+  outline-offset: -2px;
+  border-radius: 8px;
+}

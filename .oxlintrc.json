@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "react",
+    "typescript",
+    "unicorn",
+    "oxc"
+  ],
+  "env": {
+    "browser": true,
+    "es2024": true
+  },
+  "ignorePatterns": [
+    ".output",
+    ".wxt",
+    "node_modules",
+    ".fixtures",
+    ".working",
+    "supabase/functions"
+  ],
+  "rules": {
+    "no-unused-vars": [
+      "warn",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_"
+      }
+    ],
+    "no-console": "off",
+    "eqeqeq": "warn",
+    "no-await-in-loop": "off",
+    "typescript/no-explicit-any": "warn",
+    "react/exhaustive-deps": "warn",
+    "react/rules-of-hooks": "error",
+    "unicorn/prefer-node-protocol": "off",
+    "unicorn/no-null": "off"
+  },
+  "overrides": [
+    {
+      "files": [
+        "tools/**",
+        "server/**"
+      ],
+      "env": {
+        "node": true
+      },
+      "rules": {
+        "no-console": "off",
+        "typescript/no-explicit-any": "off"
+      }
+    }
+  ]
+}

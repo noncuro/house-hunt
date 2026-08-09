@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy — Rightmove house hunt</title>
+<meta name="description" content="What the Rightmove house hunt Chrome extension collects, why, and who can see it.">
+<style>:root {
+  --ink: #16232e;
+  --muted: #5b6b7a;
+  --rule: #e2e8ee;
+  --accent: #1a7f5a;
+  --page: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --ink: #e6edf3; --muted: #9aa9b7; --rule: #2a3742; --accent: #4cc79b; --page: #131a21; }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto; padding: 48px 24px 96px; max-width: 46rem; background: var(--page); color: var(--ink);
+  font: 17px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 4px; letter-spacing: -0.015em; }
+h2 {
+  font-size: 1.15rem; margin: 40px 0 12px; padding-top: 20px; border-top: 1px solid var(--rule);
+  letter-spacing: -0.01em;
+}
+p, li { color: var(--ink); }
+em { color: var(--muted); font-style: normal; font-size: 0.92rem; }
+strong { font-weight: 650; }
+code {
+  font: 0.875em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--rule);
+  padding: 0.12em 0.36em; border-radius: 4px;
+}
+ul { padding-left: 1.25rem; }
+li { margin: 6px 0; }
+table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 0.94rem; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 650; }
+td:first-child { white-space: nowrap; color: var(--accent); }
+.wrap { overflow-x: auto; }
+footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.9rem; }
+a { color: var(--accent); }</style>
+</head>
+<body>
+<h1>Privacy policy — Rightmove house hunt</h1>
+<p><em>Last updated: 9 August 2026</em></p>
+<p>Rightmove house hunt is a private, invite-only Chrome extension for people renting a home together. This policy describes every piece of data it handles and why. It is written to be read, not to be survived.</p>
+<h2>Who runs it</h2>
+<p>An individual, not a company. The extension is not a company product and is not sold. There are no adverts, no analytics, no tracking pixels and no third-party trackers of any kind.</p>
+<h2>What the extension collects</h2>
+<p><strong>Your email address.</strong> It is stored so we know who you are between sessions and so your ratings can say who set them. The extension never sends you email — the address is an identifier here, not a channel.</p>
+<p><strong>Your password.</strong> You choose one when you redeem your invitation. It is handled by Supabase Auth, which stores it as a salted bcrypt hash; the plaintext exists only in transit over HTTPS while you are signing in, and is never written to a log or to any table. Because no email is ever sent, there is no self-service reset link: if you forget it, whoever runs your house hunt sets a new one for you and tells you what it is.</p>
+<p><strong>Your display name</strong>, if you set one. It appears next to ratings you leave.</p>
+<p><strong>The listings you open, and what you say about them.</strong> When you open a Rightmove listing with the extension running, it records the listing&#x27;s public details — address, price, bedrooms, floor area, photograph URLs, nearest stations — along with anything you add: your rating, your notes, and the places you measure commutes against (for example a work address you enter yourself).</p>
+<p><strong>Nothing else.</strong> The extension does not read pages other than Rightmove listing and search pages, does not see your browsing history, does not read your other tabs, and has no access to any other site.</p>
+<h2>What it does not do</h2>
+<ul><li>It does not crawl Rightmove. It reads only pages you yourself opened.</li><li>It does not copy or re-host Rightmove&#x27;s photographs. Images are displayed from Rightmove&#x27;s own servers by URL.</li><li>It does not sell, rent, or share your data with anyone.</li><li>It does not use your data to train any model.</li><li>It does not show adverts or profile you for advertising.</li></ul>
+<h2>Who can see your data</h2>
+<p>Only the people in your house hunt. A &quot;house hunt&quot; is a private group of up to six people that you join by invitation. Access is enforced in the database itself, by row-level security, not merely in the interface: a signed-in person can read the ratings, notes and saved places of their own house hunt and of no other.</p>
+<p>One category is deliberately shared more widely. The automated description of a listing&#x27;s photographs — its room sizes, whether it has outdoor space, how much natural light — is stored against the listing rather than against your group, so that if two households look at the same flat it is analysed once instead of twice. That record holds no opinion, no name and no note; it is a description of a public advertisement.</p>
+<h2>Where it is stored, and who processes it</h2>
+<ul><li><strong>Supabase</strong> (Amazon Web Services, London region, <code>eu-west-1</code>) hosts the database and the sign-in system. Your data stays in the United Kingdom.</li><li><strong>OpenAI</strong> receives listing photographs and listing descriptions in order to produce the automated summary above. It receives no personal data: no name, no email, no rating, no note. This is done through OpenAI&#x27;s API, which does not train on data submitted through it.</li><li><strong>Transport for London</strong> and <strong>postcodes.io</strong> receive a postcode and a destination in order to return a journey time. They receive no identifying information.</li></ul>
+<h2>How long it is kept</h2>
+<p>Your listings, ratings and notes are kept until you delete them or ask for your account to be removed. Once removal is asked for, everything associated with you is deleted, in full, within 30 days.</p>
+<h2>Your rights</h2>
+<p>You can ask to see everything held about you, correct it, export it, or have it deleted, and every such request is honoured. If you are in the UK or the EU you may also complain to your data protection authority; in the UK that is the Information Commissioner&#x27;s Office.</p>
+<h2>Permissions the extension asks for, and why</h2>
+<div class="wrap"><table><thead><tr><th>Permission</th><th>Why</th></tr></thead><tbody><tr><td><code>storage</code></td><td>Keeps your sign-in session and your column choices on your own machine.</td></tr><tr><td><code>tabs</code></td><td>Opens listings one at a time when you ask it to work through a search, so it can pace itself rather than opening forty tabs at once.</td></tr><tr><td><code>alarms</code></td><td>Wakes the extension&#x27;s background worker after Chrome has shut it down, so your session survives and you are not asked to sign in every few days.</td></tr><tr><td>Access to <code>rightmove.co.uk</code></td><td>Reads the listing page you are looking at, and adds the panel to it. Limited to listing and search pages.</td></tr><tr><td>Access to <code>api.tfl.gov.uk</code></td><td>Journey times by tube, bus, bike and on foot.</td></tr><tr><td>Access to <code>api.postcodes.io</code></td><td>Turns a UK postcode into coordinates.</td></tr><tr><td>Access to the Supabase project</td><td>The extension&#x27;s own database and sign-in.</td></tr></tbody></table></div>
+<h2>Children</h2>
+<p>The extension is not intended for, and is not offered to, anyone under 18.</p>
+<h2>Changes</h2>
+<p>If this policy changes materially, the date at the top changes. Nothing here sends email, so there is no notification to expect: the current version is always the one on this page, and every past version is visible in the history of the repository this file lives in.</p>
+<footer>This page is generated from <code>store/PRIVACY.md</code> in the extension's repository.</footer>
+</body>
+</html>
