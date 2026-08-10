@@ -86,6 +86,18 @@ function refused(name: string, result: Result) {
   fail(name, `the write went through and affected ${rows} row(s)`);
 }
 
+/** Refused *by an error*, with no fallback to "nothing changed".
+ *
+ *  `refused` above accepts either, which is right for a write that RLS filters into a no-op — there
+ *  is genuinely nothing to distinguish. It is wrong for a `void`-returning RPC: `data` is null
+ *  whether the call was denied or ran perfectly, so `refused` passes either way. Four assertions
+ *  about the travel caches sat in exactly that blind spot and reported "affected nothing" against a
+ *  database where the grant had not been revoked at all. */
+function denied(name: string, result: Result) {
+  if (result.error) return ok(`${name} (refused: ${result.error.message.split('\n')[0]})`);
+  fail(name, 'the call succeeded — this must be refused outright, not merely have no effect');
+}
+
 function allowed(name: string, result: Result) {
   if (result.error) fail(name, `expected this to work, got: ${result.error.message}`);
   else ok(name);
@@ -443,15 +455,40 @@ async function main() {
   );
   is('...and the row names who wrote it', (await admin.from('property').select('written_by_project').eq('rightmove_id', LISTING_B).single()).data?.written_by_project, PROJECT_A);
 
-  refused('cache_travel: a mode nobody planned for', await rpc(a, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'teleport', p_seconds: 60 }));
-  refused('cache_travel: a journey of negative length', await rpc(a, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'walking', p_seconds: -5 }));
-  refused('cache_travel: a no-route answer that also took an hour', await rpc(a, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'walking', p_seconds: 3600, p_no_route: true }));
-  allowed('cache_travel: an ordinary leg', await rpc(a, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'walking', p_seconds: 1200, p_basis: 'anytime' }));
+  // The three shared caches: a member may read them and may no longer write them.
+  //
+  // These used to check validation — a mode nobody planned for, a journey of negative length, half
+  // a coordinate — because a signed-in member could write these rows and the RPC was the only thing
+  // standing between them and the table. That validation is still there and still right, but it was
+  // never the interesting question, because it can only ask whether a number is *plausible*. Whether
+  // the journey really takes 41 minutes was knowable only to whoever asked TfL.
+  //
+  // `travel_time` and `station_point` are global, shared by every project by design. So one member
+  // writing a wrong number was one member writing a fact everyone else reads, permanently, with
+  // nothing detecting it. The `travel` Edge Function makes the calls now and holds the only grant.
+  denied('cache_travel: a member writing a journey time', await rpc(a, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'walking', p_seconds: 1200, p_basis: 'anytime' }));
+  denied('cache_travel: ...even a plausible one to a place they can see', await rpc(a, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'transit', p_seconds: 2400, p_changes: 1, p_basis: 'weekday 09:00' }));
+  denied('cache_station_point: a member moving a station', await rpc(a, 'cache_station_point', { p_name: 'RLS Check Station', p_lat: 51.5, p_lon: -0.1, p_lines: ['northern'] }));
+  denied('cache_station_walk: a member writing a walk', await rpc(a, 'cache_station_walk', { p_postcode: 'RLS 1AA', p_station_name: 'RLS Check Station', p_seconds: 400 }));
 
-  refused('cache_station_point: half a coordinate', await rpc(a, 'cache_station_point', { p_name: 'RLS Check Station', p_lat: 51.5 }));
-  allowed('cache_station_point: a station', await rpc(a, 'cache_station_point', { p_name: 'RLS Check Station', p_lat: 51.5, p_lon: -0.1, p_lines: ['northern'] }));
-  refused('cache_station_walk: a four-hour walk to a nearby station', await rpc(a, 'cache_station_walk', { p_postcode: 'RLS 1AA', p_station_name: 'RLS Check Station', p_seconds: 99999 }));
-  allowed('cache_station_walk: a walk', await rpc(a, 'cache_station_walk', { p_postcode: 'RLS 1AA', p_station_name: 'RLS Check Station', p_seconds: 400 }));
+  // The service role may, because it is the `travel` Edge Function. Written here rather than
+  // assumed, because the first deploy of that function cached nothing at all: the RPCs guarded on
+  // `auth.uid() is not null`, which is false for the service role — it is not a person and has no
+  // profile — so the one caller that should have been allowed was the one being refused. Silently,
+  // since a failed cache write is caught so it cannot turn a good answer into a bad one.
+  //
+  // These two rows are also what the anon section below checks are still standing afterwards.
+  allowed('cache_travel: the travel function writing a leg', await rpc(admin, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'walking', p_seconds: 1200, p_basis: 'anytime' }));
+  allowed('cache_travel: ...and a transit one', await rpc(admin, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'transit', p_seconds: 2400, p_changes: 1, p_basis: 'weekday 09:00' }));
+  allowed('cache_station_point: the travel function resolving a station', await rpc(admin, 'cache_station_point', { p_name: 'RLS Check Station', p_lat: 51.5, p_lon: -0.1, p_lines: ['northern'] }));
+  allowed('cache_station_walk: ...and measuring the walk to it', await rpc(admin, 'cache_station_walk', { p_postcode: 'RLS 1AA', p_station_name: 'RLS Check Station', p_seconds: 400 }));
+  denied('cache_travel: a journey of negative length, even from the server', await rpc(admin, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'walking', p_seconds: -5 }));
+  denied('cache_station_point: half a coordinate, even from the server', await rpc(admin, 'cache_station_point', { p_name: 'RLS Half Station', p_lat: 51.5 }));
+
+  // And reading them is still exactly what every surface does.
+  allowed('travel_time: a member reading the shared cache', await a.from('travel_time').select('origin_postcode').limit(1));
+  allowed('station_point: a member reading the shared cache', await a.from('station_point').select('name').limit(1));
+  allowed('station_walk: a member reading the shared cache', await a.from('station_walk').select('postcode').limit(1));
 
   refused('claim_analysis: a client claiming its own budget', await rpc(a, 'claim_analysis', { p_rightmove_id: LISTING_A, p_project_id: PROJECT_A, p_user_id: userA }));
   refused('record_api_usage: a client writing its own spend', await rpc(a, 'record_api_usage', { p_project_id: PROJECT_A, p_user_id: userA, p_model: 'gpt-5.6-terra', p_input_tokens: 1, p_cached_input_tokens: 0, p_output_tokens: 1 }));

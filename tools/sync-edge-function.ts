@@ -14,14 +14,19 @@ import { resolve } from 'node:path';
 const ROOT = resolve(import.meta.dirname, '..');
 const SHARED = resolve(ROOT, 'supabase/functions/_shared');
 
-/** Every file the function needs from `packages/core/src`. These are the two modules deliberately written
- *  with no `node:` imports and no `import.meta.env` reads, so they run unchanged under Deno.
+/** Every file a function needs from `packages/core/src`. All of these are deliberately written with
+ *  no `node:` imports and no `import.meta.env` reads, so they run unchanged under Deno.
+ *
+ *  `tfl.ts` and `postcode.ts` joined the list when travel resolution moved server-side. They had
+ *  been shared between the panel and the shortlist for a year and were already free of both, which
+ *  is the only reason that move was a copy rather than a rewrite — `log.ts` and `types.ts` come
+ *  with them because they import them.
  *
  *  Only these are generated, and only these are checked. `_shared/` also holds hand-written modules
  *  the functions share with each other (`http.ts`, `caller.ts`) — those have no original to drift
  *  from and are edited in place, which is why the GENERATED header below is the way to tell which
  *  is which. */
-const FILES = ['analysis.ts', 'png.ts'];
+const FILES = ['analysis.ts', 'png.ts', 'tfl.ts', 'postcode.ts', 'log.ts', 'types.ts'];
 
 const HEADER = `// GENERATED — do not edit. Copied from packages/core/src/ by tools/sync-edge-function.ts.
 // Edit the original and run \`pnpm sync:function\`.

@@ -39,7 +39,7 @@ import type {
 import { lookupPostcode, lookupPostcodes } from '../postcode';
 import type { SearchCard } from '../search-card';
 import { sweepProgress } from '../sweep';
-import { TRAVEL_BASIS, type StationInfo } from '../tfl';
+import { type StationInfo } from '../tfl';
 import type {
   Analysis,
   Confidence,
@@ -561,29 +561,18 @@ export async function getCachedTravelFor(
  *  write on it: a blanket grant would include DELETE, and one buggy client could empty a cache
  *  every project depends on (design D4). The RPC also refuses an implausible duration, which the
  *  NOT NULL constraint never did. */
-export async function cacheTravel(
-  originPostcode: string,
-  destPostcode: string,
-  mode: TravelMode,
-  seconds: number | null,
-  changes: number | null,
-  noRoute = false,
-  options: JourneyOption[] | null = null,
-): Promise<void> {
-  const { error } = await db().rpc('cache_travel', {
-    p_origin_postcode: originPostcode,
-    p_dest_postcode: destPostcode,
-    p_mode: mode,
-    p_seconds: seconds,
-    p_changes: changes,
-    p_no_route: noRoute,
-    p_journeys: options,
-    // Written on every row so a later change to what we ask TfL invalidates only what it
-    // actually changes, and does so by itself.
-    p_basis: TRAVEL_BASIS[mode],
-  });
-  fail('writing travel cache', error);
-}
+/** The three shared caches — `travel_time`, `station_point`, `station_walk` — are written by the
+ *  `travel` Edge Function and by nothing else, so the write helpers that used to live here are
+ *  gone rather than deprecated.
+ *
+ *  Leaving them would leave an invitation. Their RPCs are granted to `service_role` alone now, so
+ *  a call from either client is `permission denied` — and a helper whose only possible outcome is
+ *  a refusal is worse than no helper at all, because it reads as a supported thing to do. The
+ *  readers below stay: reading these tables is exactly what every surface does.
+ *
+ *  Why the writes moved is on `supabase/functions/travel/index.ts`. Short version: the tables are
+ *  global on purpose, and validation there could only ever check that a number was plausible, not
+ *  that it was true. */
 
 export async function getStationWalks(postcode: string): Promise<Map<string, number>> {
   const { data, error } = await db()
@@ -594,17 +583,6 @@ export async function getStationWalks(postcode: string): Promise<Map<string, num
   return new Map(((data ?? []) as any[]).map((r) => [r.station_name as string, r.seconds as number]));
 }
 
-export async function cacheStationWalk(postcode: string, name: string, seconds: number): Promise<void> {
-  const { error } = await db().rpc('cache_station_walk', {
-    p_postcode: postcode,
-    p_station_name: name,
-    p_seconds: seconds,
-  });
-  fail('writing station walk', error);
-}
-
-/** Station coordinates are cached even when unresolvable (lat/lon null), so a station TfL has
- *  never heard of isn't looked up again on every listing nearby. */
 export async function getStationPoint(name: string): Promise<StationInfo | null | undefined> {
   const { data, error } = await db()
     .from('station_point')
@@ -616,16 +594,6 @@ export async function getStationPoint(name: string): Promise<StationInfo | null 
   return data.lat === null || data.lon === null
     ? null
     : { lat: data.lat, lon: data.lon, lines: (data.lines ?? []) as string[] };
-}
-
-export async function cacheStationPoint(name: string, station: StationInfo | null): Promise<void> {
-  const { error } = await db().rpc('cache_station_point', {
-    p_name: name,
-    p_lat: station?.lat ?? null,
-    p_lon: station?.lon ?? null,
-    p_lines: station?.lines ?? [],
-  });
-  fail('writing station point', error);
 }
 
 export async function getAnalysis(rightmoveId: string): Promise<Analysis | null> {

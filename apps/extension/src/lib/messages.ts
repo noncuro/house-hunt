@@ -25,7 +25,7 @@ import type {
   AdminUser,
   UsageRow,
 } from '@house-hunt/core';
-import type { Analysis, Listing, Place, Rating, StationInfo, TravelTime, Verdict } from '@house-hunt/core';
+import type { Analysis, Listing, Place, Rating, TravelTime, Verdict } from '@house-hunt/core';
 
 /** The shared vocabulary, re-exported.
  *

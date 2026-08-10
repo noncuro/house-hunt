@@ -2,6 +2,10 @@ import { configureCore, ensureSession, startSessionHeartbeat } from '@/lib/auth'
 // What signing in means, and everything that reads the database with the result, is shared with the
 // website. What keeping a session alive in a service worker means is not, and stays above.
 import { accessToken, requireSession, signIn, signOut, Unauthenticated } from '@house-hunt/core/db';
+// Journeys, station walks and postcode lookups are resolved by the `travel` Edge Function now, not
+// here. The worker used to call TfL directly through host permissions a browser tab does not have —
+// and, more to the point, that made every client a writer of caches every project reads.
+import { locatePostcode, stationWalks, travelTimes } from '@house-hunt/core/db';
 import {
   describe,
   type AnalysisRequest,
@@ -22,18 +26,11 @@ import {
   adminUsers,
   authState,
   activeProjectId,
-  backfillPlaceCoords,
-  cacheStationPoint,
-  cacheStationWalk,
-  cacheTravel,
   consumeInvites,
   createInvite,
   forgetActiveProject,
   getAnalysis,
-  getCachedTravel,
   getCachedTravelFor,
-  getStationPoint,
-  getStationWalks,
   getShortlist,
   getSweepKnowledge,
   headcount,
@@ -63,10 +60,10 @@ import {
   spendSummary,
   updateHub,
 } from '@house-hunt/core/db';
-import { logInfo, logWarn } from '@house-hunt/core';
-import { lookupPostcode, type Point } from '@house-hunt/core';
-import { journeyTime, resolveStation, staleTravel, TflError, walkTo } from '@house-hunt/core';
-import { TRAVEL_MODES, type Place, type TravelTime } from '@house-hunt/core';
+import { logWarn } from '@house-hunt/core';
+import { } from '@house-hunt/core';
+import { staleTravel } from '@house-hunt/core';
+import { type Place, type TravelTime } from '@house-hunt/core';
 
 /** The analysis runs on Supabase, not on anyone's laptop.
  *
@@ -401,190 +398,6 @@ function destinationIndex(places: Place[]): Map<string, string[]> {
     index.set(place.postcode, list);
   }
   return index;
-}
-
-/** Lookups already running, by postcode, so two askers share one set of API calls.
- *
- *  The panel and the shortlist both ask on load, and the sweep's paced opener puts several tabs
- *  on the same flat's postcode within seconds of each other. Each asker read the same empty cache
- *  and fired its own identical journey-planner requests — which is how you earn a 429, and how
- *  two writes race for the same cache row. The second asker now awaits the first one's answer.
- *
- *  Keyed on postcode alone rather than postcode-and-refresh: a refresh in flight is doing strictly
- *  more work than a plain read, so joining it is right. The entry is removed in a `finally` so a
- *  failure cannot leave a rejected promise cached and break every later request for that postcode. */
-const travelInFlight = new Map<string, Promise<TravelTime[]>>();
-
-function travelTimes(postcode: string, refresh: boolean): Promise<TravelTime[]> {
-  const running = refresh ? undefined : travelInFlight.get(postcode);
-  if (running) return running;
-
-  const work = computeTravelTimes(postcode, refresh).finally(() => {
-    if (travelInFlight.get(postcode) === work) travelInFlight.delete(postcode);
-  });
-  travelInFlight.set(postcode, work);
-  return work;
-}
-
-/** Read-through cache, every place in every mode. Travel time from a postcode to a fixed place
- *  doesn't change, and the cache is shared across every project, so each journey costs its API
- *  calls once for everybody. */
-async function computeTravelTimes(postcode: string, refresh: boolean): Promise<TravelTime[]> {
-  const started = Date.now();
-
-  // The places list and the cached times are independent reads; doing them in sequence was
-  // half the time the panel spent on "Working…" even when every number was already cached.
-  const [rawPlaces, cachedRows] = await Promise.all([listPlaces(), getCachedTravel(postcode)]);
-  if (rawPlaces.length === 0) return [];
-
-  // Backfill coordinates for places added before we resolved them at entry.
-  const places = await Promise.all(rawPlaces.map(backfillPlaceCoords));
-  const cached = new Map(cachedRows.map((c) => [`${c.destPostcode}:${c.mode}`, c] as const));
-  const appKey = import.meta.env.WXT_TFL_APP_KEY;
-
-  const wanted = places.flatMap((place) => TRAVEL_MODES.map((mode) => ({ place, mode })));
-  let hits = 0;
-
-  const results = await Promise.all(
-    wanted.map(async ({ place, mode }): Promise<TravelTime> => {
-      const row = refresh ? undefined : cached.get(`${place.postcode}:${mode}`);
-      // Not every cached row is an answer to the question we are now asking. `staleTravel` holds
-      // the rules — a number measured on a different basis, a no-route old enough to be worth
-      // re-asking, a transit row from before we stored the leg breakdown — and each one fills
-      // itself in on the next visit rather than needing a migration.
-      const stale = row === undefined ? null : staleTravel(row, mode);
-      const hit = stale === null ? row : undefined;
-      if (stale !== null) logInfo('travel', `refetching ${place.label} by ${mode}: ${stale}`, { postcode });
-      if (hit) {
-        hits++;
-        if (hit.noRoute) {
-          return {
-            placeId: place.id,
-            mode,
-            seconds: 0,
-            changes: null,
-            error: 'TfL found no journey for this mode',
-            transient: false,
-          };
-        }
-        return {
-          placeId: place.id,
-          mode,
-          seconds: hit.seconds ?? 0,
-          changes: hit.changes,
-          options: hit.options ?? undefined,
-        };
-      }
-
-      // Coordinates, not the postcode string — TfL's own geocoder resolved a terminated
-      // Heathrow postcode to a point in northwest London.
-      const destination =
-        place.lat !== null && place.lon !== null ? `${place.lat},${place.lon}` : place.postcode;
-
-      let journey;
-      try {
-        journey = await journeyTime(postcode, destination, mode, appKey);
-      } catch (e) {
-        // Only a TflError carries a considered verdict on whether TfL settled the question.
-        // Anything else — a parse failure, a bug in our own code — is treated as transient,
-        // because caching a negative is permanent and being wrong about it is expensive.
-        const settled = e instanceof TflError && !e.transient;
-        if (settled) await cacheTravel(postcode, place.postcode, mode, null, null, true).catch(() => {});
-        logWarn('travel', `${place.label} by ${mode} failed`, {
-          postcode,
-          transient: !settled,
-          error: describe(e),
-        });
-        return { placeId: place.id, mode, seconds: 0, changes: null, error: describe(e), transient: !settled };
-      }
-
-      // Caching is a side effect, and a failed write must not turn a good answer into a
-      // permanent "no route" — which is what happened when this sat inside the catch above.
-      await cacheTravel(postcode, place.postcode, mode, journey.seconds, journey.changes, false, journey.options).catch(
-        (e) => logWarn('travel', 'could not cache a good answer', { postcode, error: describe(e) }),
-      );
-      return {
-        placeId: place.id,
-        mode,
-        seconds: journey.seconds,
-        changes: journey.changes,
-        options: journey.options,
-      };
-    }),
-  );
-
-  logInfo('travel', `${postcode}: ${results.length} legs in ${Date.now() - started}ms`, {
-    cacheHits: hits,
-    lookups: results.length - hits,
-    failed: results.filter((r) => r.error).length,
-    refresh,
-  });
-  return results;
-}
-
-/** Where a postcode is, for the panel's hub compass.
- *
- *  The panel cannot do this itself: a content script's fetch carries the page's origin, and the
- *  host permissions that make postcodes.io reachable belong to the worker. It is not cached in
- *  Supabase like the travel times are, because a postcode lookup is free, keyless and instant,
- *  and a round trip to the database to avoid one would cost more than it saves. The in-memory map
- *  is only there to spare the second and third listing in the same street a repeat call; it dies
- *  with the worker, which is fine.
- *
- *  Rightmove's own latitude and longitude are deliberately not the fallback. They are fuzzed
- *  (`pinType: "APPROXIMATE_POINT"`), and a fuzzed origin a few hundred yards out swings a bearing
- *  taken from a hub half a mile away by tens of degrees — a compass needle that is confidently
- *  pointing at the wrong half of the neighbourhood. Null, and the panel says it has no location. */
-const postcodePoints = new Map<string, Point | null>();
-
-async function locatePostcode(postcode: string): Promise<Point | null> {
-  const known = postcodePoints.get(postcode);
-  if (known !== undefined) return known;
-
-  const { point } = await lookupPostcode(postcode);
-  postcodePoints.set(postcode, point);
-  return point;
-}
-
-/** Walking time from the listing to each nearby station. Rightmove gives straight-line miles,
- *  which flatters stations across a river or a railway. Both lookups are cached, so a station in
- *  a neighbourhood anyone has searched before costs nothing. */
-async function stationWalks(
-  postcode: string,
-  stations: string[],
-): Promise<Record<string, { seconds?: number; lines: string[] }>> {
-  await requireSession();
-  const appKey = import.meta.env.WXT_TFL_APP_KEY;
-  const cachedWalks = await getStationWalks(postcode);
-  const out: Record<string, { seconds?: number; lines: string[] }> = {};
-
-  await Promise.all(
-    stations.map(async (name) => {
-      try {
-        // Coordinates and lines are resolved once per station, ever, and shared between every
-        // install — so only a station nobody has seen costs anything.
-        let station = await getStationPoint(name);
-        if (station === undefined) {
-          station = await resolveStation(name, appKey);
-          await cacheStationPoint(name, station);
-        }
-        if (!station) return; // TfL doesn't know it — omit rather than invent a number
-
-        const cached = cachedWalks.get(name);
-        if (cached !== undefined) {
-          out[name] = { seconds: cached, lines: station.lines };
-          return;
-        }
-
-        const seconds = await walkTo(postcode, station, appKey);
-        await cacheStationWalk(postcode, name, seconds);
-        out[name] = { seconds, lines: station.lines };
-      } catch {
-        // A missing walk time degrades one row; the straight-line distance is still shown.
-      }
-    }),
-  );
-  return out;
 }
 
 /** Ask the Edge Function to analyse this listing's photos.

@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Copied from src/lib/ by tools/sync-edge-function.ts.
+// GENERATED — do not edit. Copied from packages/core/src/ by tools/sync-edge-function.ts.
 // Edit the original and run `pnpm sync:function`.
 
 /** Flatten a transparent PNG onto white before showing it to a vision model.

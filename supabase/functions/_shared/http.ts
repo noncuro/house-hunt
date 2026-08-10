@@ -34,11 +34,26 @@ export function requireEnv(values: Record<string, string | undefined>): void {
   }
 }
 
-/** The caller is the extension's service worker, whose origin is chrome-extension://<id> — not
- *  Rightmove, and not a fixed id, because it differs between installs. */
+/** Who may call these functions from a browser.
+ *
+ *  Three kinds of caller, and none of them is a fixed string. The extension's service worker has
+ *  origin `chrome-extension://<id>`, and the id differs between the unpacked and store builds of
+ *  the same code, so it is matched by scheme. A content script's fetch carries Rightmove's origin.
+ *  And since the app moved out of the extension, the website calls these too — its origin comes
+ *  from `WEB_APP_ORIGIN` on the function rather than being hardcoded, so a preview deploy and
+ *  production do not need different code.
+ *
+ *  Anything else gets `null`, which is a refusal the browser enforces. Note this is a convenience
+ *  rather than a control: CORS stops a *page* on another origin from reading the reply, and the
+ *  thing actually gating these functions is `requireCaller` (design D10). */
+const WEB_APP_ORIGIN = Deno.env.get('WEB_APP_ORIGIN');
+
 export function cors(origin: string | null): Record<string, string> {
   const allowed =
-    origin && (origin.startsWith('chrome-extension://') || origin === 'https://www.rightmove.co.uk')
+    origin &&
+    (origin.startsWith('chrome-extension://') ||
+      origin === 'https://www.rightmove.co.uk' ||
+      (WEB_APP_ORIGIN !== undefined && origin === WEB_APP_ORIGIN))
       ? origin
       : 'null';
   return {

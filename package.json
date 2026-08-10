@@ -10,11 +10,9 @@
     "zip": "pnpm --filter @house-hunt/ext zip",
     "zip:store": "pnpm --filter @house-hunt/ext zip:store",
     "package": "pnpm --filter @house-hunt/ext package",
-
     "compile": "tsc --noEmit -p apps/extension",
     "lint": "oxlint",
     "check": "oxlint && pnpm compile",
-
     "check:one-client": "tsx tools/check-one-client.ts",
     "check:extractor": "tsx tools/check-extractor.ts",
     "check:area": "tsx tools/check-area-parser.ts",
@@ -28,7 +26,6 @@
     "check:rls": "tsx tools/check-rls.ts",
     "check:functions": "deno check --unstable supabase/functions/_shared/*.ts supabase/functions/*/index.ts",
     "check:all": "pnpm check && pnpm check:functions && pnpm check:one-client && pnpm check:area && pnpm check:facts && pnpm check:hubs && pnpm check:sweep && pnpm check:travel && pnpm check:png && pnpm check:analysis",
-
     "smoke": "tsx tools/smoke.ts",
     "smoke:search": "tsx tools/smoke-search.ts",
     "smoke:sweep": "tsx tools/smoke-sweep.ts",
@@ -37,11 +34,11 @@
     "find:locations": "tsx tools/find-locations.ts",
     "fixture": "bash -c \"mkdir -p .fixtures && curl -sA \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36\" https://www.rightmove.co.uk/properties/$0 -o .fixtures/$0.html && echo saved .fixtures/$0.html\"",
     "fixture:search": "tsx tools/fixture-search.ts",
-
     "sync:function": "tsx tools/sync-edge-function.ts",
-    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; for fn in analyse invite resolve-location; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'"
+    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; for fn in analyse invite resolve-location travel; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'"
   },
   "devDependencies": {
+    "@supabase/supabase-js": "^2.112.2",
     "@types/node": "^26.2.0",
     "oxlint": "^1.77.0",
     "playwright": "^1.49.0",

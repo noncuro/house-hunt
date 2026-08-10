@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Copied from src/lib/ by tools/sync-edge-function.ts.
+// GENERATED — do not edit. Copied from packages/core/src/ by tools/sync-edge-function.ts.
 // Edit the original and run `pnpm sync:function`.
 
 /** The vision pass over a listing's photos.
@@ -653,7 +653,7 @@ async function toDataUrl(url: string, fetchImpl: typeof fetch, attempts = 3): Pr
       if (response.status >= 400 && response.status < 500 && response.status !== 429) return '';
       if (response.ok) {
         const type = response.headers.get('content-type') ?? 'image/jpeg';
-        if (!/^image\//.test(type)) return '';
+        if (!type.startsWith('image/')) return '';
 
         let bytes: Uint8Array = new Uint8Array(await response.arrayBuffer());
         // Rightmove's floorplans are transparent PNGs of dark line work. Sent as-is they get

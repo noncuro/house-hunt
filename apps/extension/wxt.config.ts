@@ -63,13 +63,16 @@ export default defineConfig({
     // you are in one and read the results in the other, and the popup closed itself the moment
     // you clicked away. Clicking the icon opens the shortlist; settings are a tab on it.
     action: { default_title: 'House hunt' },
-    host_permissions: [
-      'https://api.tfl.gov.uk/*',
-      // UK postcode -> coordinates. TfL's own geocoder cannot be trusted with postcodes.
-      'https://api.postcodes.io/*',
-      // Covers both the REST API and the analyse Edge Function, which live on the same host.
-      `${supabaseHost}/*`,
-    ],
+    // One host, and that is the whole list on purpose.
+    //
+    // `api.tfl.gov.uk` and `api.postcodes.io` used to be here, because the worker called both
+    // directly. They moved into the `travel` Edge Function — partly because a browser tab has no
+    // host permissions and the website needs the same answers, but mostly because `travel_time`
+    // and `station_point` are shared by every project and the client was the one writing them.
+    // The TfL key went with them; it used to ship in this bundle, where it was public.
+    //
+    // Covers both the REST API and the Edge Functions, which live on the same host.
+    host_permissions: [`${supabaseHost}/*`],
   },
   vite: () => ({
     envDir: repoRoot,

@@ -11,41 +11,41 @@ separate.
 
 ## 1. The workspace, with no behaviour change
 
-- [ ] 1.1 `pnpm-workspace.yaml` and a root `package.json` that owns the shared
+- [x] 1.1 `pnpm-workspace.yaml` and a root `package.json` that owns the shared
       dev dependencies (typescript, oxlint, tsx) and forwards `check`, `build`
       and `check:all` to the packages.
-- [ ] 1.2 `packages/core`: move `lib/{types,supabase,analysis,png,facts,hubs,shortlist,cards,sweep,decode,postcode,tfl}.ts`.
+- [x] 1.2 `packages/core`: move `lib/{types,supabase,analysis,png,facts,hubs,shortlist,cards,sweep,decode,postcode,tfl}.ts`.
       Split `lib/messages.ts` — every interface and result type moves here, the
       `Envelope`/`Request`/`ResponseMap`/`send()` transport stays behind.
-- [ ] 1.3 `packages/core/src/client.ts`: `configure(client)` / `db()` per D2.
+- [x] 1.3 `packages/core/src/client.ts`: `configure(client)` / `db()` per D2.
       `supabase.ts` reads `db()` instead of importing a constructed client.
-- [ ] 1.4 `packages/ui`: move `components/` except `Panel.tsx`, with their CSS.
+- [x] 1.4 `packages/ui`: move `components/` except `Panel.tsx`, with their CSS.
       Assert it imports no `supabase.ts` and core imports no React.
-- [ ] 1.5 `apps/extension`: everything that is left, still building the same
+- [x] 1.5 `apps/extension`: everything that is left, still building the same
       manifest and the same shortlist page. `lib/auth.ts` keeps the
       `chrome.storage` adapter and the heartbeat and now calls `configure()`.
-- [ ] 1.6 Rewrite `tools/check-one-client.ts` for the new shape (D8) and move
+- [x] 1.6 Rewrite `tools/check-one-client.ts` for the new shape (D8) and move
       the rest of `tools/` to whichever package they check.
-- [ ] 1.7 `pnpm check:all` passes, `pnpm build` produces a working unpacked
+- [x] 1.7 `pnpm check:all` passes, `pnpm build` produces a working unpacked
       extension, and the smoke harnesses run. **No user-visible change.**
 
 ## 2. Travel, stations and postcodes move server-side
 
-- [ ] 2.1 `supabase/functions/travel/`: resolve journeys, nearby stations and
+- [x] 2.1 `supabase/functions/travel/`: resolve journeys, nearby stations and
       postcode points; answer from cache first; write what it learned with the
       service role. Reuses `_shared/http.ts` and `_shared/caller.ts`.
-- [ ] 2.2 Extend `pnpm sync:function` to copy `tfl.ts` and `postcode.ts`, and
+- [x] 2.2 Extend `pnpm sync:function` to copy `tfl.ts` and `postcode.ts`, and
       `deploy:function` to refuse a stale copy. Keep both Deno-clean: no `node:`
       imports, no `import.meta.env`.
-- [ ] 2.3 Per-user rate limiting on the function, on the same footing as
+- [x] 2.3 Per-user rate limiting on the function, on the same footing as
       `analyse`. TfL is now called with our key on a user's behalf.
-- [ ] 2.4 Enforce the pinned weekday-09:00 basis inside the function, so two
+- [x] 2.4 Enforce the pinned weekday-09:00 basis inside the function, so two
       flats measured on different evenings stay comparable by construction
       rather than by client convention.
-- [ ] 2.5 Point the background worker's `travel:get`, `stations:walk` and
+- [x] 2.5 Point the background worker's `travel:get`, `stations:walk` and
       `postcode:point` handlers at the function. Drop `WXT_TFL_APP_KEY` and the
       `api.tfl.gov.uk` / `api.postcodes.io` host permissions from the manifest.
-- [ ] 2.6 Verify a cache miss resolves and a cache hit does not call TfL, on a
+- [x] 2.6 Verify a cache miss resolves and a cache hit does not call TfL, on a
       real listing, before touching the grants.
 
 ## 3. The website
@@ -85,10 +85,12 @@ separate.
 
 - [ ] 5.1 Delete `entrypoints/shortlist/`, the shortlist HTML entry point,
       `SignIn.tsx`, and every `background.ts` handler that only it called (D6).
-- [ ] 5.2 Migration: revoke `cache_travel`, `cache_station_point` and
-      `cache_station_walk` from `authenticated`; grant to `service_role` alone.
-      Confirm with `tools/check-rls.ts` that an ordinary member can no longer
-      call them.
+- [x] 5.2 **Done early, in phase 2** — it turned out to be required rather than
+      optional. The RPCs guarded on `auth.uid() is not null`, which is false for
+      the service role, so the function could not write the caches at all until
+      the guard became `is_service_role()`. Revoking `authenticated` in the same
+      migration was then free, since nothing on either client still called them.
+      `tools/check-rls.ts` asserts both halves.
 - [ ] 5.3 Update `AGENTS.md`, `README.md`, `SETUP.md` and the store listing: the
       extension is the Rightmove overlay, the website is the app, and installing
       the extension is optional for a reader.

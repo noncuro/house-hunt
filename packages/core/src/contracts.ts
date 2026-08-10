@@ -1,5 +1,3 @@
-import type { Analysis, Listing, Place, Rating, TravelTime, Verdict } from './types';
-
 // ------------------------------------------------------------------------------------------------
 // The vocabulary both surfaces speak.
 //
