@@ -18,7 +18,13 @@
  *     Sharing the directory would mean running a check quietly repointed the extension you have
  *     loaded in Chrome at a database on your laptop that is empty when Docker is not running — a
  *     working install turning into an empty one with nothing on screen to explain it.
+ *
+ *  It lives beside the config it extends rather than in `tools/`, which is where it was until the
+ *  repo became a workspace. WXT resolves `srcDir`, `outDir` and the entrypoint directory against
+ *  the directory it is run from, so a config in `tools/` run from the repo root looked for `src/`
+ *  at the root and found nothing. Nobody noticed because the harnesses refuse to run without a
+ *  local Supabase, so the first error you meet is about Docker rather than about this.
  */
-import base from '../apps/extension/wxt.config';
+import base from './wxt.config';
 
 export default { ...base, outDir: '.output/smoke' };

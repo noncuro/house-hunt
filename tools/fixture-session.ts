@@ -15,7 +15,8 @@
  *  analysis, two listings of the same flat.
  *
  *  Which database the extension talks to is compiled in, so this cannot be arranged at runtime:
- *  `pnpm build:smoke` produces a build pointed at the local stack in `.output/smoke`, and
+ *  `pnpm build:smoke` produces a build pointed at the local stack in `apps/extension/.output/smoke`,
+ *  and
  *  `smokeBuild()` below refuses to run against anything else rather than letting a harness quietly
  *  test the wrong database.
  *
@@ -59,7 +60,7 @@ export interface SmokeBuild {
 }
 
 export function smokeBuild(): SmokeBuild {
-  const path = resolve(import.meta.dirname, '../.output/smoke/chrome-mv3');
+  const path = resolve(import.meta.dirname, '../apps/extension/.output/smoke/chrome-mv3');
   const manifestPath = resolve(path, 'manifest.json');
   if (!existsSync(manifestPath)) {
     throw new Error(
