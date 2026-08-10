@@ -1,4 +1,4 @@
-import { configureCore, ensureSession, startSessionHeartbeat } from '@/lib/auth';
+import { configureCore, startSessionHeartbeat } from '@/lib/auth';
 // What signing in means, and everything that reads the database with the result, is shared with the
 // website. What keeping a session alive in a service worker means is not, and stays above.
 import { accessToken, requireSession, signIn, signOut, Unauthenticated } from '@house-hunt/core/db';
@@ -9,7 +9,6 @@ import { locatePostcode, stationWalks, travelTimes } from '@house-hunt/core/db';
 import {
   describe,
   type AnalysisRequest,
-  type AuthState,
   type Envelope,
   type Request,
   type ResponseMap,
@@ -26,11 +25,11 @@ import {
   adminUsers,
   authState,
   activeProjectId,
+  cachedTravelTimes,
   consumeInvites,
   createInvite,
   forgetActiveProject,
   getAnalysis,
-  getCachedTravelFor,
   getShortlist,
   getSweepKnowledge,
   headcount,
@@ -42,6 +41,7 @@ import {
   NoActiveProject,
   pendingSightings,
   locateProperties,
+  readAuthState,
   getVerdicts,
   listPlaces,
   recordSweepPage,
@@ -61,9 +61,6 @@ import {
   updateHub,
 } from '@house-hunt/core/db';
 import { logWarn } from '@house-hunt/core';
-import { } from '@house-hunt/core';
-import { staleTravel } from '@house-hunt/core';
-import { type Place, type TravelTime } from '@house-hunt/core';
 
 /** The analysis runs on Supabase, not on anyone's laptop.
  *
@@ -329,75 +326,6 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       await chrome.tabs.create({ url: request.url, active: false });
       return null;
   }
-}
-
-/** The only handler that answers rather than refusing when there is no session: every surface asks
- *  this first to decide what to render, and answering it with `unauthenticated` would make the
- *  sign-in view unreachable. */
-async function readAuthState(): Promise<AuthState> {
-  const session = await ensureSession();
-  if (!session) return { status: 'signed-out' };
-  return await authState();
-}
-
-/** What the cache already knows for a set of postcodes — no TfL calls, ever.
- *
- *  The compare table shows one row per property and a column per place, so it needs a number for
- *  every pairing at once. Read-through would be the obvious thing and the wrong one: opening the
- *  table would fire a journey-planner request for every gap, which is both slow and the sort of
- *  traffic that gets you rate-limited. A gap comes back absent and the table prints "—". Open the
- *  place itself, or its card, and the read-through path fills it in.
- *
- *  The cache is keyed on the destination's postcode now rather than on a place id (design D5), so
- *  the places are loaded to map back. Two places at one postcode share a row and both read it,
- *  which is the point of re-keying. */
-async function cachedTravelTimes(postcodes: string[]): Promise<Record<string, TravelTime[]>> {
-  const [places, by] = await Promise.all([listPlaces(), getCachedTravelFor(postcodes)]);
-  const placesAt = destinationIndex(places);
-
-  const out: Record<string, TravelTime[]> = {};
-  for (const [postcode, rows] of by) {
-    out[postcode] = rows.flatMap((r) => {
-      const ids = placesAt.get(r.destPostcode) ?? [];
-      // Marked, not dropped. Dropping every row measured before transit was pinned to a weekday
-      // morning would blank the table's whole transit column until each listing was reopened,
-      // and a blank teaches less than a number with a caveat on it.
-      const stale = staleTravel(r, r.mode) ?? undefined;
-      return ids.map((placeId) =>
-        r.noRoute
-          ? {
-              placeId,
-              mode: r.mode,
-              seconds: 0,
-              changes: null,
-              error: 'TfL found no journey for this mode',
-              transient: false,
-              stale,
-            }
-          : {
-              placeId,
-              mode: r.mode,
-              seconds: r.seconds ?? 0,
-              changes: r.changes,
-              options: r.options ?? undefined,
-              stale,
-            },
-      );
-    });
-  }
-  return out;
-}
-
-/** Postcode -> the places at it. A list rather than a single id: two places can share a postcode,
- *  and picking one of them would leave the other's column permanently blank. */
-function destinationIndex(places: Place[]): Map<string, string[]> {
-  const index = new Map<string, string[]>();
-  for (const place of places) {
-    const list = index.get(place.postcode) ?? [];
-    list.push(place.id);
-    index.set(place.postcode, list);
-  }
-  return index;
 }
 
 /** Ask the Edge Function to analyse this listing's photos.

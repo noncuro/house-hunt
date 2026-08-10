@@ -1,0 +1,90 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import type { NextConfig } from 'next';
+
+/** The workspace root's `.env`, which is where both surfaces' configuration lives.
+ *
+ *  Next only looks for `.env` beside the app it is building, and the extension already reads the
+ *  root one through Vite's `envDir` — see `apps/extension/wxt.config.ts`. One file rather than one
+ *  per app, because both read the same Supabase project with the same publishable key and two
+ *  copies of that is two things to keep in step.
+ *
+ *  Absent is fine and silent: on Vercel there is no file and the same names come from the project's
+ *  environment. Anything already set wins, so a real environment variable is never overwritten by a
+ *  stale line in a file. */
+function loadRootEnv(): void {
+  const path = fileURLToPath(new URL('../../.env', import.meta.url));
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return;
+  }
+  for (const line of text.split('\n')) {
+    const match = /^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!match) continue;
+    const [, name, raw] = match;
+    if (process.env[name] !== undefined) continue;
+    process.env[name] = raw!.trim().replace(/^(['"])(.*)\1$/, '$2');
+  }
+}
+
+loadRootEnv();
+
+/** The Content-Security-Policy is load-bearing here, not hygiene.
+ *
+ *  Sign-in happens on this origin, and when it succeeds the credentials are handed to the extension
+ *  across a `window.postMessage` on this origin (design D3). Any script running here can read that
+ *  message. Today the only scripts here are ours, and this header is what keeps it that way — no
+ *  analytics, no embedded widget, no CDN-hosted library, ever, or the handoff has to be replaced
+ *  first with a server-minted second session that carries no password.
+ *
+ *  This is a constraint the extension never had, because a `chrome-extension://` origin cannot be
+ *  reached from the web at all. It is the real cost of moving the app onto the internet.
+ *
+ *  `'unsafe-inline'` for styles is Next's requirement for its own critical CSS. Scripts get
+ *  `'unsafe-inline'` too, which Next needs for hydration bootstrapping and which is worth being
+ *  honest about: it does not weaken the property above, since the threat is a *third-party* script
+ *  reading a same-origin message, and `script-src 'self'` is what excludes those.
+ */
+const SUPABASE_ORIGIN = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+
+const csp = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  // Rightmove's own photo URLs. We link to them and never re-host them (their terms, 13.4), which
+  // means the images load from their origin and this has to say so.
+  "img-src 'self' data: blob: https://media.rightmove.co.uk https://*.rightmove.co.uk",
+  "font-src 'self' data:",
+  `connect-src 'self' ${SUPABASE_ORIGIN}`.trim(),
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+].join('; ');
+
+const nextConfig: NextConfig = {
+  // The packages are TypeScript source rather than a build, so Next compiles them like app code.
+  transpilePackages: ['@house-hunt/core', '@house-hunt/ui'],
+  // Said outright because Next guesses by walking up for a lockfile, and ~/GitHub happens to have
+  // one — which made it treat every repo on the machine as this app's workspace.
+  outputFileTracingRoot: fileURLToPath(new URL('../../', import.meta.url)),
+  reactStrictMode: true,
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'Content-Security-Policy', value: csp },
+          { key: 'Referrer-Policy', value: 'same-origin' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          // A private house hunt has no business in a search index.
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+        ],
+      },
+    ];
+  },
+};
+
+export default nextConfig;

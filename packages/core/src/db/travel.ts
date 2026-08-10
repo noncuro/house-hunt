@@ -1,8 +1,9 @@
 import { db } from './client';
 import { accessToken } from './session';
 import { Unauthenticated } from './session';
-import { listPlaces, backfillPlaceCoords } from './supabase';
+import { getCachedTravelFor, listPlaces, backfillPlaceCoords } from './supabase';
 import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime, type JourneyOption } from '../types';
+import { staleTravel } from '../tfl';
 import type { Point } from '../postcode';
 import { logInfo, logWarn } from '../log';
 
@@ -180,4 +181,64 @@ export async function locatePostcode(postcode: string): Promise<Point | null> {
   const { point } = await ask<{ point: Point | null }>({ kind: 'postcode', postcode });
   points.set(postcode, point);
   return point;
+}
+
+/** What the cache already knows for a set of postcodes — no TfL calls, ever.
+ *
+ *  The compare table shows one row per property and a column per place, so it needs a number for
+ *  every pairing at once. Read-through would be the obvious thing and the wrong one: opening the
+ *  table would fire a journey-planner request for every gap, which is both slow and the sort of
+ *  traffic that gets you rate-limited. A gap comes back absent and the table prints "—". Open the
+ *  place itself, or its card, and `travelTimes` fills it in.
+ *
+ *  The cache is keyed on the destination's postcode rather than on a place id (design D5), so the
+ *  places are loaded to map back. Two places at one postcode share a row and both read it, which is
+ *  the point of re-keying. */
+export async function cachedTravelTimes(postcodes: string[]): Promise<Record<string, TravelTime[]>> {
+  const [places, by] = await Promise.all([listPlaces(), getCachedTravelFor(postcodes)]);
+  const placesAt = destinationIndex(places);
+
+  const out: Record<string, TravelTime[]> = {};
+  for (const [postcode, rows] of by) {
+    out[postcode] = rows.flatMap((r) => {
+      const ids = placesAt.get(r.destPostcode) ?? [];
+      // Marked, not dropped. Dropping every row measured before transit was pinned to a weekday
+      // morning would blank the table's whole transit column until each listing was reopened,
+      // and a blank teaches less than a number with a caveat on it.
+      const stale = staleTravel(r, r.mode) ?? undefined;
+      return ids.map((placeId) =>
+        r.noRoute
+          ? {
+              placeId,
+              mode: r.mode,
+              seconds: 0,
+              changes: null,
+              error: 'TfL found no journey for this mode',
+              transient: false,
+              stale,
+            }
+          : {
+              placeId,
+              mode: r.mode,
+              seconds: r.seconds ?? 0,
+              changes: r.changes,
+              options: r.options ?? undefined,
+              stale,
+            },
+      );
+    });
+  }
+  return out;
+}
+
+/** Postcode -> the places at it. A list rather than a single id: two places can share a postcode,
+ *  and picking one of them would leave the other's column permanently blank. */
+function destinationIndex(places: Place[]): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const place of places) {
+    const list = index.get(place.postcode) ?? [];
+    list.push(place.id);
+    index.set(place.postcode, list);
+  }
+  return index;
 }

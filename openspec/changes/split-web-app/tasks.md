@@ -50,19 +50,27 @@ separate.
 
 ## 3. The website
 
-- [ ] 3.1 `apps/web`: Next.js App Router, `configure()` with supabase-js
+- [x] 3.1 `apps/web`: Next.js App Router, `configure()` with supabase-js
       defaults, TanStack Query with the settings `queries.ts` already uses.
-- [ ] 3.2 Port `queries.ts`: `ask({type})` becomes a direct core call. Keep the
+      The client is built in an effect rather than at module scope — building it
+      touches `localStorage`, and Next renders the page on the server first.
+- [x] 3.2 Port `queries.ts`: `ask({type})` becomes a direct core call. Keep the
       keys, the stale times, the optimistic `useRate` and its per-property
       rollback, and the `onError` that re-reads the auth state.
-- [ ] 3.3 Port the screens: shortlist, Compare, Map, Detail, Settings, Project,
+- [x] 3.3 Port the screens: shortlist, Compare, Map, Detail, Settings, Project,
       Admin, SignIn. Deep-link a flat by rightmove id — the thing the
-      `chrome-extension://` address could never do.
-- [ ] 3.4 Content-Security-Policy permitting `'self'` and the Supabase origin
+      `chrome-extension://` address could never do. Three pieces that were
+      worker-only turned out to be shared and moved into core rather than being
+      copied: `cachedTravelTimes`, `readAuthState`, and the sign-in that also
+      consumes invites (`apps/web/src/lib/session.ts`, until the extension's own
+      sign-in goes in phase 5). Settings loses its Diagnostics section — a tab
+      has devtools, and core's log sink points at the console.
+- [x] 3.4 Content-Security-Policy permitting `'self'` and the Supabase origin
       and nothing else, plus a written rule that no third-party script is added.
       D3 depends on this and it is the only thing holding it up.
 - [ ] 3.5 Deploy to Vercel behind the project's own domain; environment from the
-      hub `.env`, publishable key only.
+      hub `.env`, publishable key only. **Daniel's step** — it needs his Vercel
+      account and the domain.
 - [ ] 3.6 Use it for a full session — sign in, rate a flat, add a place, invite
       someone — while the extension is still doing all of the above too.
 

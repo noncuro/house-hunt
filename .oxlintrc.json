@@ -13,6 +13,8 @@
   "ignorePatterns": [
     ".output",
     ".wxt",
+    ".next",
+    "apps/web/next-env.d.ts",
     "node_modules",
     ".fixtures",
     ".working",

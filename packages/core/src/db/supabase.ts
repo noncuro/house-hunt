@@ -16,7 +16,7 @@
  *    `SECURITY DEFINER` RPCs that validate their arguments. This file already funnelled those
  *    writes through a handful of named functions, so what changed is what they call.
  */
-import { db } from './client';
+import { db, ensureSession } from './client';
 import { accessToken, requireSession } from './session';
 import { MIN_PASSWORD_LENGTH } from '../contracts';
 import type {
@@ -176,6 +176,18 @@ export async function authState(): Promise<AuthState> {
     projects,
     activeProject: projects.find((p) => p.id === activeId) ?? null,
   };
+}
+
+/** The one read that answers rather than refusing when there is no session.
+ *
+ *  Every surface asks this first to decide what to render, so it must be able to say "signed out"
+ *  as a value. `authState` throws `Unauthenticated` instead, which is right for the forty reads that
+ *  cannot proceed without a user and exactly wrong for the one that decides whether to show the
+ *  sign-in view: answering the shell with an exception makes signing in unreachable. */
+export async function readAuthState(): Promise<AuthState> {
+  const session = await ensureSession();
+  if (!session) return { status: 'signed-out' };
+  return await authState();
 }
 
 async function touchLastSeen(userId: string): Promise<void> {

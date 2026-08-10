@@ -1,0 +1,280 @@
+/* The admin view — see Admin.tsx. Its own file rather than more of style.css, because everything
+   here belongs to one view that most sessions never open, and because the shortlist stylesheet is
+   already long enough that finding anything in it is a grep.
+
+   Palette and metrics are the page's: #12263a ink, #7b8a99 dim, #dfe6ec borders, 12px radii. The
+   `.key`, `.dim`, `.error`, `.working` and `.num` classes come from style.css and are reused
+   deliberately — a second set of buttons that looked nearly like the shortlist's would read as a
+   different application bolted on. */
+
+.admin {
+  margin-top: 16px;
+}
+
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-filters {
+  margin-top: 14px;
+}
+
+.admin-note {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.admin-lede {
+  margin: 14px 0 0;
+  max-width: 62ch;
+}
+
+.admin-notice {
+  margin-top: 12px;
+}
+
+/* Same reasoning as the compare table: these are wide, and the page body must never scroll
+   sideways. */
+.admin-scroll {
+  margin-top: 14px;
+  overflow-x: auto;
+  border: 1px solid #dfe6ec;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.admin-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 9px 12px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid #eef2f5;
+  vertical-align: middle;
+}
+
+.admin-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7fafc;
+  border-bottom: 1px solid #dfe6ec;
+  font-weight: 650;
+  color: #4a5b6c;
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-table tbody tr:hover {
+  background: #f5f9fc;
+}
+
+.admin-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A row whose subject is finished with — a revoked or expired invite. Present because the history
+   is worth keeping and past because it is not something to act on. */
+.admin-spent {
+  opacity: 0.6;
+}
+
+.admin-struck {
+  text-decoration: line-through;
+}
+
+.admin-who {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.admin-email {
+  font-size: 12px;
+}
+
+.admin-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef4f8;
+  color: #4a5b6c;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.admin-tokens {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the budget bar --------------------------------------------------------------------- */
+
+/* The one mark this view is built around. The track is drawn at full width at every level, so a
+   column of these can be read down by comparing fills — the same argument the confidence bars
+   settled (components/Confidence.tsx): a mark that shrinks as it matters more is backwards.
+
+   Colour is the signal here, which it deliberately is not on the confidence bars. A cap is a
+   threshold with a right and a wrong side, so amber at 80% and red at the line mean what amber and
+   red mean everywhere else in this extension: raise it at the viewing, and don't. */
+
+.budget-cell {
+  min-width: 200px;
+}
+
+.budget {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 168px;
+}
+
+.budget-track {
+  position: relative;
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: #e4ebf1;
+  overflow: hidden;
+}
+
+.budget-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #2e648f;
+  /* A zero-width fill would vanish; a hairline says "nothing yet" rather than "no data". */
+  min-width: 2px;
+}
+
+.budget-near .budget-fill {
+  background: #d69412;
+}
+
+.budget-over .budget-fill {
+  background: #b23a48;
+}
+
+/* No cap at all: the track is drawn hatched rather than empty, because an empty track reads as a
+   budget nobody has touched. */
+.budget-none {
+  background: repeating-linear-gradient(135deg, #eef2f5, #eef2f5 3px, #e0e7ee 3px, #e0e7ee 6px);
+}
+
+.budget-none .budget-fill {
+  display: none;
+}
+
+.budget-figures {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.budget-word.budget-near {
+  color: #8a5a12;
+}
+
+.budget-word.budget-over {
+  color: #b23a48;
+}
+
+.budget-word.budget-none {
+  color: #7b8a99;
+}
+
+/* The whole bar is the way into the charges behind it. A button rather than a link because it
+   changes what this page is showing rather than going anywhere. */
+.drill {
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drill:hover .budget-track {
+  outline: 1px solid #b9c6d2;
+  outline-offset: 1px;
+}
+
+/* --- editable caps ---------------------------------------------------------------------- */
+
+.cap {
+  padding: 2px 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+  cursor: text;
+}
+
+.cap:hover {
+  border-color: #dfe6ec;
+  background: #f7fafc;
+}
+
+.cap-edit input {
+  width: 5.5em;
+  padding: 2px 6px;
+  border: 1px solid #4a7fb5;
+  border-radius: 6px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* A password an admin is about to read out, so it is wide and shown in the clear — the point is
+   for it to be transcribable, and dots would only mean typing it twice and hoping. */
+.cap-edit input[type='text'] {
+  width: 12em;
+  text-align: left;
+  font-variant-numeric: normal;
+}
+
+/* --- invite state ----------------------------------------------------------------------- */
+
+.chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.chip-pending {
+  background: #eef4f8;
+  color: #2e648f;
+}
+
+/* Expired is derived from the date, never stored — the row still says "pending" in the database.
+   It is greyed rather than red: an invite running out is the system working. */
+.chip-expired {
+  background: #f1f4f7;
+  color: #7b8a99;
+}
+
+.chip-accepted {
+  background: #edf8f3;
+  color: #1a7f5a;
+}
+
+.chip-revoked {
+  background: #fdf0f1;
+  color: #b23a48;
+}
