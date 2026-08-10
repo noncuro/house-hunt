@@ -18,6 +18,7 @@ import { SizeFact } from '@house-hunt/ui';
 import { SpendWarning } from '@house-hunt/ui';
 import { RATINGS, ratingOf } from '@house-hunt/ui';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
+import { ExtensionNotice } from '@/screens/Extension';
 import { Compare } from '@/screens/Compare';
 import { Detail } from '@/screens/Detail';
 import { Admin } from '@/screens/Admin';
@@ -319,6 +320,12 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           room left. Rendered by the same component the panel uses, so a limit on real money is
           not phrased two ways (design D9, task 5.5). */}
       <SpendWarning summary={spendQuery.data ?? null} />
+
+      {/* Beside the budget rather than inside a view, and for the same reason: whether the Rightmove
+          half is installed and signed in is a fact about the setup, not about the list you happen
+          to be looking at. Renders nothing at all when the two halves agree, which is the usual
+          case, because signing in on this page hands the credentials across at that moment. */}
+      <ExtensionNotice email={user.email} />
 
       {view === 'settings' && (
         <Settings

@@ -1,0 +1,129 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { helloExtension, signInExtension, type ExtensionState } from '@/lib/bridge';
+
+/** Whether the Rightmove half of this is installed and signed in, and the one way to fix it if not.
+ *
+ *  The website and the extension hold two independent sessions on purpose (design D3), which buys
+ *  the thing it was meant to buy — neither can revoke the other's refresh token — and costs exactly
+ *  this: they can be out of step, and somebody has to say so. Signing in here hands the credentials
+ *  across at that moment, so the usual case is already handled. This covers the other two:
+ *
+ *  - **Installed later.** You signed in on this site in June and installed the extension in August.
+ *    There is no password in memory any more, so it asks for one. It is a re-prompt for a credential
+ *    already typed on this same origin, not a new kind of secret.
+ *  - **Signed in as somebody else.** Two people share a laptop, or one account was for testing. The
+ *    overlay would quietly write verdicts under the other name, which is worth a sentence.
+ *
+ *  Absent gets a line and no link. The install is load-unpacked on a handful of laptops; a "click
+ *  here to install" button that cannot install anything is worse than the sentence. */
+export function ExtensionNotice({ email }: { email: string }) {
+  const [state, setState] = useState<ExtensionState | null>(null);
+  const [connecting, setConnecting] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    void helloExtension().then((next) => {
+      if (live) setState(next);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Nothing at all while the question is outstanding. Half a second of "checking for the
+  // extension…" above the shortlist is half a second of noise about something almost always fine.
+  if (!state) return null;
+
+  if (state.status === 'signed-in') {
+    if (state.email === email) return null;
+    return (
+      <p className="notice notice-warn">
+        The extension is signed in as <strong>{state.email}</strong>, not as you. Verdicts you leave
+        on Rightmove would be recorded under that name — sign out here and back in to put both
+        halves on the same account.
+      </p>
+    );
+  }
+
+  if (state.status === 'broken') {
+    return <p className="notice notice-bad">The extension is installed but did not answer — {state.message}</p>;
+  }
+
+  if (state.status === 'absent') {
+    return (
+      <p className="dim">
+        The browser extension is not installed here, so Rightmove pages will not show travel times or
+        the rating panel. Everything on this page works without it.
+      </p>
+    );
+  }
+
+  return connecting ? (
+    <Connect email={email} onDone={(next) => { setConnecting(false); if (next) setState(next); }} />
+  ) : (
+    <p className="notice notice-warn">
+      The extension is installed but signed out, so Rightmove pages show nothing.{' '}
+      <button className="key" onClick={() => setConnecting(true)}>
+        Connect it
+      </button>
+    </p>
+  );
+}
+
+/** The password re-prompt.
+ *
+ *  The address is not asked for — it is whoever is signed in here, and offering to type a different
+ *  one would be offering to put the two halves on different accounts, which is the state this
+ *  component exists to complain about. */
+function Connect({ email, onDone }: { email: string; onDone: (next: ExtensionState | null) => void }) {
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  async function connect() {
+    setBusy(true);
+    setFailed(null);
+    const reply = await signInExtension(email, password);
+    setPassword('');
+    setBusy(false);
+
+    if (!reply) return setFailed('the extension stopped answering — try reloading this page');
+    if (reply.kind === 'error') return setFailed(reply.message);
+    if (reply.kind !== 'sign-in') return setFailed(`unexpected ${reply.kind} reply`);
+    if (reply.outcome.status === 'signed-in') return onDone({ status: 'signed-in', email });
+    if (reply.outcome.status === 'wrong-credentials') return setFailed('that is not the password for this account');
+    setFailed(
+      'message' in reply.outcome ? reply.outcome.message : `the extension refused: ${reply.outcome.status}`,
+    );
+  }
+
+  return (
+    <section className="notice notice-warn">
+      <p>
+        Type your password once and the extension signs itself in as <strong>{email}</strong>. It
+        gets its own session rather than a copy of this one, which is why it needs this.
+      </p>
+      <div className="fields">
+        <input
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          placeholder="Password"
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && password && !busy) void connect();
+          }}
+        />
+        <button className="primary" disabled={busy || !password} onClick={() => void connect()}>
+          {busy ? 'Connecting…' : 'Connect'}
+        </button>
+        <button disabled={busy} onClick={() => onDone(null)}>
+          Not now
+        </button>
+      </div>
+      {failed && <p className="error">{failed}</p>}
+    </section>
+  );
+}

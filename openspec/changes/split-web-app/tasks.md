@@ -76,18 +76,24 @@ separate.
 
 ## 4. The bridge
 
-- [ ] 4.1 A content script on the website's origin only, carrying `hello`,
+- [x] 4.1 A content script on the website's origin only, carrying `hello`,
       `sign-in` and `sign-out` and nothing else (D3). Addressed by origin, never
-      by extension id.
-- [ ] 4.2 Website: hand the credentials across on a successful sign-in; sign the
+      by extension id. The origin cannot be read on the `matches` line — WXT
+      evaluates that file to write the manifest in a pass where
+      `import.meta.env` is undefined, and the obvious spelling silently ships
+      `matches: ['undefined/*']`. A placeholder plus a `build:manifestGenerated`
+      hook that throws if it is missing; negative-tested.
+- [x] 4.2 Website: hand the credentials across on a successful sign-in; sign the
       extension out when you sign out; show "install the extension" or "connect
       the extension" from what `hello` answers.
-- [ ] 4.3 Extension: signed-out surfaces link to the website instead of showing
+- [x] 4.3 Extension: signed-out surfaces link to the website instead of showing
       a sign-in form. `chrome.action.onClicked` opens `WXT_WEB_APP_URL`.
 - [ ] 4.4 Verify the two sessions are independent: sign in on both, force a
       refresh on each, confirm neither signs the other out. This is the failure
       D3 exists to prevent and it is invisible until days later, so provoke it
-      deliberately.
+      deliberately. **Daniel's step** — it needs two real sessions, so it needs
+      a password. `pnpm check:bridge` covers the envelope guards, which is the
+      part that can be checked without a browser.
 
 ## 5. Cutover
 

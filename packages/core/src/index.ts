@@ -10,6 +10,7 @@ export * from './types';
 export * from './contracts';
 export * from './search-card';
 export * from './log';
+export * from './bridge';
 
 export * from './facts';
 export * from './hubs';

@@ -23,6 +23,7 @@ import {
 } from '@house-hunt/core/db';
 import type { AuthState, Rating, TravelTime, Verdict } from '@house-hunt/core';
 import { endSession } from './session';
+import { signOutExtension } from './bridge';
 
 /** Data plumbing for the house hunt.
  *
@@ -105,7 +106,13 @@ export function useAuth() {
 export function useSignOut() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: endSession,
+    // The extension goes first, and its failure is not allowed to stop this one. Signing out is
+    // something you do because you want to be signed out; a bridge that did not answer must not
+    // leave you signed in here on the strength of it.
+    mutationFn: async () => {
+      await signOutExtension().catch(() => null);
+      await endSession();
+    },
     onSuccess() {
       client.setQueryData<AuthState>(keys.auth, { status: 'signed-out' });
       void client.resetQueries({ predicate: (query) => query.queryKey[0] !== keys.auth[0] });

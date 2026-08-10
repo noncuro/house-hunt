@@ -16,6 +16,22 @@ if (!supabaseHost) {
   throw new Error(`WXT_SUPABASE_URL missing from ${repoRoot}.env — the extension cannot reach its database`);
 }
 
+// Where the website lives. The bridge content script is injected on this origin and no other, so
+// this is a trust boundary and not only a destination (design D3).
+if (!env.WXT_WEB_APP_URL) {
+  throw new Error(`WXT_WEB_APP_URL missing from ${repoRoot}.env — the bridge has no origin to trust`);
+}
+const webAppOrigin = new URL(env.WXT_WEB_APP_URL).origin;
+
+/** The bridge entrypoint carries this, and the hook below replaces it.
+ *
+ *  It has to be a literal in the entrypoint file because WXT reads that file to write the manifest,
+ *  in a pass where `import.meta.env` is not defined — an `import.meta.env.WXT_WEB_APP_URL` there
+ *  produces the string `undefined/*`, builds cleanly, and ships a content script that matches
+ *  nothing. That is the failure that looks like success, so the placeholder is a name that could
+ *  never be a real site and the hook throws if it is not there. */
+const BRIDGE_PLACEHOLDER = 'https://replaced-at-build-time.invalid/*';
+
 // Two distributions, and they must not share an extension id.
 //
 // A load-unpacked install takes its id from the `key` below (see the comment on it). The Chrome
@@ -73,6 +89,22 @@ export default defineConfig({
     //
     // Covers both the REST API and the Edge Functions, which live on the same host.
     host_permissions: [`${supabaseHost}/*`],
+  },
+  hooks: {
+    // The one thing in the manifest that cannot be written by the entrypoint itself — see
+    // BRIDGE_PLACEHOLDER above for why.
+    'build:manifestGenerated'(_wxt, manifest) {
+      const bridge = manifest.content_scripts?.find((script) =>
+        script.matches?.includes(BRIDGE_PLACEHOLDER),
+      );
+      if (!bridge) {
+        throw new Error(
+          `no content script matching ${BRIDGE_PLACEHOLDER} — the bridge entrypoint has to carry ` +
+            'that placeholder so this hook can put the real origin in its place',
+        );
+      }
+      bridge.matches = [`${webAppOrigin}/*`];
+    },
   },
   vite: () => ({
     envDir: repoRoot,

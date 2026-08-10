@@ -1,4 +1,5 @@
 import { configureCore, startSessionHeartbeat } from '@/lib/auth';
+import { webAppUrl } from '@/lib/web-app';
 // What signing in means, and everything that reads the database with the result, is shared with the
 // website. What keeping a session alive in a service worker means is not, and stays above.
 import { accessToken, requireSession, signIn, signOut, Unauthenticated } from '@house-hunt/core/db';
@@ -70,7 +71,6 @@ import { logWarn } from '@house-hunt/core';
  *  See supabase/functions/analyse/. */
 const ANALYSIS_FUNCTION = `${import.meta.env.WXT_SUPABASE_URL}/functions/v1/analyse`;
 
-const SHORTLIST_PAGE = 'shortlist.html';
 
 export default defineBackground(() => {
   // Hand core the client, the refresh policy and somewhere to log, before anything reads the
@@ -83,12 +83,16 @@ export default defineBackground(() => {
   // for a week does not come back asking to sign in (design D2).
   startSessionHeartbeat();
 
-  // Clicking the toolbar icon opens the shortlist, reusing the tab if it is already open rather
-  // than stacking up copies of the same page.
+  // Clicking the toolbar icon opens the website, reusing the tab if it is already open rather than
+  // stacking up copies of the same page. It used to open `shortlist.html` inside the extension —
+  // an address nobody could be sent, which is most of why the app moved out (design D5).
   chrome.action.onClicked.addListener(() => {
     void (async () => {
-      const url = chrome.runtime.getURL(SHORTLIST_PAGE);
-      const [existing] = await chrome.tabs.query({ url });
+      const url = webAppUrl();
+      // Matched on the origin rather than the exact URL, because the app puts the flat you were
+      // looking at in the hash and every screen is a tab within one page. Without the wildcard a
+      // second click on a tab already sitting on `#card-88023648` would open a third copy.
+      const [existing] = await chrome.tabs.query({ url: `${url}/*` });
       if (existing?.id !== undefined) {
         await chrome.tabs.update(existing.id, { active: true });
         if (existing.windowId !== undefined) await chrome.windows.update(existing.windowId, { focused: true });
@@ -112,7 +116,7 @@ export default defineBackground(() => {
  *  loud about the wrong thing. */
 function refusal(e: unknown): Envelope<never> {
   if (e instanceof Unauthenticated) {
-    return { ok: false, unauthenticated: true, error: 'sign in to the house hunt extension' };
+    return { ok: false, unauthenticated: true, error: 'sign in to the house hunt' };
   }
   if (e instanceof NoActiveProject) {
     return { ok: false, noProject: true, error: e.message };

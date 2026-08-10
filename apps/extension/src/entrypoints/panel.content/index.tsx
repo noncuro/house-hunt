@@ -2,6 +2,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import type { ReactNode } from 'react';
 import { UiHostProvider } from '@house-hunt/ui';
 import { extensionHost } from '@/lib/ui-host';
+import { webAppUrl } from '@/lib/web-app';
 import { Panel } from '@/components/Panel';
 import {
   PAGE_MESSAGE,
@@ -106,16 +107,22 @@ function Loading() {
 
 /** One line, and it is a sentence rather than an absence. A panel that rendered nothing at all
  *  here would be indistinguishable from one that had broken, and a panel that tried anyway would
- *  be a column of refusals. The shortlist is where signing in happens; it opens from the toolbar
- *  icon, because a content script cannot navigate to an extension page that is not
- *  web-accessible. */
+ *  be a column of refusals.
+ *
+ *  A link now, rather than "click the toolbar icon". Signing in happens on the website and hands
+ *  the credentials to this extension at that moment (design D3), so the whole of the fix is one
+ *  click away and can be pointed at — which is the sort of thing a `chrome-extension://` address
+ *  could never be. */
 function SignedOut() {
   return (
     <div className="rm-panel rm-signed-out" data-testid="signed-out">
-      <strong>Sign in to the house hunt extension.</strong>
+      <strong>Sign in to the house hunt.</strong>
       <div className="rm-signed-out-how">
-        Click the 🏠 House hunt icon in the toolbar to open the shortlist and sign in, then reload
-        this page. Nothing about this listing has been recorded.
+        <a href={webAppUrl()} target="_blank" rel="noopener">
+          Open the house hunt
+        </a>{' '}
+        and sign in, then reload this page. Signing in there signs this in too. Nothing about this
+        listing has been recorded.
       </div>
     </div>
   );
@@ -128,7 +135,10 @@ function NoProject() {
     <div className="rm-panel rm-signed-out" data-testid="no-project">
       <strong>No house hunt selected.</strong>
       <div className="rm-signed-out-how">
-        Open the shortlist from the 🏠 House hunt icon and pick a project, then reload this page.
+        <a href={webAppUrl()} target="_blank" rel="noopener">
+          Open the house hunt
+        </a>{' '}
+        and pick one, then reload this page.
       </div>
     </div>
   );

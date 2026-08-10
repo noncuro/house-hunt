@@ -9,6 +9,7 @@ import {
 } from '@house-hunt/core';
 import { redeemInvite } from '@house-hunt/core/db';
 import { beginSession } from '@/lib/session';
+import { signInExtension } from '@/lib/bridge';
 
 /** The whole of signing in: an address and a password, and one other door for somebody arriving
  *  with an invite code.
@@ -47,10 +48,29 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
   async function signIn() {
     setBusy('signing-in');
     const reply = await attempt(() => beginSession(address, password));
+    if (!reply) return setBusy(null);
+    if (reply.status !== 'signed-in') {
+      setBusy(null);
+      return setOutcome(fromSignIn(reply));
+    }
+    await handOver();
     setBusy(null);
-    if (!reply) return;
-    if (reply.status === 'signed-in') return onSignedIn(reply.state);
-    setOutcome(fromSignIn(reply));
+    onSignedIn(reply.state);
+  }
+
+  /** The one moment the extension can be signed in without asking anybody anything: the password is
+   *  in a local variable a few lines up, and it is never anywhere else (design D3).
+   *
+   *  Deliberately not reported when it fails. Signing in here has already succeeded, the shortlist
+   *  is about to render, and an extension that is absent or refused is what the "connect it" notice
+   *  on that page is for — saying it twice, one of them while the reader is watching a spinner
+   *  labelled "signing in", would make an optional half look like a broken one. */
+  async function handOver() {
+    try {
+      await signInExtension(address, password);
+    } catch {
+      // Nothing to do about it here.
+    }
   }
 
   /** Redeem, then sign in with the very password just chosen. Two calls rather than one because
@@ -67,9 +87,13 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
     }
     setBusy('signing-in');
     const session = await attempt(() => beginSession(address, password));
+    if (!session) return setBusy(null);
+    if (session.status === 'signed-in') {
+      await handOver();
+      setBusy(null);
+      return onSignedIn(session.state);
+    }
     setBusy(null);
-    if (!session) return;
-    if (session.status === 'signed-in') return onSignedIn(session.state);
     // The account was made and then would not let us in, which is not a thing the user did and not
     // a thing retyping fixes. Say what happened rather than showing them the sign-in refusal as if
     // they had mistyped something a moment after typing it correctly.
