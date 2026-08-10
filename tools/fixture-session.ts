@@ -26,7 +26,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import type { Page, Worker } from 'playwright';
-import { SEED_HUBS } from '../src/lib/hubs';
+import { SEED_HUBS } from '../packages/core/src/hubs';
 import { localCredentials } from './supabase-local';
 
 /** Must match `SESSION_STORAGE_KEY` in `src/lib/auth.ts`. Imported rather than repeated would drag

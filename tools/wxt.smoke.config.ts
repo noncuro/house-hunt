@@ -19,6 +19,6 @@
  *     loaded in Chrome at a database on your laptop that is empty when Docker is not running — a
  *     working install turning into an empty one with nothing on screen to explain it.
  */
-import base from '../wxt.config';
+import base from '../apps/extension/wxt.config';
 
 export default { ...base, outDir: '.output/smoke' };

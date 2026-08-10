@@ -1,16 +1,10 @@
 {
-  "extends": "./.wxt/tsconfig.json",
+  "//": "For the repo-root tools/ scripts, which run under tsx and reach into the packages.",
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "jsx": "react-jsx",
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "paths": {
-      "@/*": [
-        "./src/*"
-      ]
-    }
+    "types": ["node"],
+    "allowImportingTsExtensions": true
   },
-  "exclude": [
-    "supabase/functions"
-  ]
+  "include": ["tools"],
+  "exclude": ["supabase/functions"]
 }

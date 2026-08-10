@@ -16,7 +16,7 @@
  */
 import { deflateSync, inflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
-import { flattenOntoWhite, looksTransparent } from '../src/lib/png';
+import { flattenOntoWhite, looksTransparent } from '../packages/core/src/png';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {

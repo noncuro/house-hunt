@@ -3,7 +3,7 @@
  *  The alternative was a fork, and a fork of the analysis prompt is exactly the kind of drift that
  *  would have the panel and the function disagree about what a flat is. Deno cannot reach up out
  *  of `supabase/functions/` at deploy time, so a copy is unavoidable — but it is generated, and
- *  `--check` fails if it is stale, so the copy can never quietly diverge from `src/lib/`.
+ *  `--check` fails if it is stale, so the copy can never quietly diverge from `packages/core/src/`.
  *
  *    pnpm sync:function          # write the copies
  *    pnpm sync:function --check  # fail if they are out of date (run before deploying)
@@ -14,7 +14,7 @@ import { resolve } from 'node:path';
 const ROOT = resolve(import.meta.dirname, '..');
 const SHARED = resolve(ROOT, 'supabase/functions/_shared');
 
-/** Every file the function needs from `src/lib`. These are the two modules deliberately written
+/** Every file the function needs from `packages/core/src`. These are the two modules deliberately written
  *  with no `node:` imports and no `import.meta.env` reads, so they run unchanged under Deno.
  *
  *  Only these are generated, and only these are checked. `_shared/` also holds hand-written modules
@@ -23,7 +23,7 @@ const SHARED = resolve(ROOT, 'supabase/functions/_shared');
  *  is which. */
 const FILES = ['analysis.ts', 'png.ts'];
 
-const HEADER = `// GENERATED — do not edit. Copied from src/lib/ by tools/sync-edge-function.ts.
+const HEADER = `// GENERATED — do not edit. Copied from packages/core/src/ by tools/sync-edge-function.ts.
 // Edit the original and run \`pnpm sync:function\`.
 
 `;
@@ -33,7 +33,7 @@ mkdirSync(SHARED, { recursive: true });
 
 let stale = 0;
 for (const file of FILES) {
-  const source = readFileSync(resolve(ROOT, 'src/lib', file), 'utf8');
+  const source = readFileSync(resolve(ROOT, 'packages/core/src', file), 'utf8');
   // Deno resolves imports as real URLs, so the extension is not optional the way it is in Vite.
   const wanted = HEADER + source.replace(/(from\s+'\.\/[\w-]+)'/g, "$1.ts'");
   const target = resolve(SHARED, file);

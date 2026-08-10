@@ -21,7 +21,7 @@
  *    pnpm find:locations                    # re-check all five
  *    pnpm find:locations Kentish-Town-Station Tufnell-Park-Station
  */
-import { distanceMiles, SWEEP_HUBS } from '../src/lib/hubs';
+import { distanceMiles, SWEEP_HUBS } from '../packages/core/src/hubs';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';

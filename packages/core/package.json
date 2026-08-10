@@ -1,0 +1,16 @@
+{
+  "name": "@house-hunt/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "//": "An internal package: the entry points are TypeScript source, transpiled by whichever app imports them. Nothing here is built or published separately.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./db": "./src/db/index.ts",
+    "./tfl": "./src/tfl.ts"
+  },
+  "//exports": "Two entry points, and the split is the point. '.' is types, contracts and pure domain logic and pulls in no supabase-js; './db' is the data layer and does. packages/ui may import the first and never the second \u2014 see tools/check-one-client.ts.",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.2"
+  }
+}

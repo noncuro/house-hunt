@@ -11,9 +11,9 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { SEED_HUBS, toSweepHub } from '../src/lib/hubs';
-import type { ProjectHub } from '../src/lib/messages';
-import { readSearchPage, staleAgainst, type SearchPage } from '../src/lib/search-page';
+import { SEED_HUBS, toSweepHub } from '../packages/core/src/hubs';
+import type { ProjectHub } from '../apps/extension/src/lib/messages';
+import { readSearchPage, staleAgainst, type SearchPage } from '../apps/extension/src/lib/search-page';
 import {
   RESULTS_PER_PAGE,
   SWEEP_MARGIN_HOURS,
@@ -23,7 +23,7 @@ import {
   sweepWindow,
   searchLocationFor,
   WIDEST_WINDOW,
-} from '../src/lib/sweep';
+} from '../packages/core/src/sweep';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {

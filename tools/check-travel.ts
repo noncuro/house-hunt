@@ -4,7 +4,7 @@
  *  it wrong is silent in both directions: too strict and every page load re-asks TfL for
  *  everything, too loose and a commute measured at midnight during engineering works is shown
  *  forever as the answer. Neither looks like a bug on screen. */
-import { NO_ROUTE_RETRY_DAYS, TRAVEL_BASIS, nextWeekdayMorning, staleTravel } from '../src/lib/tfl';
+import { NO_ROUTE_RETRY_DAYS, TRAVEL_BASIS, nextWeekdayMorning, staleTravel } from '../packages/core/src/tfl';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {

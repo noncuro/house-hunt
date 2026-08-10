@@ -14,7 +14,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium, type ConsoleMessage } from 'playwright';
-import { readSearchPage } from '../src/lib/search-page';
+import { readSearchPage } from '../apps/extension/src/lib/search-page';
 import { assertSignedIn, FIXTURE_EMAIL, plantSession, seedFixture, smokeBuild } from './fixture-session';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 

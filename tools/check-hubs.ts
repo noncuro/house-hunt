@@ -14,8 +14,8 @@ import {
   hubsWithPlaces,
   initialBearing,
   nearestHub,
-} from '../src/lib/hubs';
-import type { ProjectHub } from '../src/lib/messages';
+} from '../packages/core/src/hubs';
+import type { ProjectHub } from '../apps/extension/src/lib/messages';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {

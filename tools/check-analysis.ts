@@ -8,7 +8,7 @@
  *
  *    pnpm check:analysis
  */
-import { validateAnalysis } from '../src/lib/analysis';
+import { validateAnalysis } from '../packages/core/src/analysis';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {

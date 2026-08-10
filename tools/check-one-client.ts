@@ -1,39 +1,61 @@
-/** One Supabase client, in one context. The invariant the whole session design rests on.
+/** The boundaries the split rests on, checked rather than trusted.
  *
- *  Auth was originally left out of this project because of the MV3 trap: a service worker has no
- *  `localStorage` and Chrome tears it down when idle. What makes it survivable (design D2) is that
- *  exactly one context ever holds a client, so exactly one thing ever holds the refresh token.
- *  Supabase rotates that token on every use, so a second client in the shortlist page or a content
- *  script would eventually refresh with a token the worker had already spent — and the loser is
+ *  There used to be one invariant here — one Supabase client, in one context — because there was
+ *  one application. Splitting the website out of the extension turns that into four, and every one
+ *  of them fails the same way if it is only written down: silently, later, on the other laptop.
+ *
+ *  **1. One client per process.** Supabase rotates the refresh token on every use, so two clients
+ *  in one process eventually refresh with a token the other has already spent, and the loser is
  *  signed out with nothing on screen explaining why. Intermittently. Under load. Which is to say:
- *  on the other laptop, on an evening, while somebody is looking at flats.
+ *  on the other laptop, on an evening, while somebody is looking at flats. Each application
+ *  constructs exactly one and hands it to core through `configure()`.
  *
- *  So this is a check rather than a comment. Two assertions:
+ *  Note what this does *not* forbid: the extension and the website each hold their own client and
+ *  their own session, deliberately, because they are separate processes. That is design D3 — one
+ *  sign-in, two independent refresh-token families — and copying a session between them would
+ *  reintroduce the failure above somewhere neither this check nor the runtime can see it.
  *
- *    1. `createClient` is called in exactly one file — `src/lib/auth.ts`.
- *    2. `lib/auth.ts` and `lib/supabase.ts` are imported for their *runtime* values only by each
- *       other and by `entrypoints/background.ts`. Everyone else may `import type`, which compiles
- *       to nothing and reaches no database.
+ *  **2. `packages/core` constructs nothing.** It cannot know whether it is inside a service worker
+ *  that needs the `chrome.storage` adapter or a tab where the defaults are right, so a client built
+ *  there would be wrong in one of the two places — and wrong quietly, because a session persisted
+ *  somewhere it will not be found again looks exactly like being signed out.
  *
- *  Run: `tsx tools/check-one-client.ts`
+ *  **3. `packages/ui` never reaches the database.** A component takes its data as props. An import
+ *  of `@house-hunt/core/db` from a component would pull the whole data layer, and
+ *  `@supabase/supabase-js` with it, into every content-script bundle that only wanted a rating
+ *  colour.
+ *
+ *  **4. The two applications do not import each other.** `apps/web` reaching into `apps/extension`
+ *  would compile — the files are right there — and then fail at runtime on the first `chrome.*`.
+ *
+ *  Run: `pnpm check:one-client`
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
-const SRC = join(ROOT, 'src');
 
-/** The one file that may construct a client. */
-const CLIENT_OWNER = 'src/lib/auth.ts';
+/** The one file in each application that may construct a client, and nothing else may. */
+const CLIENT_OWNERS = new Set(['apps/extension/src/lib/auth.ts', 'apps/web/src/lib/client.ts']);
 
-/** The files that may import those two modules for their runtime values. */
-const RUNTIME_IMPORTERS = new Set(['src/lib/auth.ts', 'src/lib/supabase.ts', 'src/entrypoints/background.ts']);
+/** What a component may not import for its runtime values, in any spelling. */
+const DB_SPECIFIERS = ['@house-hunt/core/db', './db', '../db', './db/index', '../db/index'];
 
-/** The modules a view must not pull a value out of. */
-const GUARDED = ['@/lib/supabase', '@/lib/auth', './supabase', './auth', '../lib/supabase', '../lib/auth'];
+interface Import {
+  specifier: string;
+  typeOnly: boolean;
+  text: string;
+}
 
 function walk(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return []; // apps/web does not exist yet; the check should not fail for that.
+  }
+  return entries.flatMap((entry) => {
+    if (entry === 'node_modules' || entry === '.output' || entry === '.wxt' || entry === '.next') return [];
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) return walk(full);
     return /\.tsx?$/.test(entry) ? [full] : [];
@@ -45,11 +67,9 @@ function walk(dir: string): string[] {
  *  Deliberately a regex rather than a parser: this check has to be trivially runnable and it is
  *  matching import *statements*, which are the one construct in TypeScript whose grammar is fixed
  *  at the top of a file. `import type X`, `import { type X }` and a bare `import '...'` are the
- *  three shapes it has to tell apart, and it is tested against all three below by the files it
- *  actually reads.
- */
-function importsOf(source: string): Array<{ specifier: string; typeOnly: boolean; text: string }> {
-  const found: Array<{ specifier: string; typeOnly: boolean; text: string }> = [];
+ *  three shapes it has to tell apart, and it is tested against all three by the files it reads. */
+function importsOf(source: string): Import[] {
+  const found: Import[] = [];
   const pattern = /import\s+(type\s+)?([^'"]*?)from\s*['"]([^'"]+)['"]/g;
   for (const match of source.matchAll(pattern)) {
     const [text, typeKeyword, clause = '', specifier] = match;
@@ -58,7 +78,11 @@ function importsOf(source: string): Array<{ specifier: string; typeOnly: boolean
     const named = clause.match(/\{([^}]*)\}/)?.[1];
     const allNamedAreTypes =
       named !== undefined &&
-      named.split(',').map((s) => s.trim()).filter(Boolean).every((s) => s.startsWith('type '));
+      named
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .every((s) => s.startsWith('type '));
     const hasDefaultOrNamespace = /^\s*[A-Za-z_$*]/.test(clause.replace(/\{[^}]*\}/, '').trim());
     found.push({
       specifier: specifier!,
@@ -70,42 +94,94 @@ function importsOf(source: string): Array<{ specifier: string; typeOnly: boolean
 }
 
 const problems: string[] = [];
-let constructors = 0;
+const constructors: string[] = [];
+const configurers: string[] = [];
 
-for (const file of walk(SRC)) {
-  const rel = relative(ROOT, file).replaceAll('\\', '/');
-  const source = readFileSync(file, 'utf8');
+for (const dir of ['packages/core', 'packages/ui', 'apps/extension', 'apps/web']) {
+  for (const file of walk(join(ROOT, dir))) {
+    const rel = relative(ROOT, file).replaceAll('\\', '/');
+    const source = readFileSync(file, 'utf8');
+    const imports = importsOf(source);
 
-  if (/\bcreateClient\s*\(/.test(source)) {
-    constructors++;
-    if (rel !== CLIENT_OWNER) {
-      problems.push(
-        `${rel} calls createClient(). Only ${CLIENT_OWNER} may — a second client means a second ` +
-          'refresh token holder, and the loser of that race is silently signed out (design D2).',
-      );
+    if (/\bcreateClient\s*\(/.test(source)) {
+      constructors.push(rel);
+      if (!CLIENT_OWNERS.has(rel)) {
+        problems.push(
+          `${rel} calls createClient(). Only ${[...CLIENT_OWNERS].join(' or ')} may — a second ` +
+            'client in one process means a second refresh-token holder, and the loser of that race ' +
+            'is silently signed out (design D2).',
+        );
+      }
+    }
+
+    if (/\bconfigure\s*\(/.test(source) && dir.startsWith('apps/')) configurers.push(rel);
+
+    // 3 — a component takes its data as props.
+    if (dir === 'packages/ui') {
+      for (const entry of imports) {
+        if (DB_SPECIFIERS.includes(entry.specifier) && !entry.typeOnly) {
+          problems.push(
+            `${rel} imports values from '${entry.specifier}' (\`${entry.text}\`). A component takes ` +
+              'its data as props; this pulls the whole data layer, and supabase-js with it, into ' +
+              'every bundle that renders it. `import type` is fine.',
+          );
+        }
+        if (entry.specifier.startsWith('@/') || entry.specifier.includes('apps/')) {
+          problems.push(
+            `${rel} imports '${entry.specifier}', which is an application path. packages/ui is ` +
+              'shared by both surfaces and may only reach @house-hunt/core, react, and its own files.',
+          );
+        }
+      }
+    }
+
+    // 4 — one application never reaches into the other.
+    if (dir.startsWith('apps/')) {
+      const other = dir === 'apps/web' ? 'apps/extension' : 'apps/web';
+      for (const entry of imports) {
+        if (entry.specifier.includes(other)) {
+          problems.push(
+            `${rel} imports '${entry.specifier}' from ${other}. The two applications share code ` +
+              'through packages/, never directly: what compiles here fails at runtime on the first ' +
+              'chrome.* call, or the first window.',
+          );
+        }
+      }
     }
   }
+}
 
-  if (RUNTIME_IMPORTERS.has(rel)) continue;
-
-  for (const entry of importsOf(source)) {
-    if (!GUARDED.includes(entry.specifier) || entry.typeOnly) continue;
+// 2 — core builds nothing.
+for (const owner of constructors) {
+  if (owner.startsWith('packages/')) {
     problems.push(
-      `${rel} imports values from '${entry.specifier}' (\`${entry.text}\`). Reach the database ` +
-        'through a message to the background worker; `import type` is fine.',
+      `${owner} constructs a client. packages/ cannot know whether it is in a service worker that ` +
+        'needs the chrome.storage adapter or a tab where the defaults are right, so its guess ' +
+        'would be wrong in one of the two — and wrong quietly.',
     );
   }
 }
 
-if (constructors === 0) {
-  problems.push(`nothing calls createClient() — ${CLIENT_OWNER} should. Did the client move?`);
+if (constructors.length === 0) {
+  problems.push(
+    `nothing calls createClient() — one of ${[...CLIENT_OWNERS].join(', ')} should. Did the client move?`,
+  );
+}
+
+if (configurers.length === 0) {
+  problems.push(
+    'nothing calls configure(). Core throws rather than constructing a default, so an application ' +
+      'that forgets it fails on its first database read rather than at start-up.',
+  );
 }
 
 if (problems.length > 0) {
-  console.error('one-client check FAILED\n');
+  console.error('boundary check FAILED\n');
   for (const problem of problems) console.error(`  ✗ ${problem}\n`);
   process.exit(1);
 }
 
-console.log(`one-client check passed — createClient() only in ${CLIENT_OWNER}, runtime imports only in:`);
-for (const importer of RUNTIME_IMPORTERS) console.log(`  ${importer}`);
+console.log('boundary check passed');
+console.log(`  createClient() only in: ${constructors.join(', ')}`);
+console.log(`  configure() called from: ${configurers.join(', ')}`);
+console.log('  packages/ui reaches no database, and neither application imports the other');

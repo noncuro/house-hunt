@@ -5,7 +5,7 @@
  *  bathroom when the plan clearly shows a bath and two. */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { looksTransparent } from '../src/lib/png';
+import { looksTransparent } from '../packages/core/src/png';
 
 // The repo's own `.env`, or `ENV_FILE` if it lives somewhere else. Whatever is already exported
 // wins, so this works with no file at all.

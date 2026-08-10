@@ -8,8 +8,8 @@
  *    pnpm check:extractor /tmp/rm.html
  */
 import { readFileSync } from 'node:fs';
-import { decodePageModel } from '../src/lib/decode';
-import { toListing } from '../src/lib/extract';
+import { decodePageModel } from '../apps/extension/src/lib/decode';
+import { toListing } from '../apps/extension/src/lib/extract';
 
 /** Pull the `window.__PAGE_MODEL = {...}` object out of the HTML by brace matching. */
 function readPageModel(html: string): unknown {

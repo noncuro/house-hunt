@@ -7,7 +7,31 @@ settings:
 importers:
 
   .:
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      oxlint:
+        specifier: ^1.77.0
+        version: 1.77.0
+      playwright:
+        specifier: ^1.49.0
+        version: 1.62.1
+      tsx:
+        specifier: ^4.23.11
+        version: 4.23.11
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  apps/extension:
     dependencies:
+      '@house-hunt/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@house-hunt/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@supabase/supabase-js':
         specifier: ^2.112.2
         version: 2.112.2
@@ -42,15 +66,6 @@ importers:
       '@wxt-dev/module-react':
         specifier: ^1.1.3
         version: 1.2.2(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.11))(wxt@0.21.3(esbuild@0.28.2)(rolldown@1.2.3)(typescript@5.9.3)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.11)))
-      oxlint:
-        specifier: ^1.77.0
-        version: 1.77.0
-      playwright:
-        specifier: ^1.49.0
-        version: 1.62.1
-      tsx:
-        specifier: ^4.23.11
-        version: 4.23.11
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
@@ -60,6 +75,34 @@ importers:
       wxt:
         specifier: ^0.21.3
         version: 0.21.3(esbuild@0.28.2)(rolldown@1.2.3)(typescript@5.9.3)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.11))
+
+  packages/core:
+    dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.112.2
+        version: 2.112.2
+
+  packages/ui:
+    dependencies:
+      '@house-hunt/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.0
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.2.0
+        version: 19.2.4(@types/react@19.2.18)
+      react:
+        specifier: ^19.2.0
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.8(react@19.2.8)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
 
 packages:
 

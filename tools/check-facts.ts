@@ -1,7 +1,7 @@
 /** Cases for the fact-resolution logic: which source wins, what counts as a conflict, and how
  *  a listing date reads back as elapsed time. These are pure functions, so they are cheap to
  *  pin down — and both are places where being quietly wrong looks exactly like being right. */
-import { claimLabel, relativeUpdate, resolveReading } from '../src/lib/facts';
+import { claimLabel, relativeUpdate, resolveReading } from '../packages/core/src/facts';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {

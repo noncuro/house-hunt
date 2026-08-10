@@ -25,9 +25,9 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium, type ConsoleMessage } from 'playwright';
-import { SEED_HUBS } from '../src/lib/hubs';
-import { readSearchPage } from '../src/lib/search-page';
-import { sweepSearchUrl, WIDEST_WINDOW } from '../src/lib/sweep';
+import { SEED_HUBS } from '../packages/core/src/hubs';
+import { readSearchPage } from '../apps/extension/src/lib/search-page';
+import { sweepSearchUrl, WIDEST_WINDOW } from '../packages/core/src/sweep';
 import { fixtureHubs, plantSession, seedFixture, smokeBuild } from './fixture-session';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 

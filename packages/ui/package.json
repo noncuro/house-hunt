@@ -1,0 +1,25 @@
+{
+  "name": "@house-hunt/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "//": "The React components both surfaces render. Source, not a build \u2014 see @house-hunt/core.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*.css": "./src/*.css"
+  },
+  "dependencies": {
+    "@house-hunt/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "^5.9.2"
+  }
+}

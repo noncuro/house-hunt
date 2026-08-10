@@ -1,0 +1,36 @@
+{
+  "name": "@house-hunt/ext",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "//": "The Rightmove overlay. Content scripts, the background worker that serves them, and the session. Everything else moved to apps/web.",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "zip:store": "STORE=1 wxt zip",
+    "compile": "tsc --noEmit",
+    "postinstall": "wxt prepare",
+    "package": "wxt build && cd .output/chrome-mv3 && zip -qr ../../../../house-hunt.zip . && echo \"wrote house-hunt.zip\""
+  },
+  "dependencies": {
+    "@house-hunt/core": "workspace:*",
+    "@house-hunt/ui": "workspace:*",
+    "@supabase/supabase-js": "^2.112.2",
+    "@tanstack/react-query": "^5.101.4",
+    "leaflet": "^1.9.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.30",
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@wxt-dev/module-react": "^1.1.3",
+    "typescript": "^5.9.2",
+    "vite": "^8.2.1",
+    "wxt": "^0.21.3"
+  }
+}

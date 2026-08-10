@@ -14,8 +14,8 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { SWEEP_HUBS } from '../src/lib/hubs';
-import { sweepSearchUrl, WIDEST_WINDOW } from '../src/lib/sweep';
+import { SWEEP_HUBS } from '../packages/core/src/hubs';
+import { sweepSearchUrl, WIDEST_WINDOW } from '../packages/core/src/sweep';
 
 const wanted = process.argv[2];
 if (!wanted) {
