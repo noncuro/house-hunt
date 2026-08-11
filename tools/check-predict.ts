@@ -18,7 +18,7 @@
  *
  *    pnpm check:predict
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import {
   auc,
   featuresFor,
@@ -104,7 +104,24 @@ function lambdaHistogram(lambdas: number[]): string {
   return [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([l, c]) => `${l}×${c}`).join(' ');
 }
 
-const path = process.argv[2] ?? '.fixtures/predict-daniel-ashley.json';
+const DEFAULT_FIXTURE = '.fixtures/predict-daniel-ashley.json';
+const given = process.argv[2];
+const path = given ?? DEFAULT_FIXTURE;
+
+// The fixture is a frozen read of one real project, and `.fixtures/` is not committed, so a clean
+// checkout may not have it. Say so and stand down rather than failing `check:all` for a file that
+// was never expected to be there — but only for the default path. A fixture named on the command
+// line was named deliberately, and its absence is an error, not a circumstance.
+if (!existsSync(path)) {
+  if (given) throw new Error(`no fixture at ${path}`);
+  console.log(
+    `verdict score — SKIPPED, no fixture at ${DEFAULT_FIXTURE}\n` +
+      '  This proves nothing; it only declines to fail. Generate one with:\n' +
+      `    tsx tools/export-predict-fixture.ts <project_id> > ${DEFAULT_FIXTURE}`,
+  );
+  process.exit(0);
+}
+
 const fixture: Fixture = JSON.parse(readFileSync(path, 'utf8'));
 
 let failures = 0;
@@ -124,8 +141,15 @@ for (const mode of ['love-vs-no', 'lovemaybe-vs-no'] as LabelMode[]) {
   // The bar: rank a held-out yes above a held-out no clearly more often than chance. AUC is the
   // honest measure under this imbalance; 0.70 is a real margin over the 0.50 coin-flip.
   expect(`${mode} — AUC beats chance`, r.auc >= 0.7, `AUC ${r.auc.toFixed(3)} < 0.70`);
-  // And it must not be worse than always saying "no".
-  expect(`${mode} — accuracy >= baseline`, r.accuracy >= r.baseline - 1e-9, `accuracy ${r.accuracy.toFixed(3)} < baseline ${r.baseline.toFixed(3)}`);
+  // And it must BEAT always saying "no", by at least one more correct held-out prediction. Merely
+  // matching the baseline is what a model that answers "no" to everything scores, and a high AUC
+  // does not rule that out: ranking can be perfect while every probability sits below 0.5.
+  const minAccuracy = r.baseline + 1 / r.n;
+  expect(
+    `${mode} — accuracy beats baseline`,
+    r.accuracy >= minAccuracy - 1e-9,
+    `accuracy ${r.accuracy.toFixed(3)} < required ${minAccuracy.toFixed(3)} (baseline ${r.baseline.toFixed(3)} + one flat)`,
+  );
 }
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);

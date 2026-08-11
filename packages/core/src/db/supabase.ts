@@ -37,7 +37,7 @@ import type {
   UsageRow,
 } from '../contracts';
 import { lookupPostcode, lookupPostcodes } from '../postcode';
-import type { LabelMode, Model, ModelMetrics } from '../predict';
+import { MODEL_VERSION, type LabelMode, type Model, type ModelMetrics } from '../predict';
 import type { SearchCard } from '../search-card';
 import { sweepProgress } from '../sweep';
 import { type StationInfo } from '../tfl';
@@ -454,8 +454,15 @@ export async function getProjectModel(): Promise<StoredModel | null> {
     .maybeSingle();
   fail('loading the model', error);
   if (!data) return null;
+  const model = data.model as Model;
+  // The version is the whole reason the model carries one: a v1 blob scored by a v2 feature builder
+  // is not a worse score, it is a meaningless one — the columns no longer mean what the weights
+  // were fitted against. Every surface reads the model through this door, so refusing it here is
+  // what keeps the triage list and the panel from quietly scoring against a stale spec. "No model"
+  // is a state both already render (as "rerun ratings"), which is the right thing to say.
+  if (data.version !== MODEL_VERSION || model?.version !== MODEL_VERSION) return null;
   return {
-    model: data.model as Model,
+    model,
     version: data.version,
     labelMode: data.label_mode as LabelMode,
     nExamples: data.n_examples,

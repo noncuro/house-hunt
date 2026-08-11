@@ -28,6 +28,7 @@ import {
 interface VerdictRow {
   rightmove_id: string;
   rating: 'no' | 'maybe' | 'love';
+  updated_at: string;
 }
 interface PropertyRow {
   rightmove_id: string;
@@ -94,16 +95,22 @@ serve(async (request): Promise<Result> => {
   }
 
   // The project's verdicts, minus the flats it has withheld from training (off the market, etc.).
+  // Ordered, because "the last rating seen" below is only a definition if the rows arrive in a
+  // defined order. PostgREST makes no promise without one, so two retrains over identical data
+  // could otherwise collapse a twice-rated flat differently and produce two different models —
+  // which is exactly the determinism the prediction engine claims for itself.
   const [verdicts, exclusions, hubs] = await Promise.all([
-    rest<VerdictRow[]>(`verdict?project_id=eq.${eq(projectId)}&select=rightmove_id,rating`),
+    rest<VerdictRow[]>(
+      `verdict?project_id=eq.${eq(projectId)}&select=rightmove_id,rating,updated_at&order=updated_at.asc,rightmove_id.asc`,
+    ),
     rest<Array<{ rightmove_id: string }>>(`training_exclusion?project_id=eq.${eq(projectId)}&select=rightmove_id`),
     rest<HubPoint[]>(`project_hub?project_id=eq.${eq(projectId)}&select=lat,lon`),
   ]);
 
   const excluded = new Set(exclusions.map((e) => e.rightmove_id));
   // A verdict is one row per person, but on this data it is effectively one per flat; collapse to
-  // the last rating seen per id either way, and drop excluded flats and any non-numeric id before
-  // it reaches a PostgREST `in.()` filter.
+  // the MOST RECENT rating per id either way (the order above is what makes that true), and drop
+  // excluded flats and any non-numeric id before it reaches a PostgREST `in.()` filter.
   const rating = new Map<string, VerdictRow['rating']>();
   for (const v of verdicts) {
     if (excluded.has(v.rightmove_id) || !/^\d+$/.test(v.rightmove_id)) continue;
@@ -117,8 +124,11 @@ serve(async (request): Promise<Result> => {
 
   const idList = ids.join(',');
   const [properties, analyses] = await Promise.all([
+    // Ordered for the same reason: the fit walks `properties` to build its examples, and the
+    // stratified folds deal rows out by position, so an unordered read would cross-validate a
+    // different partition each time and hand back a different λ on unchanged data.
     rest<PropertyRow[]>(
-      `property?rightmove_id=in.(${idList})&select=rightmove_id,price,bedrooms,bathrooms,floor_area_sqft,furnish_type,latitude,longitude,postcode_lat,postcode_lon,nearest_stations`,
+      `property?rightmove_id=in.(${idList})&select=rightmove_id,price,bedrooms,bathrooms,floor_area_sqft,furnish_type,latitude,longitude,postcode_lat,postcode_lon,nearest_stations&order=rightmove_id.asc`,
     ),
     rest<AnalysisRow[]>(
       `property_analysis?rightmove_id=in.(${idList})&select=rightmove_id,natural_light,has_outdoor_space,has_dishwasher,laundry,has_bathtub`,

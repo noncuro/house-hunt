@@ -78,14 +78,21 @@ const FEATURE_NAMES = [
 ] as const;
 
 /** "£4,800 pcm" -> 4800; "£1,100 pw" -> 4766.67 (a week is 1/52 of a year, a month 1/12). Returns
- *  null when there is no number to read, so a blank price stays missing rather than becoming 0. */
+ *  null when there is no number to read, so a blank price stays missing rather than becoming 0.
+ *
+ *  Only the FIRST amount, and only the unit that trails it. Rightmove routinely quotes both —
+ *  "£4,800 pcm (£1,108 pw)" — and stripping every non-digit from that string concatenates the two
+ *  into £48,001,108, which then dominates a standardised feature column on its own. Reading the
+ *  unit from the text between the amount and the next digit is what stops the parenthesised "pw"
+ *  re-pricing a monthly rent as a weekly one. */
 export function parseMonthlyPrice(price: string | null): number | null {
   if (!price) return null;
-  const digits = price.replace(/[^0-9.]/g, '');
-  if (!digits) return null;
-  const value = Number(digits);
+  const match = /\d[\d,]*(?:\.\d+)?/.exec(price);
+  if (!match) return null;
+  const value = Number(match[0].replace(/,/g, ''));
   if (!Number.isFinite(value) || value <= 0) return null;
-  return /\bpw\b|per week/i.test(price) ? (value * 52) / 12 : value;
+  const unit = price.slice(match.index + match[0].length).split(/\d/)[0] ?? '';
+  return /\bpw\b|per week/i.test(unit) ? (value * 52) / 12 : value;
 }
 
 /** Great-circle distance in kilometres. The hubs and the property both carry lat/lon, so this is
@@ -434,7 +441,10 @@ export function fitProjectModel(examples: Example[], labelMode: LabelMode, folds
     n: examples.length,
     positives,
     baseline: Math.max(positives, examples.length - positives) / examples.length,
-    cvAccuracy: cv.filter((s) => (s.p >= 0.5 ? 1 : 0) === s.y).length / cv.length,
+    // `trainable` above rules this out on the real path, but `clampFolds` can still hand back more
+    // folds than a class has members, and every fold skipped leaves `cv` empty. 0/0 would serialise
+    // a NaN into `project_model` and read on the UI as a model with no accuracy at all.
+    cvAccuracy: cv.length === 0 ? 0 : cv.filter((s) => (s.p >= 0.5 ? 1 : 0) === s.y).length / cv.length,
     cvAuc: auc(cv),
   };
   return model;

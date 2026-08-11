@@ -69,7 +69,7 @@ export function sortForTriage(
   const key = (e: ShortlistEntry) => scores.get(e.rightmoveId);
   const rank = (e: ShortlistEntry): number => {
     const s = key(e);
-    if (s == null) return mode === 'uncertain' ? Infinity : -Infinity; // unscored sinks to the end
+    if (s == null) return Infinity; // unscored sinks to the end, whichever end you asked for
     if (mode === 'yes') return -s;
     if (mode === 'no') return s;
     return Math.abs(s - 0.5);

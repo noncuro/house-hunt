@@ -217,12 +217,18 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   // Every entry's P(yes) under the current model, computed once and shared by the cards, the
   // triage sort and the mismatch marker. Null while there is no model (never trained, or too few
   // verdicts) — the UI then simply shows no scores rather than an error.
+  //
+  // Also null until the hubs are actually in hand. Handing the scorer `[]` for a read that is still
+  // in flight or has failed is not a smaller input, it is a different one: distance to the
+  // project's neighbourhoods is the feature most likely to decide a verdict, and a score computed
+  // without it is a confident number about the wrong flat. No score is the honest state.
   const model = modelQuery.data?.model ?? null;
   const scores = useMemo(
-    () => (model && entries ? scoreEntries(model, entries, Array.isArray(hubs) ? hubs : []) : null),
-    // hubsQuery.data rather than the derived `hubs` array, which is a fresh reference every render.
+    () => (model && entries && Array.isArray(hubs) ? scoreEntries(model, entries, hubs) : null),
+    // hubsQuery.data rather than the derived `hubs` array, which is a fresh reference every render;
+    // isError alongside it so a failed refetch clears the scores instead of leaving stale ones up.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-    [model, entries, hubsQuery.data],
+    [model, entries, hubsQuery.data, hubsQuery.isError],
   );
   const offMarket = offMarketQuery.data ?? new Set<string>();
   const setEntryOffMarket = (entry: ShortlistEntry, off: boolean) =>
@@ -526,8 +532,49 @@ function Triage({
       onError: (error) => notify(`Couldn't rerun — ${(error as Error).message}`),
     });
 
+  // The score's own row: rerun the model, and choose which end of the pile to work from. Kept
+  // apart from the rating bar below — one is about deciding, the other about ordering the
+  // deciding — and quiet when there is no model yet.
+  const scoreBar = (
+    <div className="triage-score-bar">
+      <button className="key" onClick={onRerun} disabled={retrain.isPending}>
+        {retrain.isPending ? 'Rerun ratings…' : 'Rerun ratings'}
+      </button>
+      <label className="triage-sort">
+        <span className="dim">Sort:</span>
+        <select
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value as SortMode)}
+          disabled={!cardProps.scores || entries.length === 0}
+          title={cardProps.scores ? 'Order the pile by the predicted score.' : 'Rerun ratings first to sort by score.'}
+        >
+          {(Object.keys(SORT_LABEL) as SortMode[]).map((mode) => (
+            <option key={mode} value={mode}>
+              {SORT_LABEL[mode]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <span className="dim triage-model-note">
+        {metrics
+          ? `Model: ${metrics.n} verdicts, ${Math.round(metrics.cvAuc * 100)}% AUC`
+          : cardProps.scores
+            ? 'Model ready'
+            : 'No model yet — rate a few, then rerun.'}
+      </span>
+    </div>
+  );
+
+  // An empty pile is the normal end state of triage, and it is exactly when retraining is worth
+  // doing — every verdict the model could learn from has just been given. So the score bar stays;
+  // only the rating bar and the pile itself go, having nothing to act on.
   if (entries.length === 0) {
-    return <p className="dim">Nothing waiting — every place either of you has opened has a verdict.</p>;
+    return (
+      <div className="triage">
+        {scoreBar}
+        <p className="dim">Nothing waiting — every place either of you has opened has a verdict.</p>
+      </div>
+    );
   }
 
   return (
@@ -566,36 +613,7 @@ function Triage({
         </button>
       </div>
 
-      {/* The score's own row: rerun the model, and choose which end of the pile to work from. Kept
-          apart from the rating bar above — one is about deciding, the other about ordering the
-          deciding — and quiet when there is no model yet. */}
-      <div className="triage-score-bar">
-        <button className="key" onClick={onRerun} disabled={retrain.isPending}>
-          {retrain.isPending ? 'Rerun ratings…' : 'Rerun ratings'}
-        </button>
-        <label className="triage-sort">
-          <span className="dim">Sort:</span>
-          <select
-            value={sortMode}
-            onChange={(e) => setSortMode(e.target.value as SortMode)}
-            disabled={!cardProps.scores}
-            title={cardProps.scores ? 'Order the pile by the predicted score.' : 'Rerun ratings first to sort by score.'}
-          >
-            {(Object.keys(SORT_LABEL) as SortMode[]).map((mode) => (
-              <option key={mode} value={mode}>
-                {SORT_LABEL[mode]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="dim triage-model-note">
-          {metrics
-            ? `Model: ${metrics.n} verdicts, ${Math.round(metrics.cvAuc * 100)}% AUC`
-            : cardProps.scores
-              ? 'Model ready'
-              : 'No model yet — rate a few, then rerun.'}
-        </span>
-      </div>
+      {scoreBar}
 
       {layout === 'table' ? (
         <Compare
@@ -605,6 +623,11 @@ function Triage({
           selection={{ chosen, toggle, setMany }}
           filters={false}
           columnsKey="triage"
+          // Triage decides its own order — newest first, or whichever end of the score the sort
+          // control asked for — and a default price sort inside the table would throw that away
+          // silently, which is the one thing the "Most likely yes" control must not do. Any column
+          // header still sorts on click; it just isn't the starting point here.
+          defaultSort={null}
         />
       ) : (
         <Pile entries={shown} empty="Nothing waiting." selection={{ chosen, toggle, setMany }} {...cardProps} />

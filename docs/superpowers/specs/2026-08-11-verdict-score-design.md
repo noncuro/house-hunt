@@ -33,19 +33,27 @@ signal isn't there yet — treat it as project-level). Map ratings to a binary t
 
 ### Features (MVP)
 
-Built by `featuresFor(property, analysis, hubs, travelTimes)` — one vector per flat:
+Built by `featuresFor(input, hubs)` — one vector per flat, where `input` is the `PredictInput` each
+surface maps its own row into (the DB row server-side, `Listing` + `Analysis` in the panel):
 
 | Feature | Source |
 |---|---|
-| price £/month | `property.price` (parsed) |
-| £/sqft | price ÷ `floor_area_sqft` |
-| bedrooms, bathrooms | `property` |
-| floor area sqft | `property.floor_area_sqft` |
-| min hub travel (s), mean hub travel (s) | `travel_time` → `project_hub` |
-| nearest-station walk (min) | `property.nearest_stations` |
-| natural light (0/1/2) | `property_analysis.natural_light` |
-| has outdoor, has dishwasher, in-unit laundry, has bathtub | `property_analysis` |
-| furnished (0/1) | `property.furnish_type` |
+| `price_pcm` (£/month) | `property.price` (parsed; weekly rents normalised) |
+| `price_per_sqft` | price ÷ `floor_area_sqft` |
+| `bedrooms`, `bathrooms` | `property` |
+| `floor_area_sqft` | `property.floor_area_sqft` |
+| `min_hub_km`, `mean_hub_km` | haversine from the flat's point to each `project_hub` |
+| `nearest_station_mi` | `property.nearest_stations` (Rightmove's miles; a km unit is converted) |
+| `light_ordinal` (0/1/2) | `property_analysis.natural_light` |
+| `has_outdoor`, `has_dishwasher`, `in_unit_laundry`, `has_bathtub` | `property_analysis` |
+| `furnished` (0/1) | `property.furnish_type` |
+
+> Distance is **straight-line kilometres**, not travel time. This design first reached for
+> `travel_time` in seconds, but that cache is postcode-to-postcode and sparse — it would have been
+> missing on exactly the unrated flats the score exists to rank, where lat/lon is always there.
+> Station distance is **miles**, Rightmove's own unit, rather than a walking time we'd have to
+> invent. The names above are the ones in `FEATURE_NAMES`, units included on purpose: a feature that
+> quietly changes unit between training and serving is the failure this table exists to prevent.
 
 Missing numerics → **mean-impute + a `was_missing` indicator column** (a blank floorplan is a fact,
 not a zero). Standardize each column to mean 0 / sd 1 using the training fold's statistics; the

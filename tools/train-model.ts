@@ -44,25 +44,41 @@ function psql(args: string[]): string {
 const projectId = process.argv[2];
 const dryRun = process.argv.includes('--dry-run');
 if (!projectId) throw new Error('usage: tsx tools/train-model.ts <project_id> [--dry-run]');
+// This connects as the database owner, which bypasses RLS, so an argument that is not a project id
+// is not a typo to shrug at — it is arbitrary SQL with the highest rights in the database. The
+// queries below bind it through psql's `:'project_id'`, and this refuses anything that isn't a
+// UUID before it gets that far. One line, and the tool has no injection surface left.
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId)) {
+  throw new Error(`not a project id: ${projectId}`);
+}
 
 // The same shape the predict function reads: verdicts minus exclusions, joined to property and
-// analysis, plus the project's hubs.
+// analysis, plus the project's hubs. Ordered by id, because the fit deals rows into stratified
+// folds by position — an unordered `json_agg` would cross-validate a different partition each run.
 const sql = `
 select json_build_object(
-  'hubs', (select coalesce(json_agg(json_build_object('lat',lat,'lon',lon)),'[]') from project_hub where project_id='${projectId}'),
-  'rows', (select coalesce(json_agg(row_to_json(t)),'[]') from (
-    select v.rating, p.price, p.bedrooms, p.bathrooms, p.floor_area_sqft, p.furnish_type,
+  'hubs', (select coalesce(json_agg(json_build_object('lat',lat,'lon',lon) order by sort_order),'[]') from project_hub where project_id=:'project_id'),
+  'rows', (select coalesce(json_agg(row_to_json(t) order by t.rightmove_id),'[]') from (
+    select v.rightmove_id, v.rating, p.price, p.bedrooms, p.bathrooms, p.floor_area_sqft, p.furnish_type,
            coalesce(p.postcode_lat, p.latitude) as lat, coalesce(p.postcode_lon, p.longitude) as lon,
-           (select min((s->>'distance')::float) from jsonb_array_elements(p.nearest_stations) s) as nearest_station_dist,
+           -- Miles, matching the Edge Function. Rightmove gives miles but a stray km unit would
+           -- otherwise read as a much closer station, and a model seeded here would then differ
+           -- from the one the predict function fits on the very same rows.
+           (select min(case when s->>'unit' = 'km' then (s->>'distance')::float * 0.621371
+                            else (s->>'distance')::float end)
+              from jsonb_array_elements(p.nearest_stations) s) as nearest_station_dist,
            a.natural_light, a.has_outdoor_space, a.has_dishwasher, a.laundry, a.has_bathtub
     from verdict v
     join property p on p.rightmove_id = v.rightmove_id
     left join property_analysis a on a.rightmove_id = v.rightmove_id
-    where v.project_id='${projectId}'
-      and v.rightmove_id not in (select rightmove_id from training_exclusion where project_id='${projectId}')
+    where v.project_id=:'project_id'
+      and v.rightmove_id not in (select rightmove_id from training_exclusion where project_id=:'project_id')
   ) t)
 )`;
-const data = JSON.parse(psql(['-At', '-c', sql])) as { hubs: HubPoint[]; rows: any[] };
+const data = JSON.parse(psql(['-v', `project_id=${projectId}`, '-At', '-c', sql])) as {
+  hubs: HubPoint[];
+  rows: any[];
+};
 
 const examples: Example[] = [];
 for (const r of data.rows) {
@@ -111,10 +127,14 @@ const modelFile = join(dir, 'model.json');
 writeFileSync(modelFile, JSON.stringify(model));
 const script = `\\set model \`cat ${modelFile}\`
 insert into project_model (project_id, model, version, label_mode, n_examples, trained_at)
-values ('${projectId}', :'model'::jsonb, ${model.version}, '${DEFAULT_LABEL_MODE}', ${examples.length}, now())
+values (:'project_id', :'model'::jsonb, ${model.version}, '${DEFAULT_LABEL_MODE}', ${examples.length}, now())
 on conflict (project_id) do update set
   model = excluded.model, version = excluded.version, label_mode = excluded.label_mode,
   n_examples = excluded.n_examples, trained_at = now();
 `;
-execFileSync('psql', [...PGARGS, '-v', 'ON_ERROR_STOP=1'], { env: PGENV, input: script, encoding: 'utf8' });
+execFileSync('psql', [...PGARGS, '-v', 'ON_ERROR_STOP=1', '-v', `project_id=${projectId}`], {
+  env: PGENV,
+  input: script,
+  encoding: 'utf8',
+});
 console.log('written to project_model');

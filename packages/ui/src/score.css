@@ -56,7 +56,7 @@
 /* A rating the model disagrees with: outline it so it catches the eye in a pile, and let the lamp
    say why on hover. Not a colour change — the band colour still has to read as the leaning. */
 .score-surprise {
-  box-shadow: 0 0 0 1px currentColor inset;
+  box-shadow: 0 0 0 1px currentcolor inset;
 }
 
 .score-surprise-mark {

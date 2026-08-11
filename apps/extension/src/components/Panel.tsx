@@ -107,6 +107,13 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
 
   useEffect(() => {
     let live = true;
+    // A new listing starts from nothing it did not earn. Left standing, the previous flat's
+    // analysis keeps answering for this one until polling lands — and the score below reads its
+    // amenities and its natural light, so the panel states a confident number about the wrong
+    // flat. "Still reading" is the honest state for the second or two it takes.
+    setAnalysis(null);
+    setRequest(null);
+    setAnalysisPending(true);
 
     void (async () => {
       const [existing, placeList, spending, hubList, storedModel] = await Promise.all([
@@ -293,8 +300,15 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   // — pure arithmetic, well under a second, no round trip. Null until the model and the hub fix are
   // both in hand; it sharpens once the photo analysis lands, but shows before it, because price,
   // size and distance to your neighbourhoods already carry most of the signal.
+  //
+  // `point` has three states and the middle one matters: undefined is "still resolving the
+  // postcode", null is "resolved, and there is no point". Scoring on undefined falls back to
+  // Rightmove's fuzzed pin, so the panel would show one number and then quietly replace it with a
+  // different one a moment later. Wait; a null point is a finished answer and scores fine.
   const modelScore =
-    model && Array.isArray(hubs) ? scoreListing(model, listing, analysis, hubs, point ?? null) : null;
+    model && Array.isArray(hubs) && point !== undefined
+      ? scoreListing(model, listing, analysis, hubs, point)
+      : null;
 
   return (
     <div
