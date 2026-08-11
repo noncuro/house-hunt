@@ -94,8 +94,39 @@ export default function Page() {
 /** Everything the two of you have looked at, in the order you'd want to think about it: the
  *  places someone is excited about first, the maybes underneath and hideable, and the rejects
  *  as a number — the point of writing "not our place" down is never seeing it again. */
+const VIEWS = ['list', 'table', 'map', 'triage', 'sweep', 'project', 'install', 'admin', 'settings'] as const;
+type View = (typeof VIEWS)[number];
+
+/** The open tab lives in the URL (`?v=sweep`), so a reload, a bookmark, or a link sent to the
+ *  other laptop lands on the same view rather than snapping back to the list. Driven through the
+ *  History API rather than Next's router on purpose: `useSearchParams` would force a Suspense
+ *  boundary on this whole client page for prerendering, and there is nothing to prerender here.
+ *  The default view carries no param at all, so the bare URL stays clean, and `popstate` makes the
+ *  browser's own back and forward move between tabs. */
+function useUrlView(): [View, (next: View) => void] {
+  const [view, setViewState] = useState<View>('list');
+  useEffect(() => {
+    const read = () => {
+      const v = new URLSearchParams(window.location.search).get('v');
+      setViewState((VIEWS as readonly string[]).includes(v ?? '') ? (v as View) : 'list');
+    };
+    read();
+    window.addEventListener('popstate', read);
+    return () => window.removeEventListener('popstate', read);
+  }, []);
+  const setView = (next: View) => {
+    setViewState(next);
+    const params = new URLSearchParams(window.location.search);
+    if (next === 'list') params.delete('v');
+    else params.set('v', next);
+    const qs = params.toString();
+    window.history.pushState(null, '', qs ? `?${qs}` : window.location.pathname);
+  };
+  return [view, setView];
+}
+
 function App({ user, project }: { user: SessionUser; project: ProjectSummary }) {
-  const [view, setView] = useState<'list' | 'table' | 'map' | 'triage' | 'sweep' | 'project' | 'install' | 'admin' | 'settings'>('list');
+  const [view, setView] = useUrlView();
   const [showMaybes, setShowMaybes] = useState(true);
   const [showUnrated, setShowUnrated] = useState(false);
   const [showRejected, setShowRejected] = useState(false);

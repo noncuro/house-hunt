@@ -7,8 +7,29 @@ import { useHost } from './host';
  *  Every tab this opens is a page you would otherwise have opened yourself, one at a time, and
  *  nothing here runs in parallel. Twelve seconds is roughly how long a listing takes to load,
  *  extract, cache its travel times and start its analysis, so the next tab lands about when the
- *  last one has settled — which is both the polite rate and the one that actually works. */
+ *  last one has settled — which is both the polite rate and the one that actually works. This is
+ *  the *default*: the idle control below lets you change it, clamped to a sane range, and the
+ *  choice is remembered per browser. */
 export const OPEN_INTERVAL_MS = 12_000;
+
+/** The pace is adjustable but not to anything. Below a few seconds the tabs stop landing after the
+ *  last one has settled — the whole reason for the interval — and start hammering; above two
+ *  minutes it is no longer a run so much as a reminder. */
+const MIN_INTERVAL_S = 3;
+const MAX_INTERVAL_S = 120;
+const INTERVAL_KEY = 'house-hunt/open-interval-ms';
+
+function clampIntervalMs(ms: number): number {
+  return Math.min(MAX_INTERVAL_S * 1000, Math.max(MIN_INTERVAL_S * 1000, Math.round(ms)));
+}
+
+/** Remembered per browser so a pace you settled on survives a reload — read defensively because a
+ *  hand-edited or stale value must fall back to the default rather than opening forty tabs at once. */
+function loadIntervalMs(): number {
+  if (typeof window === 'undefined') return OPEN_INTERVAL_MS;
+  const raw = Number(window.localStorage.getItem(INTERVAL_KEY));
+  return Number.isFinite(raw) && raw > 0 ? clampIntervalMs(raw) : OPEN_INTERVAL_MS;
+}
 
 export interface OpenTarget {
   rightmoveId: string;
@@ -48,7 +69,11 @@ export function Opener({
   onError?: (message: string) => void;
 }) {
   const [run, setRun] = useState<Run | null>(null);
-  useTicker(run, setRun, onFinished, onError);
+  const [intervalMs, setIntervalMs] = useState<number>(loadIntervalMs);
+  // The pace input's live text, kept separate from the committed `intervalMs` so a two-digit number
+  // is typable without the first digit snapping to the clamp. Committed on blur/Enter.
+  const [paceDraft, setPaceDraft] = useState(() => String(Math.round(loadIntervalMs() / 1000)));
+  useTicker(run, setRun, intervalMs, onFinished, onError);
 
   if (run) {
     const at = Math.min(run.opened, run.targets.length - 1);
@@ -72,25 +97,61 @@ export function Opener({
 
   if (targets.length === 0) return null;
 
+  const seconds = Math.round(intervalMs / 1000);
+  const commitInterval = () => {
+    const n = Number(paceDraft);
+    // Anything unusable — empty, non-numeric, negative — snaps the box back to the value in force
+    // rather than being accepted, so the input can never disagree with what a run would actually use.
+    if (!Number.isFinite(n) || n <= 0) {
+      setPaceDraft(String(seconds));
+      return;
+    }
+    const ms = clampIntervalMs(n * 1000);
+    setIntervalMs(ms);
+    setPaceDraft(String(Math.round(ms / 1000)));
+    if (typeof window !== 'undefined') window.localStorage.setItem(INTERVAL_KEY, String(ms));
+  };
+
   // The explanation is plain text under the label rather than a tooltip: it is the kind of thing
   // worth reading *before* you press the button, which is an argument against hiding it behind a
   // hover — and this button commits the browser to several minutes of opening tabs.
   return (
-    <button type="button" className="rm-open-go" onClick={() => setRun({ targets, opened: 0 })}>
-      <span>
-        Open the {targets.length} {what}
-      </span>
-      <small>
-        one tab every {OPEN_INTERVAL_MS / 1000}s · about {describeMinutes(targets.length)} unattended ·
-        stoppable
-      </small>
-    </button>
+    <div className="rm-open-idle">
+      <button type="button" className="rm-open-go" onClick={() => setRun({ targets, opened: 0 })}>
+        <span>
+          Open the {targets.length} {what}
+        </span>
+        <small>
+          one tab every {seconds}s · about {describeMinutes(targets.length, intervalMs)} unattended ·
+          stoppable
+        </small>
+      </button>
+      {/* The pace is on the idle control and not inside a run: it changes what the next press does,
+          not a run already in flight, and hiding it there would invite fiddling with a timer that
+          is mid-count. Committed on blur/Enter rather than per keystroke so a two-digit number is
+          typable without the first digit snapping to the clamp. */}
+      <label className="rm-open-pace">
+        <span>Seconds between tabs</span>
+        <input
+          type="number"
+          min={MIN_INTERVAL_S}
+          max={MAX_INTERVAL_S}
+          value={paceDraft}
+          onChange={(e) => setPaceDraft(e.target.value)}
+          onBlur={commitInterval}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+          }}
+        />
+      </label>
+    </div>
   );
 }
 
 function useTicker(
   run: Run | null,
   setRun: (run: Run | null) => void,
+  intervalMs: number,
   onFinished: (() => void) | undefined,
   onError: ((message: string) => void) | undefined,
 ): void {
@@ -125,13 +186,13 @@ function useTicker(
 
     // The first opens straight away; the wait is *between* tabs, not before the first, or the
     // button appears not to have worked.
-    const timer = setTimeout(() => void open(), run.opened === 0 ? 0 : OPEN_INTERVAL_MS);
+    const timer = setTimeout(() => void open(), run.opened === 0 ? 0 : intervalMs);
     return () => clearTimeout(timer);
-  }, [run, setRun, host]);
+  }, [run, setRun, intervalMs, host]);
 }
 
-export function describeMinutes(count: number): string {
-  const total = Math.round((count * OPEN_INTERVAL_MS) / 60_000);
+export function describeMinutes(count: number, intervalMs: number = OPEN_INTERVAL_MS): string {
+  const total = Math.round((count * intervalMs) / 60_000);
   if (total < 1) return 'a few seconds';
   return total === 1 ? 'a minute' : `${total} minutes`;
 }
