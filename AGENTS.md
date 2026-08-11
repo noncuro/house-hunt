@@ -1,6 +1,6 @@
 # house-hunt — shared house-hunting for Rightmove: a website plus a thin extension
 
-A shared shortlist for people hunting a flat together on Rightmove: travel times to saved places,
+A shared shortlist for people hunting a flat together: travel times to saved places,
 one shared verdict per flat per project, and a vision pass over the photos for what the listing
 won't say. Multi-tenant, invite-only, email-code sign-in; a **project** is one hunt (up to six
 people). In use on real listings.
@@ -35,12 +35,8 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 - **No PII in the repo.** No real names, personal email addresses, or anything identifying the
   people using it — in code, docs, examples, or commit messages. Deployment-specific identity
   (admin email, project name) lives in the untracked `supabase/seed.sql`.
-- **Read pages the user opened; never crawl.** Never call Rightmove's search API in the
-  background. The sweep only reads pages a human opened; `pnpm find:locations` is a hand-run
-  one-off lookup, not precedent. See `RESEARCH.md` §5.
-- **Never re-host Rightmove images** — store the URL or nothing (their ToS 13.4).
-- **Keep distribution private** — load-unpacked only, never the Chrome Web Store. Access is an
-  invite, not a download.
+- **Distribution is private until the Chrome Web Store listing is approved** — load-unpacked
+  only for now. Access is an invite, not a download.
 - **Select on `data-testid`, never CSS-module class names** — Rightmove's hashed classes churn.
 - **Fail loudly.** If extraction breaks, the panel must say so; blanks look like real data.
 - **One fact, one renderer.** Anything both apps show lives in `packages/ui/src/` or
@@ -60,11 +56,13 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 | `packages/core/` | Facts, hubs, sweep, travel, analysis, db, bridge contract |
 | `supabase/functions/` | `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache), `invite`, `resolve-location`, `password` |
 
-## Decisions worth knowing (the ones an agent might otherwise "fix")
+## Decisions an agent might otherwise "fix"
 
-- **Invite-only is `enable_signup = false` on the Supabase project**, not a client argument.
-  RLS is `to authenticated` everywhere; `anon` holds nothing. Shared fact tables are written
-  only through `SECURITY DEFINER` functions; `DELETE` is `service_role` only.
+- **Invite-only until there's billing** — every analysis spends an OpenAI API key, so going
+  public means charging users first. Enforced as `enable_signup = false` on the Supabase
+  project, not a client argument. RLS is `to authenticated` everywhere; `anon` holds nothing.
+  Shared fact tables are written only through `SECURITY DEFINER` functions; `DELETE` is
+  `service_role` only.
 - **The MV3 session lives only in `background.ts`** (chrome.storage adapter, explicit
   `ensureSession()`, alarms heartbeat) — a second client holder silently kills the session.
 - **`SEED_HUBS` is for dev tools/checks only** — hubs are project data (`project_hub`), and a
@@ -74,13 +72,11 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   success. Details in `packages/core/src/sweep.ts`.
 - **Driving times deliberately throw** (TfL can't do them) rather than mislabel a transit number.
 
-**Every other decision is documented as a comment on the code that owns it** — the why sits
-directly above the constant or function it explains (`TRAVEL_BASIS` in `tfl.ts`,
-`SWEEP_MARGIN_HOURS` in `sweep.ts`, `DEFAULT_SHOWING` and `duplicateIds` in `shortlist.ts`,
-`FLAG_ICON` in `facts.ts`, `claim_analysis` in the migrations). **Keep it that way**: when you
-make a non-obvious call, write the reasoning where the code is, not here. This file holds only
-cross-cutting rules and the decisions an agent working elsewhere could silently violate.
-Accepted gaps live in `TODO.md`.
+**Every other decision is documented as a comment on the code that owns it** (`TRAVEL_BASIS` in
+`tfl.ts`, `SWEEP_MARGIN_HOURS` in `sweep.ts`, `DEFAULT_SHOWING` and `duplicateIds` in
+`shortlist.ts`, `FLAG_ICON` in `facts.ts`, `claim_analysis` in the migrations) — including new
+ones. This file holds only cross-cutting rules and the decisions an agent working elsewhere
+could silently violate. Accepted gaps live in `TODO.md`.
 
 ## The four facts the design rests on (verified; details in `RESEARCH.md` §2)
 
@@ -95,7 +91,7 @@ Accepted gaps live in `TODO.md`.
 
 ```bash
 pnpm check          # oxlint + tsc — run on every change
-pnpm check:all      # + every pure-function check (207 assertions, seconds)
+pnpm check:all      # + every pure-function check (seconds)
 ```
 
 Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `hubs`, `sweep`, `travel`,
@@ -117,17 +113,15 @@ pnpm fixture:search <hub>      && pnpm check:sweep .fixtures/search-<hub>.html
 
 Browser smoke (Playwright loads the built extension; screenshots in `.fixtures/shots/`):
 `pnpm smoke <fixture>`, `smoke:shortlist`, `smoke:search` (the one harness that writes),
-`smoke:sweep`. Hard-won harness rules live in `tools/offline.ts` and the harness files: no
-harness may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain), a silent skip is worse
-than a failure, and assert what a person could see, not what the markup says.
+`smoke:sweep`. Harness rules live in `tools/offline.ts` and the harness files; the cross-cutting
+one: no harness may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain).
 
 ## Debugging
 
 - "Shows nothing" is usually a session (`signed-out` / `no-project` testids) or the spend cap. Auth is read once per page — reload after signing in elsewhere.
 - **Can't sign in / forgot the password?** `python3 tools/set-password.py <email>` — its
   docstring explains why there is no reset email.
-- Start with Settings → Diagnostics → **Copy log** — it exists because the other laptop has no
-  debugger.
+- The first stop is Settings → Diagnostics → **Copy log**.
 - The network lives in the background worker: `chrome://extensions` → Inspect service worker.
   The panel is in a Shadow DOM — go through `.shadowRoot`.
 - Read the database directly when a view disagrees with reality:
@@ -144,6 +138,5 @@ than a failure, and assert what a person could see, not what the markup says.
 
 ## Packaging
 
-`pnpm package` → `rightmove-house-hunt.zip` (gitignored). `SETUP.md` goes with it. The zip is not
-the shared secret — access is an invite. The manifest carries a fixed `key` so the extension id
-survives moving the folder.
+`pnpm package` → `rightmove-house-hunt.zip` (gitignored). `SETUP.md` goes with it. The manifest
+carries a fixed `key` so the extension id survives moving the folder.
