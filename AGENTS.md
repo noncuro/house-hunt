@@ -1,15 +1,24 @@
-# rightmove-extension — shared house-hunting overlay for Rightmove
+# house-hunt — shared house-hunting for Rightmove, a website with a thin extension beside it
 
-A Chrome (MV3) extension for people house-hunting together. It exists because house-hunting as a
-pair is a shared decision made from separate laptops on separate evenings, and Rightmove gives you
-no way to hold a shared opinion, no way to know how far anywhere actually is from anywhere you
+A shared house-hunting tool for people looking for a flat together. It exists because house-hunting
+as a pair is a shared decision made from separate laptops on separate evenings, and Rightmove gives
+you no way to hold a shared opinion, no way to know how far anywhere actually is from anywhere you
 care about, and no way to tell which flats you have already looked at.
 
-It was built for a couple looking for a flat together and ran for a year as a two-laptop tool with
-no login.
-It is now multi-tenant: sign-in by email code, **invite only**, and a **project** — one house hunt,
-up to six people, one shared shortlist and one shared opinion per flat. A user belongs to as many
-projects as they are invited to and has exactly one active at a time.
+It was built for a couple looking for a flat together and ran for a year as a two-laptop Chrome
+extension with no login. It is now multi-tenant: sign-in by email code, **invite only**, and a
+**project** — one house hunt, up to six people, one shared shortlist and one shared opinion per
+flat. A user belongs to as many projects as they are invited to and has exactly one active at a
+time.
+
+It is now **two apps in one pnpm workspace**, plus shared packages. `apps/web` is a **Next.js
+website** (the shortlist, compare, map, settings, sign-in, project and admin screens — everything
+that is not on a Rightmove page). `apps/extension` is a **thin Chrome MV3 extension** that keeps
+only the Rightmove half: the listing panel, the search-card badges and the sweep panel. The two
+share one sign-in: the extension carries a **bridge** content script on the website's origin that
+relays three messages so the two sessions stay in step. Shared logic lives in `packages/core`
+(facts, hubs, sweep, travel, db, analysis) and `packages/ui`. Config is the **workspace-root
+`.env`** (see `.env.example`).
 
 > Status: **in use**, on real listings. 55 properties, 18 verdicts, 55 photo analyses, 65 search
 > sightings, 351 cached travel legs — all carried into the original project by the migration, none of
@@ -41,8 +50,8 @@ Everything else is in service of those:
 
 | Feature | What it is for |
 |---|---|
-| **Panel** on every listing page | All three of the above, on the page you are already looking at. |
-| **Shortlist** (the extension icon) | Everything either of you has opened, as cards, a sortable compare table, or a map. |
+| **Panel** on every listing page | All three of the above, on the page you are already looking at. Lives in the extension. |
+| **Shortlist** (the website) | Everything either of you has opened, as cards, a sortable compare table, or a map. Clicking the extension icon opens the website. |
 | **Red / amber flags** | No bath and no outdoor space mean don't bother viewing; a small main room means raise it at the viewing. The compare table shows only what is *against* a place. |
 | **Hubs** | The five neighbourhoods being searched. Every flat reads as "0.4 mi NE of Angel" rather than as a postcode. |
 | **Sweep** | Working a neighbourhood's search results to the end, deliberately, rather than reacting to whatever page you happened to open. Scan the pages, then fill in everything scanned in one paced run. |
@@ -60,49 +69,66 @@ This file is the source of truth for *how it is built and how to check you have 
 
 ```bash
 pnpm install
-pnpm dev            # launches Chrome with the extension loaded, hot-reloads
-pnpm build          # writes .output/chrome-mv3 for chrome://extensions "Load unpacked"
-pnpm compile        # typecheck
+pnpm dev            # extension: launches Chrome with it loaded, hot-reloads   (@house-hunt/ext)
+pnpm dev:web        # website: next dev on http://localhost:3100               (@house-hunt/web)
+pnpm build          # extension: writes apps/extension/.output/chrome-mv3 for "Load unpacked"
+pnpm build:web      # website: next build
+pnpm compile        # typecheck both apps (tsc -p apps/extension && tsc -p apps/web)
 ```
 
-Config comes from the **hub root `.env`** (`wxt.config.ts` sets `envDir: '..'`). Only
-`WXT_*`-prefixed vars are bundled, which is what keeps the rest of that file — including the
-Supabase DB password — out of the extension. Verify after changing it:
+Config comes from the **workspace-root `.env`** — the extension's `wxt.config.ts` sets
+`envDir: repoRoot`, and Next reads `.env` from the same place. `.env.example` lists every key. The
+extension bundles only `WXT_*`-prefixed vars and the website only `NEXT_PUBLIC_*`; everything else
+(the `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF`) stays server-side. The two clients need the
+same Supabase project, so `WXT_SUPABASE_URL`/`WXT_SUPABASE_PUBLISHABLE_KEY` and
+`NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are the same values twice.
+`WXT_WEB_APP_URL` is where the extension sends people to sign in and the origin its bridge trusts —
+`http://localhost:3100` in dev, the deployed site in a store build. Verify a key made it into the
+extension bundle after changing it:
 
 ```bash
-grep -c "$(grep WXT_SUPABASE_URL ../.env | cut -d/ -f3)" .output/chrome-mv3/background.js   # 1
+grep -c "$(grep WXT_SUPABASE_URL .env | cut -d/ -f3)" apps/extension/.output/chrome-mv3/background.js   # 1
 ```
 
-First run: click the extension icon, then Settings — set who you are and add the places you
-measure against.
+First run: click the extension icon (it opens the website), then Settings — set who you are and add
+the places you measure against.
 
-**Nothing runs locally.** The analysis used to be a Node process on one laptop holding the
-OpenAI key, which meant a listing was only analysed while that machine was awake with a terminal
-open. It is now an Edge Function on the same Supabase project (`supabase/functions/analyse/`), so
-either laptop produces results whether or not the other is on. To iterate on the prompt without
-deploying, `supabase functions serve analyse` runs it locally against the same database.
+**Nothing runs locally in production.** The analysis and the travel/postcode resolution used to run
+on a laptop; both are now Edge Functions on the same Supabase project, so either laptop produces
+results whether or not the other is on. The functions are `analyse` (the vision pass, holds the
+OpenAI key), `travel` (TfL + postcode resolution, and the only writer of the travel cache),
+`invite`, `resolve-location`, and `password`. To iterate on a prompt without deploying,
+`supabase functions serve <fn>` runs it locally against the same database.
 
-`src/lib/analysis.ts` and `src/lib/png.ts` are the source of truth and are copied into the
-function by `pnpm sync:function`; `pnpm deploy:function` refuses to deploy a stale copy. Both were
-deliberately written with no `node:` imports and no `import.meta.env` reads so they run unchanged
-under Deno — keep them that way.
+`packages/core/src/analysis.ts` and `packages/core/src/png.ts` are the source of truth and are
+copied into `supabase/functions/_shared/` by `pnpm sync:function`; `pnpm deploy:function` refuses to
+deploy a stale copy and then deploys every function. Both were deliberately written with no `node:`
+imports and no `import.meta.env` reads so they run unchanged under Deno — keep them that way.
 
-To set a second laptop up, see **`SETUP.md`**.
+To deploy: the website goes to **Vercel** (`apps/web`), the functions via `pnpm deploy:function`.
+To set a second machine up, see **`SETUP.md`**.
 
 ## How it fits together
 
+Paths are relative to `apps/extension/src/` and `apps/web/src/` respectively.
+
 | Piece | World | Job |
 |---|---|---|
-| `entrypoints/page-model.content.ts` | **MAIN** | The only script that can see `window.__PAGE_MODEL`. Decodes it, `postMessage`s the listing out. |
-| `entrypoints/panel.content/` | isolated | Renders the panel in a Shadow DOM, talks to the background worker. |
-| `entrypoints/search.content/` | isolated | Badges search cards with verdicts; dims ones either of you rejected. |
-| `entrypoints/sweep.content/` | isolated | The sweep panel on `find.html`: records every card, says which pages are still outstanding, says when it's safe to leave. |
-| `entrypoints/shortlist/Sweep.tsx` | page | Both ends of sweeping — the hub links to scan with, and the paced opener that fills in everything scanned. |
-| `entrypoints/shortlist/SignIn.tsx` | page | Email, then a six-digit code. Every refusal gets its own sentence: not invited, rate-limited, wrong code, expired. |
-| `entrypoints/shortlist/Project.tsx` | page | Who is on this house hunt, who has been asked, switching between hunts. |
-| `entrypoints/shortlist/Admin.tsx` | page | Admins only. Users, projects, invites and spend, ordered by what things cost. |
-| `entrypoints/background.ts` | worker | Supabase reads/writes and TfL lookups. The only place with network access, and **the only place that constructs a Supabase client**. |
+| ext `entrypoints/page-model.content.ts` | **MAIN** | The only script that can see `window.__PAGE_MODEL`. Decodes it, `postMessage`s the listing out. |
+| ext `entrypoints/panel.content/` | isolated | Renders the panel in a Shadow DOM, talks to the background worker. |
+| ext `entrypoints/search.content/` | isolated | Badges search cards with verdicts; dims ones either of you rejected. |
+| ext `entrypoints/sweep.content/` | isolated | The sweep panel on a search page: records every card, says which pages are still outstanding, says when it's safe to leave. |
+| ext `entrypoints/bridge.content.ts` | isolated, **on the website's origin** | The only thing the extension runs on the website. Relays three named messages between the page and the worker so the two sessions stay in step; carries no flat, verdict or project, and answers only when asked. |
+| ext `entrypoints/background.ts` | worker | Supabase reads/writes and TfL lookups. The only place in the extension with network access, and **the only place that constructs a Supabase client**. |
+| web `screens/Sweep.tsx` | Next.js page | Both ends of sweeping — the hub links to scan with, and the paced opener that fills in everything scanned. |
+| web `screens/SignIn.tsx` | Next.js page | Email, then a six-digit code. Every refusal gets its own sentence: not invited, rate-limited, wrong code, expired. |
+| web `screens/Project.tsx` | Next.js page | Who is on this house hunt, who has been asked, switching between hunts. |
+| web `screens/Admin.tsx` | Next.js page | Admins only. Users, projects, invites and spend, ordered by what things cost. |
+| web `screens/{Compare,Detail,Map,Settings}.tsx`, `screens/Extension.tsx` | Next.js page | The shortlist proper, plus the page the extension opens to bridge a sign-in. |
+| `packages/core/` | shared | Facts, hubs, sweep, travel, analysis, db client, the bridge contract — imported by both apps and by the checks. |
 | `supabase/functions/analyse/` | Deno, on Supabase | The vision pass over the photos. Holds the OpenAI key, which cannot ship in a bundle anyone can read. |
+| `supabase/functions/travel/` | Deno, on Supabase | TfL journeys and postcode resolution, server-side; **the only writer of the travel cache**. |
+| `supabase/functions/{invite,resolve-location,password}/` | Deno, on Supabase | Invites, hub location-identifier lookup, and password sign-in. |
 
 ## Decisions worth knowing
 
@@ -276,8 +302,8 @@ To set a second laptop up, see **`SETUP.md`**.
   write would put verdicts neither of them gave onto real listings.
 - **One fact, one renderer.** The panel and the shortlist have repeatedly drifted into stating the
   same thing differently — different sq ft from the same row, different travel rules, different
-  wording for the same photo finding. Anything both views show lives in `src/components/` (see
-  `Size.tsx`, `Journey.tsx`) or `src/lib/facts.ts`. Do not re-implement a fact in a view.
+  wording for the same photo finding. Anything both views show lives in `packages/ui/src/` (see
+  `Size.tsx`, `Journey.tsx`) or `packages/core/src/facts.ts`. Do not re-implement a fact in a view.
 
 ## The four facts that shape the whole design
 
@@ -350,6 +376,7 @@ like a bearing, and a search window one bucket too narrow still returns a page f
 | `pnpm check:analysis` | The model answers that are impossible rather than merely wrong. |
 | `pnpm check:functions` | `deno check` over the Edge Functions. They are excluded from `tsc` and oxlint (Deno globals fail under the extension's tsconfig), so for a long time nothing checked them at all — which stopped being tolerable when the same tree grew JWT verification, the cap arithmetic and the invite ceiling. |
 | `pnpm check:one-client` | That only `background.ts` constructs a Supabase client. The invariant the whole session design rests on; see the auth decision above. |
+| `pnpm check:bridge` | The three-message contract between the website and the extension bridge — the relay that keeps the two sessions in step. |
 
 **Tier 1b — the ones that need a database.** Deliberately **not** in `check:all`, which must stay
 Docker-free and fast. They need a local Supabase (`supabase start` in this directory — this
@@ -430,9 +457,14 @@ pnpm smoke:sweep                     # the shortlist's Sweep view: hub links, th
 ## Packaging and distribution
 
 ```bash
-pnpm build          # writes .output/chrome-mv3 for "Load unpacked"
+pnpm build          # writes apps/extension/.output/chrome-mv3 for "Load unpacked"
 pnpm package        # build + zip -> rightmove-house-hunt.zip (gitignored)
 ```
+
+The **website deploys to Vercel** (`apps/web`, root directory `apps/web`, framework Next.js). It
+needs `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. A store build of the
+extension then sets `WXT_WEB_APP_URL` to the deployed origin so the icon and the bridge point at
+the live site rather than `localhost:3100`.
 
 **`SETUP.md` is the instructions that go with the zip** — read it before sending anything. What
 changed with auth: the zip is **no longer the shared password**. The publishable key compiled into
@@ -444,11 +476,11 @@ a fixed `key` so the extension id survives replacing or moving the folder, and w
 settings; without it Chrome derives the id from the folder path and a move silently empties
 `chrome.storage`.
 
-The Edge Function deploys separately:
+The Edge Functions deploy separately:
 
 ```bash
-pnpm sync:function          # copy src/lib/analysis.ts + png.ts into the function
-pnpm deploy:function        # refuses to deploy if that copy is stale, then deploys
+pnpm sync:function          # copy packages/core/src/{analysis,png}.ts into supabase/functions/_shared
+pnpm deploy:function        # refuses to deploy if that copy is stale, then deploys every function
 ```
 
 ## Debugging
@@ -479,7 +511,7 @@ renders. This is how the empty `journeys` column was found, and how the duplicat
 listing was confirmed to be two real listings rather than a bug:
 
 ```bash
-cd ~/GitHub/hub && set -a && source .env && set +a
+cd ~/GitHub/house-hunt && set -a && source .env && set +a
 PGPASSWORD="$SUPABASE_DB_PASSWORD" psql \
   -h aws-1-eu-west-1.pooler.supabase.com -p 5432 \
   -U "postgres.$SUPABASE_PROJECT_REF" -d postgres
@@ -505,7 +537,7 @@ prefix produces an empty panel rather than an error. Check the key is actually i
 looking anywhere else:
 
 ```bash
-grep -c "$(grep WXT_SUPABASE_URL ../.env | cut -d/ -f3)" .output/chrome-mv3/background.js   # 1
+grep -c "$(grep WXT_SUPABASE_URL .env | cut -d/ -f3)" apps/extension/.output/chrome-mv3/background.js   # 1
 ```
 
 **A stale copy in Chrome is the most common "bug".** Reloading the extension is not enough for a
