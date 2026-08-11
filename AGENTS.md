@@ -112,9 +112,11 @@ pnpm fixture:search <hub>      && pnpm check:sweep .fixtures/search-<hub>.html
 ```
 
 Browser smoke (Playwright loads the built extension; screenshots in `.fixtures/shots/`):
-`pnpm smoke <fixture>`, `smoke:shortlist`, `smoke:search` (the one harness that writes),
-`smoke:sweep`. Harness rules live in `tools/offline.ts` and the harness files; the cross-cutting
-one: no harness may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain).
+`pnpm smoke <fixture>` (the listing panel) and `smoke:search` (the search badges and sweep panel —
+the one harness that writes). The website's own shortlist and fill-in run have no browser smoke
+since the app moved off the extension — see `TODO.md`. Harness rules live in `tools/offline.ts` and
+the harness files; the cross-cutting one: no harness may reach Rightmove (`OFFLINE_ARGS` kills DNS
+for the domain).
 
 ## Debugging
 

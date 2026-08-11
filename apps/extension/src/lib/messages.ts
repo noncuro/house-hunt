@@ -6,7 +6,7 @@
  *  extension bought. What is left here is what a script running inside somebody else's page
  *  needs, and it stays typed end to end because that is the part of this design that works. */
 import type { Point, SearchCard } from '@house-hunt/core';
-import type { HubSweep, PendingSighting, ShortlistEntry, SweepKnowledge } from '@house-hunt/core/db';
+import type { HubSweep, PendingSighting, SweepKnowledge } from '@house-hunt/core/db';
 import type {
   AnalysisRequest,
   AuthState,
@@ -94,7 +94,6 @@ export type Request =
   | { type: 'postcode:point'; postcode: string }
   | { type: 'analysis:get'; rightmoveId: string }
   | { type: 'analysis:request'; rightmoveId: string }
-  | { type: 'shortlist:get' }
   | { type: 'properties:locate' }
   // --- hubs --------------------------------------------------------------------------------
   | { type: 'hubs:list' }
@@ -184,7 +183,6 @@ export interface ResponseMap {
   'postcode:point': Point | null;
   'analysis:get': Analysis | null;
   'analysis:request': AnalysisRequest;
-  'shortlist:get': ShortlistEntry[];
   'properties:locate': number;
 
   'hubs:list': ProjectHub[];

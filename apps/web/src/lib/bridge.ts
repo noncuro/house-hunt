@@ -91,3 +91,19 @@ export function signInExtension(email: string, password: string): Promise<Bridge
 export function signOutExtension(): Promise<BridgeReply | null> {
   return ask({ kind: 'sign-out' }, 5_000);
 }
+
+/** Five seconds. The worker may be asleep — a background service worker is evicted between asks —
+ *  so this covers a cold start plus the `chrome.tabs.create` call, which is otherwise immediate.
+ *  Longer than `hello`, because a timeout here stops a run rather than mislabelling an install. */
+const OPEN_TAB_MS = 5_000;
+
+/** Open one Rightmove listing in a background tab, through the extension.
+ *
+ *  The website has no `chrome.tabs.create`, and a paced run of `window.open` from a timer is
+ *  throttled by the browser to the first tab — which is the whole reason a fill-in run on the web is
+ *  only offered when the extension is here. Every listing that run opens comes through this. Returns
+ *  null when nothing answered: the caller has already established the extension is present, so a null
+ *  mid-run means it has gone, and the run stops rather than pressing on blindly. */
+export function openTabExtension(url: string): Promise<BridgeReply | null> {
+  return ask({ kind: 'open-tab', url }, OPEN_TAB_MS);
+}

@@ -188,20 +188,21 @@ try {
   // can be tested without depending on what anybody swept this afternoon.
 
   // The opener is NOT here any more, and its absence is worth asserting: filling in moved to the
-  // shortlist, where the worklist is the whole database rather than the cards on screen and the
-  // run survives paging on. A stray second opener would be two buttons doing almost the same
-  // thing from two different worklists. `smoke:sweep` covers the real one.
+  // website (design D5), where the worklist is the whole database rather than the cards on screen
+  // and the run survives paging on. A stray second opener would be two buttons doing almost the
+  // same thing from two different worklists. The website's own opener has no extension smoke of its
+  // own — see TODO.md.
   if (await panel.locator('.rm-sweep-go, .rm-open-go').count()) {
-    problems.push('the sweep page still has an opener — filling in belongs on the shortlist');
+    problems.push('the sweep page still has an opener — filling in belongs on the website');
   }
-  // The pointer to the shortlist only appears when there is something to fill in, so on a page
+  // The pointer to the website only appears when there is something to fill in, so on a page
   // where everything is already done its absence is correct rather than a regression.
   const flat = counts.replace(/\n/g, ' ');
   const incompleteHere =
     Number(/(\d+)\s*new/.exec(flat)?.[1] ?? 0) + Number(/(\d+)\s*part-filled/.exec(flat)?.[1] ?? 0);
   const pointer = (await panel.innerText()).replace(/\s+/g, ' ');
-  const points = /Sweep tab of the shortlist/i.test(pointer);
-  console.log(`${incompleteHere} not filled in here; points at the shortlist: ${points}`);
+  const points = /Sweep tab on the website/i.test(pointer);
+  console.log(`${incompleteHere} not filled in here; points at the website: ${points}`);
   if (incompleteHere > 0 && !points) {
     problems.push('the panel does not say where filling in happens now');
   }

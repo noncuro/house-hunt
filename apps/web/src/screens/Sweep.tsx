@@ -6,6 +6,7 @@ import { Opener } from '@house-hunt/ui';
 import { toSweepHub } from '@house-hunt/core';
 import { listHubSweeps, pendingSightings, type HubSweep } from '@house-hunt/core/db';
 import { useHubs } from '@/lib/queries';
+import { helloExtension } from '@/lib/bridge';
 import type { ProjectHub } from '@house-hunt/core';
 import { sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
 
@@ -22,7 +23,9 @@ import { sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
  *  the tab stays open and the worklist is a question about the database rather than about a DOM.
  *
  *  Nothing on this page fetches a search. The hub links are anchors a human clicks, and the opener
- *  opens listing pages one at a time in front of you — see the standing rule in AGENTS.md. */
+ *  opens listing pages one at a time — through the extension, in the background, which is the one
+ *  thing the website cannot do for itself, so the fill-in run is only offered when the extension is
+ *  installed here. See the standing rule in AGENTS.md. */
 export function Sweep() {
   // The neighbourhoods are the project's own rows now, not a compiled list (design D11). Which is
   // why this view can be legitimately empty, and has to say so rather than name somewhere nobody
@@ -162,11 +165,16 @@ function FillIn({
   failed: boolean;
   refresh: () => void;
 }) {
-  // A blocked popup is the normal failure on the web: a browser only lets `window.open` run for a
-  // few seconds after a click, so the first tab opens and the rest are swallowed silently. The
-  // opener throws when that happens; without somewhere to show it, the run would just stop with no
-  // reason on screen — which is the actual bug behind "it opens one and then nothing".
+  // The opener throws when a tab fails to open, and `Opener` stops the run on it; without somewhere
+  // to show the reason the run would just stop with nothing on screen.
   const [error, setError] = useState<string | null>(null);
+
+  // A fill-in run opens each listing in a background tab, which is `chrome.tabs.create` over the
+  // bridge — the website has no such call. So the run is only offered when the extension answered
+  // `hello`. The count below is a plain database read and shows regardless; it is the *opening* that
+  // needs the extension. Held in react-query so flipping between Sweep and the other views does not
+  // re-probe the extension each time.
+  const extension = useQuery({ queryKey: ['extension'], queryFn: helloExtension });
 
   if (loading) return <p className="working">Working…</p>;
   if (failed) return <p className="error">Could not read what still needs opening.</p>;
@@ -181,6 +189,8 @@ function FillIn({
   const byHub = new Map<string, number>();
   for (const row of pending) byHub.set(row.hub, (byHub.get(row.hub) ?? 0) + 1);
 
+  const present = extension.data?.status === 'signed-in' || extension.data?.status === 'signed-out';
+
   return (
     <>
       <p className="dim">
@@ -190,31 +200,43 @@ function FillIn({
         {[...byHub.entries()].map(([hub, n]) => `${hub} ${n}`).join(' · ')}
       </p>
       <div className="sweep-fill">
-        <Opener
-          targets={pending.map((row) => ({
-            rightmoveId: row.rightmoveId,
-            label: row.displayAddress || row.rightmoveId,
-          }))}
-          what="we haven't opened yet"
-          onFinished={() => {
-            setError(null);
-            refresh();
-          }}
-          onError={setError}
-        />
-        {error && <p className="error">{error}</p>}
-        <p className="dim sweep-fill-note">
-          Runs while this tab is open. Stopping loses nothing — the ones already opened are filled
-          in, and the rest are still here next time.
-        </p>
-        {/* The extension opens tabs with `chrome.tabs.create`, which a browser does not block and
-            which lands them in the background — so a long run there is genuinely unattended. On the
-            web this is `window.open`, which most browsers throttle to the first tab after a click;
-            allow popups for this site, or run the fill-in from the extension's own Sweep view. */}
-        <p className="dim sweep-fill-note">
-          For a long run, do this from the extension's shortlist — it opens tabs in the background
-          without the browser blocking them. On the web you may need to allow popups for this site.
-        </p>
+        {/* Nothing while the question is outstanding — the run either appears or the reason it
+            cannot does, but not a flicker between them. */}
+        {extension.isPending ? null : present ? (
+          <>
+            <Opener
+              targets={pending.map((row) => ({
+                rightmoveId: row.rightmoveId,
+                label: row.displayAddress || row.rightmoveId,
+              }))}
+              what="we haven't opened yet"
+              onFinished={() => {
+                setError(null);
+                refresh();
+              }}
+              onError={setError}
+            />
+            {error && <p className="error">{error}</p>}
+            <p className="dim sweep-fill-note">
+              Each listing opens in a background tab through the extension, so the run does not steal
+              focus. It runs while this tab is open; stopping loses nothing — the ones already opened
+              are filled in, and the rest are still here next time.
+            </p>
+          </>
+        ) : extension.data?.status === 'broken' ? (
+          <p className="error">
+            The extension is installed but did not answer, so a fill-in run cannot open tabs —{' '}
+            {extension.data.message}
+          </p>
+        ) : (
+          // Absent. The listings must load as real Rightmove tabs for the extension to read them,
+          // and the browser will not let the website open them in the background — so this needs
+          // the extension, and says so rather than offering a button that cannot work.
+          <p className="dim">
+            Filling in opens each listing in a background tab, which needs the browser extension —
+            and it is not installed here. Everything else on this page works without it.
+          </p>
+        )}
       </div>
     </>
   );

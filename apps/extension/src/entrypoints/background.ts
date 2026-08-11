@@ -31,7 +31,6 @@ import {
   createInvite,
   forgetActiveProject,
   getAnalysis,
-  getShortlist,
   getSweepKnowledge,
   headcount,
   leaveProject,
@@ -241,9 +240,6 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
 
     case 'postcode:point':
       return await locatePostcode(request.postcode);
-
-    case 'shortlist:get':
-      return await getShortlist();
 
     case 'properties:locate':
       return await locateProperties();

@@ -75,9 +75,9 @@ export default defineConfig({
       : {
           key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAplt9Gx2SrkcIDAe4yuuIqhfUo2//nWow7Gf/mLKfxdPh7REk75RqJLtFOMn5FvpmW/1xLitl29GBjHyP9tqhYI7NyodZaOVj+hrtiwsyKEgHeFF02GChiEVEBBCyO4HmBKrLJrrLUHJSuCtPOxEgoSeO7UuQvMi0UyB59BVmzsDMDG2j7rbl+7V6efeizf0fhLbDqplYhyzWpYqDvSnSQrGcV8R86bxOKcq27467o0oR+OzL7bDqPFSpTJgDO2ivG28igw8bwgW6be0vEJTMtq7Q+sKOR7BL9JYa9Ub3kYVtcTwSckbaNdLGomF4y2ES0OJbZ1QsOiym/7Zcu6yAKQIDAQAB',
         }),
-    // No popup. The popup and the shortlist page were two front doors to one tool — you set who
-    // you are in one and read the results in the other, and the popup closed itself the moment
-    // you clicked away. Clicking the icon opens the shortlist; settings are a tab on it.
+    // No popup. The app is the website now (design D5); the extension is the panel on Rightmove and
+    // a bridge on the website's origin, and holds no page of its own to pop up. Clicking the icon
+    // opens the website — see the `action.onClicked` handler in background.ts.
     action: { default_title: 'House hunt' },
     // One host, and that is the whole list on purpose.
     //
