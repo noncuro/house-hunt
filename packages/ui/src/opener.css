@@ -1,6 +1,31 @@
 /* The paced opener — see Opener.tsx. Its own stylesheet rather than the shortlist's, because it
    is also rendered inside a Shadow DOM where the page's styles do not reach. */
 
+.rm-open-idle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The pace control sits under the button, quiet: it is an adjustment to a default that already
+   works, not a decision anyone has to make before pressing. */
+.rm-open-pace {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #6b7a89;
+}
+
+.rm-open-pace input {
+  width: 4em;
+  padding: 3px 6px;
+  border: 1px solid #dfe6ec;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+}
+
 .rm-open-go {
   display: flex;
   flex-direction: column;

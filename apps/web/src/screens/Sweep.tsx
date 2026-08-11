@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Opener } from '@house-hunt/ui';
 import { toSweepHub } from '@house-hunt/core';
@@ -161,6 +162,12 @@ function FillIn({
   failed: boolean;
   refresh: () => void;
 }) {
+  // A blocked popup is the normal failure on the web: a browser only lets `window.open` run for a
+  // few seconds after a click, so the first tab opens and the rest are swallowed silently. The
+  // opener throws when that happens; without somewhere to show it, the run would just stop with no
+  // reason on screen — which is the actual bug behind "it opens one and then nothing".
+  const [error, setError] = useState<string | null>(null);
+
   if (loading) return <p className="working">Working…</p>;
   if (failed) return <p className="error">Could not read what still needs opening.</p>;
   if (!pending) return null;
@@ -189,11 +196,24 @@ function FillIn({
             label: row.displayAddress || row.rightmoveId,
           }))}
           what="we haven't opened yet"
-          onFinished={refresh}
+          onFinished={() => {
+            setError(null);
+            refresh();
+          }}
+          onError={setError}
         />
+        {error && <p className="error">{error}</p>}
         <p className="dim sweep-fill-note">
           Runs while this tab is open. Stopping loses nothing — the ones already opened are filled
           in, and the rest are still here next time.
+        </p>
+        {/* The extension opens tabs with `chrome.tabs.create`, which a browser does not block and
+            which lands them in the background — so a long run there is genuinely unattended. On the
+            web this is `window.open`, which most browsers throttle to the first tab after a click;
+            allow popups for this site, or run the fill-in from the extension's own Sweep view. */}
+        <p className="dim sweep-fill-note">
+          For a long run, do this from the extension's shortlist — it opens tabs in the background
+          without the browser blocking them. On the web you may need to allow popups for this site.
         </p>
       </div>
     </>

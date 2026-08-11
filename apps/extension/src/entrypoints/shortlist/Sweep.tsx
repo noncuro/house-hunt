@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ask } from './queries';
 import { Opener } from '@house-hunt/ui';
@@ -163,6 +164,12 @@ function FillIn({
   failed: boolean;
   refresh: () => void;
 }) {
+  // The tab open goes through the background worker to `chrome.tabs.create`, which does not get
+  // blocked the way the website's `window.open` does — but it can still fail (the worker asleep, a
+  // refused URL), and `Opener` stops the run on the first failure. Without somewhere to show why,
+  // the run would end silently mid-worklist.
+  const [error, setError] = useState<string | null>(null);
+
   if (loading) return <p className="working">Working…</p>;
   if (failed) return <p className="error">Could not read what still needs opening.</p>;
   if (!pending) return null;
@@ -191,8 +198,13 @@ function FillIn({
             label: row.displayAddress || row.rightmoveId,
           }))}
           what="we haven't opened yet"
-          onFinished={refresh}
+          onFinished={() => {
+            setError(null);
+            refresh();
+          }}
+          onError={setError}
         />
+        {error && <p className="error">{error}</p>}
         <p className="dim sweep-fill-note">
           Runs while this tab is open. Stopping loses nothing — the ones already opened are filled
           in, and the rest are still here next time.
