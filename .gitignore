@@ -27,3 +27,5 @@ apps/web/next-env.d.ts
 
 # tsc build info, regenerated on every typecheck.
 *.tsbuildinfo
+.vercel
+.env*
