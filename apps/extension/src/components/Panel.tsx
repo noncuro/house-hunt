@@ -4,6 +4,8 @@ import { Hint } from '@house-hunt/ui';
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { CappedNotice, SpendWarning } from '@house-hunt/ui';
 import { VerdictLine, RatingButtons } from '@house-hunt/ui';
+import { ScoreBadge } from '@house-hunt/ui';
+import { scoreListing } from '@/lib/score';
 import { send, type AnalysisRequest, type SessionUser, type SpendSummary } from '@/lib/messages';
 import {
   BIGGEST_ROOM_BIG_SQFT,
@@ -31,6 +33,7 @@ import {
   TRAVEL_MODES,
   type Analysis,
   type Listing,
+  type Model,
   type Place,
   type Rating,
   type TravelTime,
@@ -58,6 +61,9 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   const [travel, setTravel] = useState<TravelTime[] | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analysisPending, setAnalysisPending] = useState(true);
+  /** The project's verdict-score model, read once. Null when it has never been trained; scoring is
+   *  done in render against these weights, so it costs nothing to keep here. */
+  const [model, setModel] = useState<Model | null>(null);
   const [galleryAt, setGalleryAt] = useState<number | null>(null);
   /** What the analyser said when we asked. Null until it has answered — `capped` and `failed` are
    *  states the panel spells out rather than absences it renders as a missing paragraph. */
@@ -103,16 +109,18 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
     let live = true;
 
     void (async () => {
-      const [existing, placeList, spending, hubList] = await Promise.all([
+      const [existing, placeList, spending, hubList, storedModel] = await Promise.all([
         send({ type: 'verdicts:get', rightmoveIds: [listing.rightmoveId] }),
         send({ type: 'places:list' }),
         send({ type: 'spend:summary' }),
         send({ type: 'hubs:list' }),
+        send({ type: 'model:get' }),
       ]);
       if (!live) return;
 
       if (placeList.ok) setPlaces(placeList.data);
       if (spending.ok) setSpend(spending.data);
+      if (storedModel.ok) setModel(storedModel.data?.model ?? null);
       // Rows with no coordinate are dropped by `hubsFromProject` rather than guessed at, so a hub
       // kept only for its sweep history never rotates a bearing.
       setHubs(hubList.ok ? hubsFromProject(hubList.data) : null);
@@ -280,6 +288,13 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   // both of you, which is why the attribution above the buttons is not optional.
   const rejected = verdict?.rating === 'no';
   const mood = verdict?.rating ?? null;
+
+  // The model's guess for this listing, computed here in the panel against weights already fetched
+  // — pure arithmetic, well under a second, no round trip. Null until the model and the hub fix are
+  // both in hand; it sharpens once the photo analysis lands, but shows before it, because price,
+  // size and distance to your neighbourhoods already carry most of the signal.
+  const modelScore =
+    model && Array.isArray(hubs) ? scoreListing(model, listing, analysis, hubs, point ?? null) : null;
 
   return (
     <div
@@ -453,6 +468,13 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       {/* Sticky rather than sitting at the top: the verdict needs to be reachable from anywhere
           in the panel, and above the address it competed with the thing being judged. */}
       <div className="rm-decide">
+        {/* The model's guess from your past verdicts, beside the buttons that settle it. A hint,
+            not a verdict — it orders a sweep's worth of listings; you still decide this one. */}
+        {modelScore !== null && (
+          <div className="rm-score">
+            <ScoreBadge score={modelScore} />
+          </div>
+        )}
         {/* Whose opinion this is, above the buttons that would replace it. */}
         <VerdictLine verdict={verdict} />
         <RatingButtons value={verdict?.rating} pending={pending} onRate={(r) => void rate(r)} />
