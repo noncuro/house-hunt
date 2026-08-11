@@ -4,8 +4,16 @@ node_modules/
 .next/
 stats.html
 
-# Saved Rightmove pages for the smoke harness. Not committed: their content is theirs.
-.fixtures/
+# Saved Rightmove pages for the smoke harness. Not committed: their content is theirs. Globbed
+# rather than named as a directory so the exception below can apply — git will not un-ignore a file
+# inside a directory it has already excluded.
+.fixtures/*
+
+# The exception: the verdict-score fixture is ids, numbers and booleans only — no address, no url,
+# no postcode — by construction in `tools/export-predict-fixture.ts`. It is the data `check:predict`
+# exists to run on, and a check whose data is untracked is a check that only ever runs on one
+# laptop. Commit it.
+!.fixtures/predict-*.json
 
 # The admin address and the project name for one deployment. Copy supabase/seed.example.sql to
 # this path and edit it; the example is what is committed.

@@ -17,6 +17,9 @@ import { Flags } from '@house-hunt/ui';
 import { SizeFact } from '@house-hunt/ui';
 import { SpendWarning } from '@house-hunt/ui';
 import { RATINGS, ratingOf } from '@house-hunt/ui';
+import { ScoreBadge } from '@house-hunt/ui';
+import { scoreEntries, sortForTriage, isSurprise, SORT_LABEL, type SortMode } from '@/lib/score';
+import type { StoredModel } from '@house-hunt/core/db';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
 import { ExtensionNotice } from '@/screens/Extension';
 import { Install } from '@/screens/Install';
@@ -34,8 +37,12 @@ import {
   useAuth,
   useHubs,
   useLocateProperties,
+  useModel,
+  useOffMarket,
   usePlaces,
   useRate,
+  useRetrain,
+  useSetOffMarket,
   useShortlist,
   useSignOut,
 } from '@/lib/queries';
@@ -139,6 +146,14 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   const signOut = useSignOut();
   useLocateProperties();
 
+  // The verdict score: the project's own taste as a classifier. The model is read here; scoring
+  // happens below, at render, so a score is always the current model's — never stored, never stale.
+  const modelQuery = useModel();
+  const offMarketQuery = useOffMarket();
+  const retrain = useRetrain();
+  const offMarketMutation = useSetOffMarket();
+  const [sortMode, setSortMode] = useState<SortMode>('default');
+
   // The neighbourhoods every card places its flat against (design D11). Same hook the Sweep view
   // reads, so switching between them costs nothing and the two cannot disagree about which
   // neighbourhoods this house hunt has.
@@ -230,7 +245,30 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     openCard(id, groupOf(entry.verdicts));
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [entries]);
-  const cardProps = { places, hubs, twins, rate };
+  // Every entry's P(yes) under the current model, computed once and shared by the cards, the
+  // triage sort and the mismatch marker. Null while there is no model (never trained, or too few
+  // verdicts) — the UI then simply shows no scores rather than an error.
+  //
+  // Also null until the hubs are actually in hand. Handing the scorer `[]` for a read that is still
+  // in flight or has failed is not a smaller input, it is a different one: distance to the
+  // project's neighbourhoods is the feature most likely to decide a verdict, and a score computed
+  // without it is a confident number about the wrong flat. No score is the honest state.
+  const model = modelQuery.data?.model ?? null;
+  const scores = useMemo(
+    () => (model && entries && Array.isArray(hubs) ? scoreEntries(model, entries, hubs) : null),
+    // hubsQuery.data rather than the derived `hubs` array, which is a fresh reference every render;
+    // isError alongside it so a failed refetch clears the scores instead of leaving stale ones up.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+    [model, entries, hubsQuery.data, hubsQuery.isError],
+  );
+  const offMarket = offMarketQuery.data ?? new Set<string>();
+  const setEntryOffMarket = (entry: ShortlistEntry, off: boolean) =>
+    offMarketMutation.mutate(
+      { rightmoveId: entry.rightmoveId, off },
+      { onError: (e) => push(`Not saved — ${(e as Error).message}`) },
+    );
+
+  const cardProps = { places, hubs, twins, rate, scores, offMarket, setOffMarket: setEntryOffMarket };
   const byId = useMemo(() => new Map((entries ?? []).map((e) => [e.rightmoveId, e])), [entries]);
 
   /** Rate everything ticked, in one go.
@@ -390,6 +428,11 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           selected={selected}
           setSelected={setSelected}
           onRate={rateSelected}
+          storedModel={modelQuery.data ?? null}
+          retrain={retrain}
+          sortMode={sortMode}
+          setSortMode={setSortMode}
+          notify={push}
           {...cardProps}
         />
       )}
@@ -469,12 +512,22 @@ function Triage({
   selected,
   setSelected,
   onRate,
+  storedModel,
+  retrain,
+  sortMode,
+  setSortMode,
+  notify,
   ...cardProps
 }: {
   entries: ShortlistEntry[];
   selected: string[];
   setSelected: (next: string[]) => void;
   onRate: (rating: Rating) => void;
+  storedModel: StoredModel | null;
+  retrain: ReturnType<typeof useRetrain>;
+  sortMode: SortMode;
+  setSortMode: (mode: SortMode) => void;
+  notify: (message: string) => void;
 } & CardProps) {
   // The table is the default, and it is the layout the tick boxes were asking for. Ticking is a
   // comparing action — you decide "not this one, not this one, this one maybe" by reading the
@@ -494,8 +547,65 @@ function Triage({
     setSelected(on ? [...new Set([...selected, ...ids])] : selected.filter((s) => !run.has(s)));
   };
 
+  // The pile in the order the score suggests working it. When there is no model the control is off
+  // and this is the incoming order (newest first) — the pile still triages, just unranked.
+  const shown = sortForTriage(entries, cardProps.scores, sortMode);
+  const metrics = storedModel?.model.metrics;
+
+  const onRerun = () =>
+    retrain.mutate(undefined, {
+      onSuccess: (result) =>
+        notify(
+          result.status === 'trained'
+            ? `Rescored on ${result.nExamples} verdicts — ${Math.round(result.metrics.cvAuc * 100)}% cross-validated AUC.`
+            : `Not enough to learn from yet — rate at least ${result.minPerClass} exciting and ${result.minPerClass} rejected (${result.positives} exciting so far).`,
+        ),
+      onError: (error) => notify(`Couldn't rerun — ${(error as Error).message}`),
+    });
+
+  // The score's own row: rerun the model, and choose which end of the pile to work from. Kept
+  // apart from the rating bar below — one is about deciding, the other about ordering the
+  // deciding — and quiet when there is no model yet.
+  const scoreBar = (
+    <div className="triage-score-bar">
+      <button className="key" onClick={onRerun} disabled={retrain.isPending}>
+        {retrain.isPending ? 'Rerun ratings…' : 'Rerun ratings'}
+      </button>
+      <label className="triage-sort">
+        <span className="dim">Sort:</span>
+        <select
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value as SortMode)}
+          disabled={!cardProps.scores || entries.length === 0}
+          title={cardProps.scores ? 'Order the pile by the predicted score.' : 'Rerun ratings first to sort by score.'}
+        >
+          {(Object.keys(SORT_LABEL) as SortMode[]).map((mode) => (
+            <option key={mode} value={mode}>
+              {SORT_LABEL[mode]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <span className="dim triage-model-note">
+        {metrics
+          ? `Model: ${metrics.n} verdicts, ${Math.round(metrics.cvAuc * 100)}% AUC`
+          : cardProps.scores
+            ? 'Model ready'
+            : 'No model yet — rate a few, then rerun.'}
+      </span>
+    </div>
+  );
+
+  // An empty pile is the normal end state of triage, and it is exactly when retraining is worth
+  // doing — every verdict the model could learn from has just been given. So the score bar stays;
+  // only the rating bar and the pile itself go, having nothing to act on.
   if (entries.length === 0) {
-    return <p className="dim">Nothing waiting — every place either of you has opened has a verdict.</p>;
+    return (
+      <div className="triage">
+        {scoreBar}
+        <p className="dim">Nothing waiting — every place either of you has opened has a verdict.</p>
+      </div>
+    );
   }
 
   return (
@@ -534,17 +644,24 @@ function Triage({
         </button>
       </div>
 
+      {scoreBar}
+
       {layout === 'table' ? (
         <Compare
-          entries={entries}
+          entries={shown}
           places={cardProps.places}
           onOpen={() => {}}
           selection={{ chosen, toggle, setMany }}
           filters={false}
           columnsKey="triage"
+          // Triage decides its own order — newest first, or whichever end of the score the sort
+          // control asked for — and a default price sort inside the table would throw that away
+          // silently, which is the one thing the "Most likely yes" control must not do. Any column
+          // header still sorts on click; it just isn't the starting point here.
+          defaultSort={null}
         />
       ) : (
-        <Pile entries={entries} empty="Nothing waiting." selection={{ chosen, toggle, setMany }} {...cardProps} />
+        <Pile entries={shown} empty="Nothing waiting." selection={{ chosen, toggle, setMany }} {...cardProps} />
       )}
     </div>
   );
@@ -561,6 +678,13 @@ interface CardProps {
    *  and unrated under the other, which puts the two halves in different piles. */
   twins: Map<string, string[]>;
   rate: (entry: ShortlistEntry, rating: Rating, note: string) => void;
+  /** Each flat's P(yes) under the current model, or null when there is no model. A card shows its
+   *  own score as a badge; the triage sort reads the same map. */
+  scores: Map<string, number> | null;
+  /** Flats withheld from training (off the market). A love you can no longer act on is still a
+   *  love — this only keeps the model from learning it. */
+  offMarket: Set<string>;
+  setOffMarket: (entry: ShortlistEntry, off: boolean) => void;
   /** Present only in triage: cards grow a tick box and join a batch. Absent everywhere else,
    *  because a card you are reading to decide on is not a card you are selecting. */
   selection?: {
@@ -603,14 +727,20 @@ function Pile({
  *
  *  A shortlist of seventeen is short. Scrolling past a place you have already decided on is
  *  cheaper than clicking into every one you have not. */
-function Card({ entry, places, hubs, twins, rate, selection }: { entry: ShortlistEntry } & CardProps) {
+function Card({ entry, places, hubs, twins, rate, scores, offMarket, setOffMarket, selection }: { entry: ShortlistEntry } & CardProps) {
   const group = groupOf(entry.verdicts);
   const alsoAs = twins.get(entry.rightmoveId) ?? [];
   const ticked = selection?.chosen.has(entry.rightmoveId) ?? false;
+  const score = scores?.get(entry.rightmoveId);
+  const surprise = isSurprise(entry, score);
+  const isOff = offMarket.has(entry.rightmoveId);
+  // A love or maybe you can act on can be taken off the market; a rejection has nothing to withhold
+  // (it is already out of the positive class), and an unrated flat is not in training yet.
+  const canGoOffMarket = group === 'excited' || group === 'maybe';
 
   return (
     <article
-      className={`card card-${group}${ticked ? ' card-ticked' : ''}`}
+      className={`card card-${group}${ticked ? ' card-ticked' : ''}${isOff ? ' card-off-market' : ''}${surprise ? ' card-surprise' : ''}`}
       id={`card-${entry.rightmoveId}`}
     >
       <div className="card-head">
@@ -627,6 +757,11 @@ function Card({ entry, places, hubs, twins, rate, selection }: { entry: Shortlis
         <a className="address" href={entry.url} target="_blank" rel="noopener">
           {entry.displayAddress}
         </a>
+        {score !== undefined && (
+          <span className="card-score">
+            <ScoreBadge score={score} surprise={surprise} />
+          </span>
+        )}
       </div>
 
       {/* The same facts the panel states, in the same words. When the two disagreed about what
@@ -699,6 +834,22 @@ function Card({ entry, places, hubs, twins, rate, selection }: { entry: Shortlis
           drift `components/Verdict.tsx` was written to end. A project now holds one rating
           (design D6), and one renderer states it. */}
       <Detail entry={entry} places={places} onRate={(value, note) => rate(entry, value, note)} />
+
+      {/* Off the market, but still a place you liked. Keeping the verdict but withholding it from
+          training is the whole point — the model shouldn't learn from a flat you can't rent, and
+          deleting the verdict would lose that you ever liked it. Only offered where there is a
+          positive verdict to withhold. */}
+      {(canGoOffMarket || isOff) && (
+        <div className="off-market-row">
+          {isOff && <span className="off-market-tag" title="Withheld from the score's training.">Off the market</span>}
+          <button
+            className="linkish off-market-toggle"
+            onClick={() => setOffMarket(entry, !isOff)}
+          >
+            {isOff ? 'Back on the market' : 'Mark off the market'}
+          </button>
+        </div>
+      )}
     </article>
   );
 }

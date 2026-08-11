@@ -9,7 +9,7 @@ import {
   worstSeverity,
   type Flag,
 } from '@house-hunt/core';
-import { DEFAULT_SHOWING, duplicateIds, GROUP_LABEL, groupOf, sizeOf, type Group } from '@house-hunt/core';
+import { DEFAULT_SHOWING, duplicateIds, GROUP_LABEL, groupOf, parseMonthlyPrice, sizeOf, type Group } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
 import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime } from '@house-hunt/core';
 import { FlagChip } from '@house-hunt/ui';
@@ -28,8 +28,6 @@ import { useCachedTravel } from './queries';
  *  what mattered last week, and a "match score" hides which trade you're actually making. */
 
 type Sort = { key: string; descending: boolean };
-
-const MONEY = /[^0-9.]/g;
 
 export function Compare({
   entries,
@@ -378,7 +376,7 @@ function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
       key: 'price',
       label: 'Rent',
       numeric: true,
-      value: (e) => monthly(e.price),
+      value: (e) => parseMonthlyPrice(e.price),
       render: (e) => e.price ?? dash(),
     },
     {
@@ -399,12 +397,12 @@ function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
       label: '£/sq ft',
       numeric: true,
       value: (e) => {
-        const rent = monthly(e.price);
+        const rent = parseMonthlyPrice(e.price);
         const area = resolveSize(sizeOf(e))?.value ?? null;
         return rent === null || area === null || area === 0 ? null : rent / area;
       },
       render: (e) => {
-        const rent = monthly(e.price);
+        const rent = parseMonthlyPrice(e.price);
         const area = resolveSize(sizeOf(e))?.value ?? null;
         if (rent === null || area === null || area === 0) return dash();
         return `£${(rent / area).toFixed(2)}`;
@@ -559,15 +557,9 @@ function forPlace(entry: ShortlistEntry, placeId: string, travel: Record<string,
   return readTravel(rows.filter((t) => t.placeId === placeId));
 }
 
-/** "£4,250 pcm" -> 4250. Weekly rents are normalised so the column compares like with like —
- *  a "£980 pw" listing sorted as cheaper than everything else on the page. */
-function monthly(price: string | null): number | null {
-  if (!price) return null;
-  const amount = Number(price.replace(MONEY, ''));
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  return /\bpw\b|per week/i.test(price) ? (amount * 52) / 12 : amount;
-}
-
+/* The price column reads a listing through the model's own parser (`parseMonthlyPrice`): weekly
+   rents are normalised so "£980 pw" doesn't sort as cheaper than everything on the page, and there
+   is no second copy of that logic here to drift from the price feature the score is fitted on. */
 
 /** Only the problems, from the one definition in facts.ts. */
 function problems(entry: ShortlistEntry): Flag[] {

@@ -1,0 +1,65 @@
+/* The score pill. Sized to sit inline in a card's fact row or beside an address, never shouting
+   louder than the price. The ramp is the rating palette: love-green through maybe-amber to no-red,
+   so a high score and a "love" verdict share a colour on purpose. */
+.score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.score-pct {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-word {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.score-yes {
+  background: #eafaf1;
+  border-color: #bfe6d4;
+  color: #1b7a45;
+}
+
+.score-lean-yes {
+  background: #f2fbf7;
+  border-color: #cfe9db;
+  color: #2f8f59;
+}
+
+.score-unsure {
+  background: #fffbf0;
+  border-color: #efe0bd;
+  color: #9a6b12;
+}
+
+.score-lean-no {
+  background: #fdf3f1;
+  border-color: #f0d2cb;
+  color: #b0492f;
+}
+
+.score-no {
+  background: #fcecec;
+  border-color: #f0cccc;
+  color: #b02a2a;
+}
+
+/* A rating the model disagrees with: outline it so it catches the eye in a pile, and let the lamp
+   say why on hover. Not a colour change — the band colour still has to read as the leaning. */
+.score-surprise {
+  box-shadow: 0 0 0 1px currentcolor inset;
+}
+
+.score-surprise-mark {
+  font-size: 11px;
+  transform: translateY(-0.5px);
+}

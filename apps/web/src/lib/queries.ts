@@ -14,14 +14,19 @@ import {
   getShortlist,
   listHubs,
   listPlaces,
+  getProjectModel,
+  listOffMarket,
   locateProperties,
   NoActiveProject,
+  retrainModel,
+  setOffMarket,
   setVerdict,
   travelTimes,
   Unauthenticated,
+  type RetrainResult,
   type ShortlistEntry,
 } from '@house-hunt/core/db';
-import type { AuthState, Rating, TravelTime, Verdict } from '@house-hunt/core';
+import type { AuthState, LabelMode, Rating, TravelTime, Verdict } from '@house-hunt/core';
 import { endSession } from './session';
 import { signOutExtension } from './bridge';
 
@@ -72,10 +77,51 @@ export const keys = {
   shortlist: ['shortlist'] as const,
   places: ['places'] as const,
   hubs: ['hubs'] as const,
+  model: ['model'] as const,
+  offMarket: ['off-market'] as const,
 };
 
 export function useShortlist() {
   return useQuery({ queryKey: keys.shortlist, queryFn: getShortlist });
+}
+
+/** The project's fitted verdict-score model, or null if it has never been trained. Realtime keeps
+ *  it fresh across laptops, but a retrain here invalidates it directly (below), so the button's own
+ *  result never waits on a round trip. */
+export function useModel() {
+  return useQuery({ queryKey: keys.model, queryFn: getProjectModel });
+}
+
+/** The flats withheld from training (off the market), as a set for quick membership tests. */
+export function useOffMarket() {
+  return useQuery({
+    queryKey: keys.offMarket,
+    queryFn: async () => new Set(await listOffMarket()),
+  });
+}
+
+/** "Rerun ratings": retrain the model on the current verdicts, then refresh the stored model so
+ *  every score on the page re-computes against the new weights. */
+export function useRetrain() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (labelMode?: LabelMode): Promise<RetrainResult> => retrainModel(labelMode),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.model }),
+  });
+}
+
+/** Mark a flat off the market (out of training) or back on. Invalidates the off-market set and the
+ *  model — an excluded love changes what the next retrain learns, and the current model no longer
+ *  reflects it. */
+export function useSetOffMarket() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ rightmoveId, off, reason }: { rightmoveId: string; off: boolean; reason?: string }) =>
+      setOffMarket(rightmoveId, off, reason),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.offMarket });
+    },
+  });
 }
 
 export function usePlaces() {
