@@ -7,11 +7,11 @@ import {
 import { describe, send } from '@/lib/messages';
 import { webAppOrigin } from '@/lib/web-app';
 
-/** The only thing this extension runs on the website: a relay for three messages (design D3).
+/** The only thing this extension runs on the website: a relay for four messages (design D3).
  *
  *  The website cannot talk to the background worker itself — a page has no `chrome.runtime` — and it
  *  must not be handed one, since `externally_connectable` would let any page that knows the id ask
- *  the worker things. So this sits in the isolated world on the website's origin, listens for three
+ *  the worker things. So this sits in the isolated world on the website's origin, listens for the
  *  named asks, and forwards them.
  *
  *  Injected by origin rather than reachable by extension id. The unpacked build and the store build
@@ -82,6 +82,19 @@ async function answer(ask: { kind: string } & Record<string, unknown>): Promise<
       const reply = await send({ type: 'auth:sign-out' });
       if (!reply.ok) return { kind: 'error', message: reply.error };
       return { kind: 'sign-out' };
+    }
+
+    case 'open-tab': {
+      const { url } = ask as unknown as { url: string };
+      if (typeof url !== 'string') {
+        return { kind: 'error', message: 'open-tab needs a url' };
+      }
+      // Straight to the same worker message the extension's own surfaces use — which is where the
+      // URL is checked to be a Rightmove listing and the background tab is actually opened. The
+      // bridge adds no capability of its own; it only lets the website reach that one.
+      const reply = await send({ type: 'tab:open', url });
+      if (!reply.ok) return { kind: 'error', message: reply.error };
+      return { kind: 'open-tab' };
     }
 
     default:

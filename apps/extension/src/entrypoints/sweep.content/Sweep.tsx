@@ -227,13 +227,13 @@ export function Sweep() {
           {/* No opener here any more. Filling in is one long run over everything scanned, and
               bolted onto this page it could only ever see the cards in front of it and died the
               moment you paged on — twenty separate unattended runs to sweep five hubs. It lives
-              on the shortlist now; this page's job is to scan and to say when it is safe to move
-              on. */}
+              on the website now (design D5); this page's job is to scan and to say when it is safe
+              to move on. */}
           {incomplete > 0 && (
             <p className="rm-sweep-note">
               {incomplete} on this page {incomplete === 1 ? 'is' : 'are'} not filled in. Open them
-              from the Sweep tab of the shortlist once you have finished scanning — it works
-              through every hub at once.
+              from the Sweep tab on the website once you have finished scanning — click the
+              extension's icon to get there — it works through every hub at once.
             </p>
           )}
 
@@ -369,7 +369,7 @@ function Progress({
 }
 
 /** The other hubs, so an unrecognised search has somewhere to go. Deliberately a shorter list
- *  than the shortlist's Sweep view, which is the proper home for choosing what to sweep next —
+ *  than the website's Sweep view, which is the proper home for choosing what to sweep next —
  *  this one exists for the case where you have landed on a search that is not one of ours. */
 function HubList({
   hubs,

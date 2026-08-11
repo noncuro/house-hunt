@@ -104,6 +104,20 @@ Auth is read once when a content script loads, so a Rightmove tab open at sign-i
 the signed-out line until it is reloaded. The copy says to reload. The fix is the same
 `chrome.storage.onChanged` listener as above, and it needs a decision about who owns that key.
 
+### The website's shortlist and its fill-in run have no browser smoke
+
+When the app moved to the website (design D5) the extension's own `shortlist.html` was deleted, and
+with it went `smoke:shortlist` and `smoke:sweep` — the two Playwright harnesses that had loaded that
+page against a local Supabase. They exercised real coverage worth naming: the embedded PostgREST
+join behind a shortlist card (property + verdict + analysis in one round trip), RLS on a bulk rate,
+and the paced opener itself. The website has the same screens and the same core queries, so nothing
+is untested in principle — but there is no harness driving them, because the smokes drive a built
+extension and the website is `next dev`. `smoke:search` still asserts the Rightmove sweep panel
+points the user at the website's Sweep tab; the fill-in run on the *website* — now the only opener —
+is unproven end to end. Closing it means a `next dev` Playwright harness signed in against the
+fixture Supabase, plus a stub extension to answer the `open-tab` bridge call so a run can be watched
+opening background tabs.
+
 ## Wanted, not yet built
 
 - **Customisable search criteria** (bedrooms, price, property type, radius, Let Agreed) — phase 7

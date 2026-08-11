@@ -32,11 +32,11 @@ import { signOutExtension } from './bridge';
 
 /** Data plumbing for the house hunt.
  *
- *  This is `entrypoints/shortlist/queries.ts` from the extension with the transport taken out. The
- *  keys, the stale times, the optimistic verdict write and its per-property rollback, and the
- *  `onError` that re-reads the auth state are all unchanged, because none of them were ever about
- *  being inside an extension — they were about a page that is a second window onto data something
- *  else is also writing, which is still exactly what this is.
+ *  This began as the extension's own `queries.ts` with the transport taken out — that extension copy
+ *  is gone now (design D5 left the app here), but the shape it justified stands. The keys, the stale
+ *  times, the optimistic verdict write and its per-property rollback, and the `onError` that re-reads
+ *  the auth state were never about being inside an extension — they were about a page that is a
+ *  second window onto data something else is also writing, which is still exactly what this is.
  *
  *  What went: `ask({ type: 'shortlist:get' })` and the `chrome.runtime.sendMessage` behind it. Every
  *  one of those messages existed only because the shortlist page could not reach the database

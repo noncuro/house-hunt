@@ -38,6 +38,9 @@ const response = { source: BRIDGE, id: 'a', reply: { kind: 'hello', signedIn: fa
 
 console.log('a request is recognised, and nothing else is');
 accepts('a well-formed request', request, isBridgeRequest);
+// The fourth message rides the same envelope — the guards check shape, not `ask.kind`, so a new
+// kind must pass them unchanged. Named here so the contract and its guard stay visibly in step.
+accepts('an open-tab request', { source: BRIDGE, id: 'b', ask: { kind: 'open-tab', url: 'https://www.rightmove.co.uk/properties/1' } }, isBridgeRequest);
 rejects('a response is not a request', response, isBridgeRequest);
 rejects('another extension’s message', { source: 'something-else', id: 'a', ask: {} }, isBridgeRequest);
 rejects('no source at all', { id: 'a', ask: { kind: 'hello' } }, isBridgeRequest);

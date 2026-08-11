@@ -6,10 +6,12 @@ import { send } from './messages';
  *  Both operations go through the background worker rather than being performed here, and for
  *  different reasons. A station walk is a database read, and the worker is the only context holding
  *  a Supabase client (design D2). Opening a tab is a `chrome.tabs` call, which a content script
- *  cannot make at all — `window.open` is its only option and it steals focus, which is unbearable
- *  when the paced opener does it a dozen times over several minutes.
+ *  cannot make at all.
  *
- *  The website supplies its own pair: a direct database read, and a link. */
+ *  Only the panel consumes this host today, and it reads station walks — it never opens a listing.
+ *  `openListing` is here because the shared `UiHost` requires it, and it is the honest extension
+ *  implementation: the same `tab:open` message the website reaches over the bridge. The paced
+ *  fill-in run that used to call it lives on the website now (design D5). */
 export const extensionHost: UiHost = {
   async stationWalks(postcode, stations) {
     const reply = await send({ type: 'stations:walk', postcode, stations });
@@ -23,8 +25,6 @@ export const extensionHost: UiHost = {
       type: 'tab:open',
       url: `https://www.rightmove.co.uk/properties/${rightmoveId}`,
     });
-    // This one does throw. `Opener` stops a paced run on a rejection, which is the right response
-    // to the tab mechanism being unavailable — see the comment where it catches.
     if (!reply.ok) throw new Error(reply.error);
   },
 };

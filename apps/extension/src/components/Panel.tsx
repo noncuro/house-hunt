@@ -404,7 +404,7 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
 
       <Section title="Travel times" note={<TransitBasis />}>
         {places.length === 0 ? (
-          <div className="rm-empty">Add places in Settings, on the shortlist page</div>
+          <div className="rm-empty">Add places in Settings, on the website</div>
         ) : !listing.postcode ? (
           <div className="rm-empty">No postcode on this listing</div>
         ) : travel === null ? (
