@@ -1207,3 +1207,85 @@ h2 {
   opacity: 0.5;
   cursor: default;
 }
+
+/* --- verdict score ---------------------------------------------------------------------- */
+
+/* The badge sits at the top-right of the card, opposite the address, so a pile reads as a column
+   of scores you can scan without opening anything. */
+.card-score {
+  flex: none;
+  margin-left: auto;
+}
+
+/* The score's own row in the triage bar: rerun, then choose which end of the pile to work. Sits
+   under the rating bar and wraps on a narrow screen rather than fighting it for the line. */
+.triage-score-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e2e9ee;
+}
+
+.triage-sort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.triage-sort select {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid #cdd8e0;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+.triage-sort select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.triage-model-note {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+/* Off the market: the card stays, dimmed, with its verdict — but a tag says the model no longer
+   learns from it, and the toggle puts it back. Distinct from `.card-rejected`'s grayscale, because
+   an off-market love is not a rejection; it is a love you can't act on. */
+.card-off-market {
+  opacity: 0.72;
+}
+
+.off-market-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.off-market-tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #7b8a99;
+  border: 1px solid #d7dfe6;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.off-market-toggle {
+  font-size: 12px;
+}
+
+/* A rated card the model disagrees with. On a rejected card this lifts the grayscale that would
+   otherwise hide the very thing worth seeing — a "no" the model scores high. The score badge's own
+   outline (see score.css) does the pointing; this just stops the card disappearing. */
+.card-rejected.card-surprise {
+  filter: none;
+  opacity: 1;
+}

@@ -282,11 +282,11 @@ function gradientDescent(
 ): { weights: number[]; bias: number } {
   const n = X.length;
   const d = X[0]?.length ?? 0;
-  const weights: number[] = new Array(d).fill(0);
+  const weights: number[] = Array.from({ length: d }, () => 0);
   let bias = 0;
 
   for (let it = 0; it < iterations; it++) {
-    const gradW: number[] = new Array(d).fill(0);
+    const gradW: number[] = Array.from({ length: d }, () => 0);
     let gradB = 0;
     for (let i = 0; i < n; i++) {
       const row = X[i] ?? [];

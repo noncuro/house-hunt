@@ -37,6 +37,7 @@ import type {
   UsageRow,
 } from '../contracts';
 import { lookupPostcode, lookupPostcodes } from '../postcode';
+import type { LabelMode, Model, ModelMetrics } from '../predict';
 import type { SearchCard } from '../search-card';
 import { sweepProgress } from '../sweep';
 import { type StationInfo } from '../tfl';
@@ -425,6 +426,91 @@ export async function setVerdict(rightmoveId: string, rating: Rating, note: stri
     { onConflict: 'project_id,rightmove_id' },
   );
   fail('saving verdict', error);
+}
+
+// ------------------------------------------------------------------------------------------------
+// Verdict score — the project's own taste, as a classifier.
+//
+// The model is fitted server-side (the `predict` function) and read here; scoring happens in the
+// view, at render, against these weights — so a score is never stored and never stale. Three calls:
+// read the stored model, ask the server to retrain, and withhold a flat from training.
+// ------------------------------------------------------------------------------------------------
+
+/** The project's fitted model, or null when it has never been trained (or too few verdicts to). */
+export interface StoredModel {
+  model: Model;
+  version: number;
+  labelMode: LabelMode;
+  nExamples: number;
+  trainedAt: string;
+}
+
+export async function getProjectModel(): Promise<StoredModel | null> {
+  const projectId = await activeProjectId();
+  const { data, error } = await db()
+    .from('project_model')
+    .select('model, version, label_mode, n_examples, trained_at')
+    .eq('project_id', projectId)
+    .maybeSingle();
+  fail('loading the model', error);
+  if (!data) return null;
+  return {
+    model: data.model as Model,
+    version: data.version,
+    labelMode: data.label_mode as LabelMode,
+    nExamples: data.n_examples,
+    trainedAt: data.trained_at,
+  };
+}
+
+/** What "Rerun ratings" gets back: trained (with the metrics the UI shows), or a request for more
+ *  verdicts. Mirrors the `predict` function's response so a refusal is a sentence, not a 500. */
+export type RetrainResult =
+  | { status: 'trained'; labelMode: LabelMode; nExamples: number; metrics: ModelMetrics }
+  | { status: 'insufficient'; nExamples: number; positives: number; minPerClass: number };
+
+export async function retrainModel(labelMode?: LabelMode): Promise<RetrainResult> {
+  await requireSession();
+  const { data, error } = await db().functions.invoke('predict', {
+    body: labelMode ? { labelMode } : {},
+    headers: await functionHeaders(),
+  });
+  if (error) throw new Error(await refusalFrom(error, 'could not retrain the model'));
+  return data as RetrainResult;
+}
+
+/** The flats this project has withheld from training — off the market, usually. Returned as a set
+ *  of rightmove ids so the shortlist can mark them and the triage list can drop them. */
+export async function listOffMarket(): Promise<string[]> {
+  const projectId = await activeProjectId();
+  const { data, error } = await db()
+    .from('training_exclusion')
+    .select('rightmove_id')
+    .eq('project_id', projectId);
+  fail('loading off-market flats', error);
+  return (data ?? []).map((r: any) => r.rightmove_id);
+}
+
+/** Mark a flat off the market (withhold it from training) or put it back. The verdict is never
+ *  touched — a place you loved is still a place you loved; this only stops the model learning from
+ *  a listing you can no longer act on. */
+export async function setOffMarket(rightmoveId: string, off: boolean, reason = ''): Promise<void> {
+  const session = await requireSession();
+  const projectId = await activeProjectId();
+  if (off) {
+    const { error } = await db().from('training_exclusion').upsert(
+      { project_id: projectId, rightmove_id: rightmoveId, reason, set_by: session.user.id },
+      { onConflict: 'project_id,rightmove_id' },
+    );
+    fail('marking off market', error);
+  } else {
+    const { error } = await db()
+      .from('training_exclusion')
+      .delete()
+      .eq('project_id', projectId)
+      .eq('rightmove_id', rightmoveId);
+    fail('marking on market', error);
+  }
 }
 
 // ------------------------------------------------------------------------------------------------
