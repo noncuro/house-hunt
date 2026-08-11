@@ -69,7 +69,7 @@ separate.
       and nothing else, plus a written rule that no third-party script is added.
       D3 depends on this and it is the only thing holding it up.
 - [ ] 3.5 Deploy to Vercel behind the project's own domain; environment from the
-      hub `.env`, publishable key only. **Daniel's step** — it needs his Vercel
+      hub `.env`, publishable key only. **Owner's step** — it needs the owner's Vercel
       account and the domain.
 - [ ] 3.6 Use it for a full session — sign in, rate a flat, add a place, invite
       someone — while the extension is still doing all of the above too.
@@ -91,7 +91,7 @@ separate.
 - [ ] 4.4 Verify the two sessions are independent: sign in on both, force a
       refresh on each, confirm neither signs the other out. This is the failure
       D3 exists to prevent and it is invisible until days later, so provoke it
-      deliberately. **Daniel's step** — it needs two real sessions, so it needs
+      deliberately. **Owner's step** — it needs two real sessions, so it needs
       a password. `pnpm check:bridge` covers the envelope guards, which is the
       part that can be checked without a browser.
 

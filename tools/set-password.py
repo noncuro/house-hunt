@@ -15,7 +15,7 @@ The password is read from a prompt rather than an argument, so it does not reach
 the process list, or a terminal transcript. It is written with bcrypt through pgcrypto, which is the
 same scheme and cost GoTrue uses, so the row is indistinguishable from one GoTrue wrote itself.
 
-    python3 tools/set-password.py cahnteam@example.com
+    python3 tools/set-password.py user@example.com
 """
 
 import argparse

@@ -8,8 +8,8 @@ This writes the hash directly, for exactly that case.
 It is not the everyday path. Once you can sign in, invite people from the Admin view — that route
 enforces the project's member ceiling and records who did the inviting, and this one does neither.
 
-    python3 tools/mint-code.py ashley@example.com
-    python3 tools/mint-code.py ashley@example.com --create   # if no pending invite exists yet
+    python3 tools/mint-code.py user@example.com
+    python3 tools/mint-code.py user@example.com --create   # if no pending invite exists yet
 
 The plaintext is printed once and never stored; the row gets its SHA-256. Losing it means running
 this again, which is the intended repair and why nothing tries to read a code back.
