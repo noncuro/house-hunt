@@ -80,8 +80,10 @@ stale the moment someone rates one more flat).
   `trained_at` + the k-fold accuracy so the number is legible, not magic.
 - **Sort control** in Triage: **→ Yes** (score desc), **→ No** (score asc), **Most uncertain**
   (|score − 0.5| asc). Score shown as a badge/column on each card and the Compare/triage table.
-- Empty/again-loud states: if the project has too few verdicts to fit (e.g. < 8 of either class),
-  the button says so rather than training a model that's noise.
+- Empty/again-loud states: if the project has too few verdicts to fit (fewer than `MIN_PER_CLASS`
+  = 4 of either class), the button says so rather than training a model that's noise. A retrain that
+  lands here also *clears* any model already stored, so "insufficient" never leaves stale weights
+  scoring flats behind the message saying there aren't enough verdicts to score them.
 
 ## Validation (first, before any UI)
 

@@ -99,6 +99,31 @@ $$;
 revoke execute on function public.set_project_model(uuid, jsonb, int, text, int, uuid) from public;
 grant  execute on function public.set_project_model(uuid, jsonb, int, text, int, uuid) to service_role;
 
+-- The other half of the writer. A retrain that can no longer fit a model — the project excluded its
+-- way below MIN_PER_CLASS, or re-rated enough flats that one class emptied — must not leave the old
+-- row standing. "Insufficient" and a table still holding last week's weights means every surface
+-- goes on scoring flats against a model the project's own data no longer supports, and the retrain
+-- that was supposed to correct it is the thing that reports success at doing nothing. Deleting is
+-- right rather than flagging stale: the model is derived data, cheap to refit the moment the
+-- verdicts support one again.
+create or replace function public.clear_project_model(p_project_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.is_service_role() then
+    raise exception 'clear_project_model: the model is written by the predict function, not by clients';
+  end if;
+
+  delete from public.project_model where project_id = p_project_id;
+end;
+$$;
+
+revoke execute on function public.clear_project_model(uuid) from public;
+grant  execute on function public.clear_project_model(uuid) to service_role;
+
 -- Realtime, so a retrain on one laptop refreshes the scores on another, the same way a verdict does.
 do $$
 begin

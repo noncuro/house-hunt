@@ -95,10 +95,10 @@ serve(async (request): Promise<Result> => {
   }
 
   // The project's verdicts, minus the flats it has withheld from training (off the market, etc.).
-  // Ordered, because "the last rating seen" below is only a definition if the rows arrive in a
-  // defined order. PostgREST makes no promise without one, so two retrains over identical data
-  // could otherwise collapse a twice-rated flat differently and produce two different models —
-  // which is exactly the determinism the prediction engine claims for itself.
+  // Ordered because PostgREST promises no order without one, and everything downstream of this read
+  // is positional: the id list below seeds the property fetch, and the fit deals rows into folds by
+  // position. `updated_at` leads so that "the last rating seen" is a definition rather than an
+  // accident, in case the one-row-per-flat key below ever widens again.
   const [verdicts, exclusions, hubs] = await Promise.all([
     rest<VerdictRow[]>(
       `verdict?project_id=eq.${eq(projectId)}&select=rightmove_id,rating,updated_at&order=updated_at.asc,rightmove_id.asc`,
@@ -108,9 +108,11 @@ serve(async (request): Promise<Result> => {
   ]);
 
   const excluded = new Set(exclusions.map((e) => e.rightmove_id));
-  // A verdict is one row per person, but on this data it is effectively one per flat; collapse to
-  // the MOST RECENT rating per id either way (the order above is what makes that true), and drop
-  // excluded flats and any non-numeric id before it reaches a PostgREST `in.()` filter.
+  // `verdict` is keyed (project_id, rightmove_id) since the multi-tenant migration dropped `person`,
+  // so a flat has exactly one rating here and this map cannot actually collapse anything. It stays a
+  // map rather than a list because it is also the filter — excluded flats and any non-numeric id are
+  // dropped before the ids reach a PostgREST `in.()` — and because keeping the last-write-wins rule
+  // means a key that widens back out degrades to "most recent" instead of "whichever row came last".
   const rating = new Map<string, VerdictRow['rating']>();
   for (const v of verdicts) {
     if (excluded.has(v.rightmove_id) || !/^\d+$/.test(v.rightmove_id)) continue;
@@ -119,6 +121,8 @@ serve(async (request): Promise<Result> => {
   const ids = [...rating.keys()];
 
   if (ids.length === 0) {
+    // Nothing left to learn from, so nothing may keep claiming to have learned. See the clear below.
+    await rpc('clear_project_model', { p_project_id: projectId });
     return { status: 'insufficient', nExamples: 0, positives: 0, minPerClass: MIN_PER_CLASS };
   }
 
@@ -145,6 +149,11 @@ serve(async (request): Promise<Result> => {
 
   const model = fitProjectModel(examples, labelMode);
   if (!model) {
+    // The project's data no longer supports a model, so drop the one it used to support. Returning
+    // `insufficient` while leaving the row would let every surface go on scoring against weights
+    // fitted to verdicts that have since been excluded or re-rated — and the retrain meant to catch
+    // that would be the very call that reported success at changing nothing.
+    await rpc('clear_project_model', { p_project_id: projectId });
     const positives = examples.filter((e) => e.label === 1).length;
     return { status: 'insufficient', nExamples: examples.length, positives, minPerClass: MIN_PER_CLASS };
   }

@@ -127,6 +127,11 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
 
       if (placeList.ok) setPlaces(placeList.data);
       if (spending.ok) setSpend(spending.data);
+      // Unlike the analysis cleared above, the model is project-scoped — it is as true of this flat
+      // as of the last one, so a failed refresh is no reason to throw away a model that is still
+      // valid. A model that has genuinely gone (retrained into insufficiency, and deleted server
+      // side) comes back as a successful read of nothing, which does null it. What must not happen
+      // is the failure passing unmentioned, so it joins the list below.
       if (storedModel.ok) setModel(storedModel.data?.model ?? null);
       // Rows with no coordinate are dropped by `hubsFromProject` rather than guessed at, so a hub
       // kept only for its sweep history never rotates a bearing.
@@ -138,9 +143,9 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
         setNote(current?.note ?? '');
       }
 
-      // Surface the first failure of the four. Swallowing these is what made a broken
+      // Surface the first failure of the five. Swallowing these is what made a broken
       // background look like an empty database.
-      const failure = [placeList, existing, spending, hubList].find((r) => !r.ok);
+      const failure = [placeList, existing, spending, hubList, storedModel].find((r) => !r.ok);
       if (failure && !failure.ok) setError(failure.error);
 
       // Recording the listing is what gives this project a `project_property` link, and the
