@@ -153,6 +153,9 @@ export interface Model {
   columns: SpecColumn[];
   weights: number[];
   bias: number;
+  /** The L2 strength this model was fitted with — chosen by cross-validation, not guessed, so a
+   *  stored model records the λ that produced it. */
+  hyperparams: { lambda: number };
   /** Present on a fitted-and-scored model; absent on a bare fit. */
   metrics?: ModelMetrics;
   trainedAt?: string;
@@ -165,6 +168,13 @@ export interface ModelMetrics {
   looAccuracy: number;
   looAuc: number;
   baseline: number;
+}
+
+/** One labelled flat, features already built. The unit the fit and the cross-validation both work
+ *  in — a raw feature map plus its 0/1 target. */
+export interface Example {
+  raw: Record<string, number | null>;
+  label: 0 | 1;
 }
 
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
@@ -200,18 +210,19 @@ interface FitOptions {
  *  from the data — a feature that is entirely missing or constant across the training rows carries
  *  no signal and is dropped, which is what keeps a project like D&A (whose `natural_light` was
  *  never backfilled) from feeding a dead column into the model. */
-export function fitModel(
-  examples: Array<{ raw: Record<string, number | null>; label: 0 | 1 }>,
-  options: FitOptions,
-): Model {
-  const { labelMode, lambda = 1, learningRate = 0.3, iterations = 3000 } = options;
+export function fitModel(examples: Example[], options: FitOptions): Model {
+  // 800 iterations at this step size reaches the plateau on standardised features; more doesn't
+  // improve generalisation and risks acting as a second, unasked-for regulariser on top of λ (which
+  // is the knob cross-validation actually tunes). It also keeps a single fit sub-millisecond, so a
+  // full retrain and the nested-CV check both stay fast.
+  const { labelMode, lambda = 1, learningRate = 0.5, iterations = 800 } = options;
   const columns = chooseColumns(examples.map((e) => e.raw));
 
   const X = examples.map((e) => rowFor(e.raw, columns));
   const y = examples.map((e) => e.label);
   const { weights, bias } = gradientDescent(X, y, lambda, learningRate, iterations);
 
-  return { version: MODEL_VERSION, labelMode, columns, weights, bias };
+  return { version: MODEL_VERSION, labelMode, columns, weights, bias, hyperparams: { lambda } };
 }
 
 /** Decide which columns survive, and learn their standardisation constants. A value column is kept
@@ -285,9 +296,107 @@ function gradientDescent(
  *  it at render against the current weights, which is why no score is ever persisted (the model
  *  changes; the score would go stale the moment one more flat is rated). */
 export function score(model: Model, input: PredictInput, hubs: HubPoint[]): number {
-  const raw = featuresFor(input, hubs);
-  const x = rowFor(raw, model.columns);
-  return sigmoid(linear(model.weights, x, model.bias));
+  return scoreFeatures(model, featuresFor(input, hubs));
+}
+
+/** P(yes) from an already-built raw feature map. The inner form of `score`, shared with the
+ *  cross-validation so tuning and serving score a row exactly the same way. */
+export function scoreFeatures(model: Model, raw: Record<string, number | null>): number {
+  return sigmoid(linear(model.weights, rowFor(raw, model.columns), model.bias));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Cross-validation and hyperparameter selection.
+//
+// One hyperparameter is worth tuning: the L2 strength λ. It trades fitting this project's verdicts
+// against generalising to the next flat, and the right value depends on how many verdicts there
+// are and how noisy they are — which is exactly what cross-validation measures. Learning rate and
+// iteration count are convergence settings, not model choices: fixed high enough to converge on the
+// standardised features and left alone. We pick λ by mean cross-validated LOG-LOSS rather than
+// accuracy or AUC, because on a project's worth of data a validation fold is a handful of rows, and
+// log-loss reads a confident-and-wrong probability as the mistake it is where a hard 0/1 accuracy
+// cannot tell 0.51 from 0.99.
+// ---------------------------------------------------------------------------------------------
+
+/** The λ values tried. Geometric, spanning "trust the data" to "trust almost nothing", so the CV
+ *  can land on the right order of magnitude for a project of any size. */
+export const LAMBDA_GRID = [0.03, 0.1, 0.3, 1, 3, 10];
+
+/** Mean log-loss of predicted probabilities against 0/1 truth. Clamped away from 0 and 1 so a
+ *  single confident miss is a large finite penalty, not infinity. */
+function logLoss(scored: Array<{ p: number; y: 0 | 1 }>): number {
+  if (scored.length === 0) return Infinity;
+  const eps = 1e-12;
+  let sum = 0;
+  for (const { p, y } of scored) {
+    const q = Math.min(1 - eps, Math.max(eps, p));
+    sum += y === 1 ? -Math.log(q) : -Math.log(1 - q);
+  }
+  return sum / scored.length;
+}
+
+/** AUC by the rank-sum identity: the chance a random positive outscores a random negative. Robust
+ *  to the class imbalance here (far more nos than loves), which raw accuracy is not. */
+export function auc(scored: Array<{ p: number; y: 0 | 1 }>): number {
+  const pos = scored.filter((s) => s.y === 1).map((s) => s.p);
+  const neg = scored.filter((s) => s.y === 0).map((s) => s.p);
+  if (pos.length === 0 || neg.length === 0) return 0.5;
+  let wins = 0;
+  for (const p of pos) for (const n of neg) wins += p > n ? 1 : p === n ? 0.5 : 0;
+  return wins / (pos.length * neg.length);
+}
+
+/** Stratified fold assignment: each class is dealt round-robin across the folds, so every fold
+ *  holds roughly the project's overall yes/no ratio. With ~11 positives, an unstratified split
+ *  could hand a fold zero of them and make its validation meaningless. Deterministic (position
+ *  order, no shuffle), so a given dataset always folds the same way. */
+function stratifiedFolds(examples: Example[], folds: number): number[] {
+  let pos = 0;
+  let neg = 0;
+  return examples.map((e) => (e.label === 1 ? pos++ : neg++) % folds);
+}
+
+/** Out-of-fold predictions for one λ: every row is predicted by a model that never saw it. */
+function crossValScores(examples: Example[], lambda: number, folds: number, base: FitOptions): Array<{ p: number; y: 0 | 1 }> {
+  const assignment = stratifiedFolds(examples, folds);
+  const scored: Array<{ p: number; y: 0 | 1 }> = [];
+  for (let f = 0; f < folds; f++) {
+    const train = examples.filter((_, i) => assignment[i] !== f);
+    const val = examples.filter((_, i) => assignment[i] === f);
+    if (train.length === 0 || val.length === 0) continue;
+    const model = fitModel(train, { ...base, lambda });
+    for (const e of val) scored.push({ p: scoreFeatures(model, e.raw), y: e.label });
+  }
+  return scored;
+}
+
+export interface Hyperparams {
+  lambda: number;
+  cvLogLoss: number;
+  cvAuc: number;
+}
+
+/** Choose λ by k-fold cross-validated log-loss over `LAMBDA_GRID`. Folds are clamped so a tiny
+ *  project (fewer positives than folds) still gets at least one positive per fold. */
+export function selectLambda(examples: Example[], base: FitOptions, folds = 5, grid = LAMBDA_GRID): Hyperparams {
+  const positives = examples.filter((e) => e.label === 1).length;
+  const k = Math.max(2, Math.min(folds, positives, examples.length - positives));
+  let best: Hyperparams | null = null;
+  for (const lambda of grid) {
+    const scored = crossValScores(examples, lambda, k, base);
+    const cvLogLoss = logLoss(scored);
+    if (!best || cvLogLoss < best.cvLogLoss) best = { lambda, cvLogLoss, cvAuc: auc(scored) };
+  }
+  // grid is non-empty, so best is set; the fallback keeps the types honest.
+  return best ?? { lambda: 1, cvLogLoss: Infinity, cvAuc: 0.5 };
+}
+
+/** Fit the model a project actually uses: pick λ by cross-validation, then fit on all of its
+ *  verdicts with that λ. This is what the `predict` Edge Function calls. */
+export function fitTuned(examples: Example[], labelMode: LabelMode, folds = 5): Model {
+  const base: FitOptions = { labelMode };
+  const chosen = selectLambda(examples, base, folds);
+  return fitModel(examples, { ...base, lambda: chosen.lambda });
 }
 
 /** Map a rating to a 0/1 label under a mode, or null to drop the row (a `maybe` under love-vs-no).
