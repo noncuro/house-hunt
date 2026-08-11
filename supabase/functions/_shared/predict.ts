@@ -1,3 +1,6 @@
+// GENERATED — do not edit. Copied from packages/core/src/ by tools/sync-edge-function.ts.
+// Edit the original and run `pnpm sync:function`.
+
 /** Verdict score — a classical-ML pass that learns a project's taste from its own verdicts and
  *  predicts P(yes) for any flat. It complements the vision pass in `analysis.ts`: that reads the
  *  photos, this reads the pattern in what the project has already said yes and no to.
@@ -11,7 +14,7 @@
  *  The model that comes out is JSON — weights, the feature spec that standardized them, and the
  *  metrics — so it serialises straight into `project_model` and scores back the same way. */
 
-import type { LightLevel } from './types';
+import type { LightLevel } from './types.ts';
 
 /** The MODEL VERSION. Bump when the feature builder or column set changes in a way that makes an
  *  old stored model score differently — a stored model carries the version it was trained under so

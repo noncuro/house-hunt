@@ -41,7 +41,7 @@
     "fixture": "bash -c \"mkdir -p .fixtures && curl -sA \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36\" https://www.rightmove.co.uk/properties/$0 -o .fixtures/$0.html && echo saved .fixtures/$0.html\"",
     "fixture:search": "tsx tools/fixture-search.ts",
     "sync:function": "tsx tools/sync-edge-function.ts",
-    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; for fn in analyse invite resolve-location travel; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'"
+    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; for fn in analyse invite resolve-location travel predict; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'"
   },
   "devDependencies": {
     "@supabase/supabase-js": "^2.112.2",
