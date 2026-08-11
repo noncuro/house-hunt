@@ -11,7 +11,7 @@ import {
   worstSeverity,
   type Flag,
 } from '@house-hunt/core';
-import { DEFAULT_SHOWING, duplicateIds, GROUP_LABEL, groupOf, sizeOf, type Group } from '@house-hunt/core';
+import { DEFAULT_SHOWING, duplicateIds, GROUP_LABEL, groupOf, parseMonthlyPrice, sizeOf, type Group } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
 import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime } from '@house-hunt/core';
 import { FlagChip } from '@house-hunt/ui';
@@ -31,8 +31,6 @@ import { useCachedTravel } from '@/lib/queries';
 
 type Sort = { key: string; descending: boolean };
 
-const MONEY = /[^0-9.]/g;
-
 export function Compare({
   entries,
   places,
@@ -40,6 +38,7 @@ export function Compare({
   selection,
   filters = true,
   columnsKey = 'compare',
+  defaultSort = { key: 'price', descending: false },
 }: {
   entries: ShortlistEntry[];
   places: Place[];
@@ -60,9 +59,13 @@ export function Compare({
   };
   /** Triage is already one pile, so the include-unrated switches would only ever empty it. */
   filters?: boolean;
+  /** What the table sorts by before anyone clicks a header. `null` means "leave the rows as they
+   *  came" — the caller has already put them in a meaningful order and would lose it. Triage does
+   *  exactly that: it hands the rows over ranked by the verdict score. */
+  defaultSort?: Sort | null;
 }) {
   const [showing, setShowing] = useState<Record<Group, boolean>>(DEFAULT_SHOWING);
-  const [sort, setSort] = useState<Sort>({ key: 'price', descending: false });
+  const [sort, setSort] = useState<Sort | null>(defaultSort);
   const [chosen, setChosen] = useColumnChoice(columnsKey);
   const [picking, setPicking] = useState(false);
 
@@ -127,6 +130,8 @@ export function Compare({
     setChosen(next);
   };
   const sorted = useMemo(() => {
+    // No sort at all means the caller's order is already the answer — see `defaultSort`.
+    if (!sort) return shown;
     const column = columns.find((c) => c.key === sort.key);
     if (!column) return shown;
     return [...shown].sort((a, b) => {
@@ -220,13 +225,13 @@ export function Compare({
                   key={column.key}
                   className={column.numeric ? 'num' : undefined}
                   aria-sort={
-                    sort.key === column.key ? (sort.descending ? 'descending' : 'ascending') : 'none'
+                    sort?.key === column.key ? (sort.descending ? 'descending' : 'ascending') : 'none'
                   }
                 >
                   <button
                     onClick={() =>
                       setSort((s) =>
-                        s.key === column.key
+                        s?.key === column.key
                           ? { key: column.key, descending: !s.descending }
                           : // Numbers you'd rather have more of start high; everything else starts low.
                             { key: column.key, descending: column.bigIsBetter ?? false },
@@ -235,7 +240,7 @@ export function Compare({
                   >
                     {column.label}
                     <span className="sort-mark">
-                      {sort.key === column.key ? (sort.descending ? '▾' : '▴') : ''}
+                      {sort?.key === column.key ? (sort.descending ? '▾' : '▴') : ''}
                     </span>
                   </button>
                 </th>
@@ -380,7 +385,7 @@ function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
       key: 'price',
       label: 'Rent',
       numeric: true,
-      value: (e) => monthly(e.price),
+      value: (e) => parseMonthlyPrice(e.price),
       render: (e) => e.price ?? dash(),
     },
     {
@@ -401,12 +406,12 @@ function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
       label: '£/sq ft',
       numeric: true,
       value: (e) => {
-        const rent = monthly(e.price);
+        const rent = parseMonthlyPrice(e.price);
         const area = resolveSize(sizeOf(e))?.value ?? null;
         return rent === null || area === null || area === 0 ? null : rent / area;
       },
       render: (e) => {
-        const rent = monthly(e.price);
+        const rent = parseMonthlyPrice(e.price);
         const area = resolveSize(sizeOf(e))?.value ?? null;
         if (rent === null || area === null || area === 0) return dash();
         return `£${(rent / area).toFixed(2)}`;
@@ -561,15 +566,9 @@ function forPlace(entry: ShortlistEntry, placeId: string, travel: Record<string,
   return readTravel(rows.filter((t) => t.placeId === placeId));
 }
 
-/** "£4,250 pcm" -> 4250. Weekly rents are normalised so the column compares like with like —
- *  a "£980 pw" listing sorted as cheaper than everything else on the page. */
-function monthly(price: string | null): number | null {
-  if (!price) return null;
-  const amount = Number(price.replace(MONEY, ''));
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  return /\bpw\b|per week/i.test(price) ? (amount * 52) / 12 : amount;
-}
-
+/* The price column reads a listing through the model's own parser (`parseMonthlyPrice`): weekly
+   rents are normalised so "£980 pw" doesn't sort as cheaper than everything on the page, and there
+   is no second copy of that logic here to drift from the price feature the score is fitted on. */
 
 /** Only the problems, from the one definition in facts.ts. */
 function problems(entry: ShortlistEntry): Flag[] {

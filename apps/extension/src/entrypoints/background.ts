@@ -31,6 +31,7 @@ import {
   createInvite,
   forgetActiveProject,
   getAnalysis,
+  getProjectModel,
   getSweepKnowledge,
   headcount,
   leaveProject,
@@ -211,6 +212,10 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
 
     case 'analysis:request':
       return await requestAnalysis(request.rightmoveId);
+
+    case 'model:get':
+      await requireSession();
+      return await getProjectModel();
 
     case 'verdict:set':
       await setVerdict(request.rightmoveId, request.rating, request.note);

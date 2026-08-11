@@ -26,11 +26,12 @@
     "check:sweep": "tsx tools/check-sweep.ts",
     "check:png": "tsx tools/check-png.ts",
     "check:analysis": "tsx tools/check-analysis.ts",
+    "check:predict": "tsx tools/check-predict.ts",
     "check:travel": "tsx tools/check-travel.ts",
     "check:spend": "tsx tools/check-spend.ts",
     "check:rls": "tsx tools/check-rls.ts",
     "check:functions": "deno check --unstable supabase/functions/_shared/*.ts supabase/functions/*/index.ts",
-    "check:all": "pnpm check && pnpm check:functions && pnpm check:one-client && pnpm check:bridge && pnpm check:area && pnpm check:facts && pnpm check:hubs && pnpm check:sweep && pnpm check:travel && pnpm check:png && pnpm check:analysis",
+    "check:all": "pnpm check && pnpm check:functions && pnpm check:one-client && pnpm check:bridge && pnpm check:area && pnpm check:facts && pnpm check:hubs && pnpm check:sweep && pnpm check:travel && pnpm check:png && pnpm check:analysis && pnpm check:predict",
     "smoke": "tsx tools/smoke.ts",
     "smoke:search": "tsx tools/smoke-search.ts",
     "build:smoke": "tsx tools/build-smoke.ts",
@@ -38,7 +39,7 @@
     "fixture": "bash -c \"mkdir -p .fixtures && curl -sA \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36\" https://www.rightmove.co.uk/properties/$0 -o .fixtures/$0.html && echo saved .fixtures/$0.html\"",
     "fixture:search": "tsx tools/fixture-search.ts",
     "sync:function": "tsx tools/sync-edge-function.ts",
-    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; for fn in analyse invite resolve-location travel; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'"
+    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; for fn in analyse invite resolve-location travel predict; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'"
   },
   "devDependencies": {
     "@supabase/supabase-js": "^2.112.2",

@@ -26,7 +26,7 @@ const SHARED = resolve(ROOT, 'supabase/functions/_shared');
  *  the functions share with each other (`http.ts`, `caller.ts`) — those have no original to drift
  *  from and are edited in place, which is why the GENERATED header below is the way to tell which
  *  is which. */
-const FILES = ['analysis.ts', 'png.ts', 'tfl.ts', 'postcode.ts', 'log.ts', 'types.ts'];
+const FILES = ['analysis.ts', 'png.ts', 'tfl.ts', 'postcode.ts', 'predict.ts', 'log.ts', 'types.ts'];
 
 const HEADER = `// GENERATED — do not edit. Copied from packages/core/src/ by tools/sync-edge-function.ts.
 // Edit the original and run \`pnpm sync:function\`.
