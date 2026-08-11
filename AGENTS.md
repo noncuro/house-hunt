@@ -73,14 +73,14 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 - **The sweep window snaps up, never down** — a too-narrow window drops listings and looks like
   success. Details in `packages/core/src/sweep.ts`.
 - **Driving times deliberately throw** (TfL can't do them) rather than mislabel a transit number.
-- **Duplicate listings (⧉) are never merged**; **impossible model answers are dropped, not
-  rendered** (`validateAnalysis` — constraints live in code because OpenAI strict mode can't
-  express them).
 
-Everything else — verdict history, the spend cap's lock ordering, flag severities, the travel
-basis, `DEFAULT_SHOWING`, accepted security gaps — is documented where it lives:
-`packages/core/src/facts.ts`, `claim_analysis` in the migrations, `lib/tfl.ts`,
-`lib/shortlist.ts`, and `TODO.md`.
+**Every other decision is documented as a comment on the code that owns it** — the why sits
+directly above the constant or function it explains (`TRAVEL_BASIS` in `tfl.ts`,
+`SWEEP_MARGIN_HOURS` in `sweep.ts`, `DEFAULT_SHOWING` and `duplicateIds` in `shortlist.ts`,
+`FLAG_ICON` in `facts.ts`, `claim_analysis` in the migrations). **Keep it that way**: when you
+make a non-obvious call, write the reasoning where the code is, not here. This file holds only
+cross-cutting rules and the decisions an agent working elsewhere could silently violate.
+Accepted gaps live in `TODO.md`.
 
 ## The four facts the design rests on (verified; details in `RESEARCH.md` §2)
 
