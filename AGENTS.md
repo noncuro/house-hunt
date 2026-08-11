@@ -8,8 +8,8 @@ people). In use on real listings.
 Two apps in one pnpm workspace: `apps/web` (Next.js — shortlist, compare, map, settings, sign-in,
 project/admin) and `apps/extension` (thin Chrome MV3 — the listing panel, search badges, sweep
 panel, all only on Rightmove pages). Shared logic in `packages/core` and `packages/ui`. Config is
-the workspace-root `.env` (see `.env.example`). **`RESEARCH.md`** is the design document and the
-source of truth for *why*; this file is *how it's built and how to check you haven't broken it*.
+the workspace-root `.env` (see `.env.example`). **`RESEARCH.md`** is the source of truth for *why*;
+this file is *how it's built and how to check you haven't broken it*.
 
 ## Running it
 
@@ -123,14 +123,9 @@ than a failure, and assert what a person could see, not what the markup says.
 
 ## Debugging
 
-- "Shows nothing" is usually a session (`signed-out` / `no-project` testids) or the spend cap,
-  not a bug. Auth is read once per page — reload after signing in elsewhere.
-- **Can't sign in / forgot the password?** There is deliberately no reset email (sign-in stopped
-  depending on email, and the dashboard's "Reset password" button sends a recovery link to a Site
-  URL that isn't running). The repair is `python3 tools/set-password.py <email>` — it prompts for
-  the password twice (so it never reaches the shell history, process list, or a transcript) and
-  writes it with bcrypt through pgcrypto, the same scheme GoTrue uses, confirming the account if it
-  was left unconfirmed. Reads `SUPABASE_PROJECT_REF`/`SUPABASE_DB_PASSWORD` from `.env`.
+- "Shows nothing" is usually a session (`signed-out` / `no-project` testids) or the spend cap. Auth is read once per page — reload after signing in elsewhere.
+- **Can't sign in / forgot the password?** `python3 tools/set-password.py <email>` — its
+  docstring explains why there is no reset email.
 - Start with Settings → Diagnostics → **Copy log** — it exists because the other laptop has no
   debugger.
 - The network lives in the background worker: `chrome://extensions` → Inspect service worker.
@@ -152,9 +147,3 @@ than a failure, and assert what a person could see, not what the markup says.
 `pnpm package` → `rightmove-house-hunt.zip` (gitignored). `SETUP.md` goes with it. The zip is not
 the shared secret — access is an invite. The manifest carries a fixed `key` so the extension id
 survives moving the folder.
-
-## Related
-
-- `../house-purchase/` — buy-vs-rent analysis; its `AGENTS.md` has the Rightmove
-  asking-vs-achieved methodology.
-- `registry/tools/rightmove-extension.yaml` — the hub manifest.
