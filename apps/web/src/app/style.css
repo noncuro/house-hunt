@@ -554,6 +554,40 @@ h2 {
   cursor: default;
 }
 
+/* The download link on the Install tab wears the button's clothes — it is an <a download>, not a
+   <button>, but reads as the one action the section is for. */
+.fields a.primary {
+  display: inline-block;
+  border: 1px solid #12263a;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.fields a.primary:hover {
+  background: #23405a;
+}
+
+/* The load-unpacked steps on the Install tab. Numbered because the order is the instruction. */
+.steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.steps li {
+  margin: 0 0 8px;
+}
+
+.steps code {
+  background: #f0f4f7;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+
 .place {
   display: flex;
   justify-content: space-between;

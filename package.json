@@ -12,6 +12,8 @@
     "zip": "pnpm --filter @house-hunt/ext zip",
     "zip:store": "pnpm --filter @house-hunt/ext zip:store",
     "package": "pnpm --filter @house-hunt/ext package",
+    "//package:web": "Vercel builds only apps/web and cannot build the extension, so the download served by the Install tab is a committed asset. Rerun this whenever the extension changes to refresh it.",
+    "package:web": "pnpm package && cp house-hunt.zip apps/web/public/rightmove-house-hunt.zip && echo \"refreshed apps/web/public/rightmove-house-hunt.zip\"",
     "compile": "tsc --noEmit -p apps/extension && tsc --noEmit -p apps/web",
     "lint": "oxlint",
     "check": "oxlint && pnpm compile",

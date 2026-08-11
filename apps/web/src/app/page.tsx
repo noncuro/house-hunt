@@ -19,6 +19,7 @@ import { SpendWarning } from '@house-hunt/ui';
 import { RATINGS, ratingOf } from '@house-hunt/ui';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
 import { ExtensionNotice } from '@/screens/Extension';
+import { Install } from '@/screens/Install';
 import { Compare } from '@/screens/Compare';
 import { Detail } from '@/screens/Detail';
 import { Admin } from '@/screens/Admin';
@@ -94,7 +95,7 @@ export default function Page() {
  *  places someone is excited about first, the maybes underneath and hideable, and the rejects
  *  as a number — the point of writing "not our place" down is never seeing it again. */
 function App({ user, project }: { user: SessionUser; project: ProjectSummary }) {
-  const [view, setView] = useState<'list' | 'table' | 'map' | 'triage' | 'sweep' | 'project' | 'admin' | 'settings'>('list');
+  const [view, setView] = useState<'list' | 'table' | 'map' | 'triage' | 'sweep' | 'project' | 'install' | 'admin' | 'settings'>('list');
   const [showMaybes, setShowMaybes] = useState(true);
   const [showUnrated, setShowUnrated] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
@@ -294,6 +295,13 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           >
             House hunt
           </button>
+          <button
+            className={view === 'install' ? 'view view-on' : 'view'}
+            title="Download the browser extension and load it into Chrome"
+            onClick={() => setView('install')}
+          >
+            Install
+          </button>
           {/* Presentation only. Hiding the tab is not the boundary — `is_admin()` in the database
               is, and every admin RPC checks it. This just stops a tab that answers nothing. */}
           {user.isAdmin && (
@@ -338,6 +346,8 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       )}
 
       {view === 'project' && <Project notify={push} />}
+
+      {view === 'install' && <Install email={user.email} />}
 
       {view === 'admin' && <Admin />}
 
