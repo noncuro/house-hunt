@@ -108,8 +108,8 @@ pnpm check:all      # + every pure-function check (seconds)
 
 Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `hubs`, `sweep`, `travel`,
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint),
-`one-client`, `bridge`. Each pins reasoning invisible when wrong — a bad bearing still looks
-like a bearing.
+`one-client`, `bridge`, `withdrawn`. Each pins reasoning invisible when wrong — a bad bearing still
+looks like a bearing.
 
 Needing a local Supabase (`supabase start`, ports 5434x; not in `check:all`): `pnpm check:rls`
 (the security boundary asserted by real JWTs) and `pnpm check:spend` (concurrent cap claims for

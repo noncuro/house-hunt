@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { UiHostProvider } from '@house-hunt/ui';
 import { extensionHost } from '@/lib/ui-host';
 import { webAppUrl } from '@/lib/web-app';
+import { listingIdFromUrl } from '@/lib/cards';
 import { Panel } from '@/components/Panel';
 import {
   PAGE_MESSAGE,
@@ -78,6 +79,16 @@ function listen(root: Root, user: SessionUser): void {
     if (message?.source !== PAGE_MESSAGE) return;
 
     answered = true;
+    if (!message.ok && message.withdrawn) {
+      root.render(<Withdrawn />);
+      // The id is only in the address here — the withdrawn page keeps its URL and empties everything
+      // else — so a page we cannot parse is still one we can name. Fire and forget: this tidies the
+      // sweep's worklist, and a failure to tidy it must not replace the sentence above with one
+      // about the database.
+      const id = listingIdFromUrl(location.href);
+      if (id) void send({ type: 'listing:withdrawn', rightmoveId: id });
+      return;
+    }
     // Fail loudly. A blank panel would read as "this listing has nothing nearby".
     root.render(
       message.ok ? <Panel listing={message.listing} user={user} /> : <Broken error={message.error} />,
@@ -139,6 +150,22 @@ function NoProject() {
           Open the house hunt
         </a>{' '}
         and pick one, then reload this page.
+      </div>
+    </div>
+  );
+}
+
+/** The flat is gone, which is an answer rather than a failure.
+ *
+ *  Separate from `Broken` because that one sends you to `decode_page_model.py` to find out what
+ *  Rightmove renamed, and there is nothing to find: the page is exactly as Rightmove meant it. */
+function Withdrawn() {
+  return (
+    <div className="rm-panel rm-signed-out" data-testid="withdrawn">
+      <strong>This listing has been removed.</strong>
+      <div className="rm-signed-out-how">
+        The agent has taken it down, so there is nothing here to read or rate. It has been dropped
+        from the sweep so a fill-in run will not keep reopening it.
       </div>
     </div>
   );

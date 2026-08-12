@@ -30,6 +30,7 @@ import {
   consumeInvites,
   createInvite,
   forgetActiveProject,
+  forgetSightings,
   getAnalysis,
   getProjectModel,
   getSweepKnowledge,
@@ -250,6 +251,10 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       // The property row has to exist before the analyser can read its image URLs, so this is
       // deliberately after the upsert. Fire-and-forget: the panel polls for the result.
       void requestAnalysis(request.listing.rightmoveId);
+      return null;
+
+    case 'listing:withdrawn':
+      await forgetSightings(request.rightmoveId);
       return null;
 
     case 'analysis:get':
