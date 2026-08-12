@@ -1,0 +1,578 @@
+/** The website in a browser: the shortlist, the compare table, the map and triage.
+ *
+ *  This is the harness the split left behind. `smoke:shortlist` and `smoke:sweep` tested those
+ *  screens while they were extension pages; when the app moved to `apps/web` both were deleted and
+ *  nothing replaced them, so the half of this product a person actually spends their evening in
+ *  had no browser coverage at all — AGENTS.md said so, and this is that gap.
+ *
+ *  What it is really for is the embedded PostgREST read behind the shortlist (property + verdict +
+ *  analysis in one round trip). That is the part most likely to be quietly wrong, and it fails as
+ *  an empty page rather than as an error — which is indistinguishable from a house hunt nobody has
+ *  added anything to.
+ *
+ *  Signed in as the same fixture user the extension harnesses use, against the same local stack, so
+ *  the assertions can name numbers: the fixture decides how many flats are rated and how.
+ *
+ *    supabase start
+ *    pnpm smoke:web
+ */
+import { existsSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
+import {
+  createInvite,
+  FIXTURE_EMAIL,
+  FIXTURE_NAME,
+  OTHER_NAME,
+  REDEEM_EMAIL,
+  REDEEM_PASSWORD,
+  seedFixture,
+  verdictHistoryOf,
+  verdictOf,
+} from './fixture-session';
+import { localCredentials } from './supabase-local';
+import { keepOffline, OFFLINE_ARGS } from './offline';
+import { startFunctions } from './edge-functions';
+
+/** Must match `storageKey` in `apps/web/src/lib/client.ts`. Asserted below rather than trusted:
+ *  a session written under the wrong key renders a perfectly good sign-in form, and every
+ *  assertion after it would be about a login screen. */
+const SESSION_KEY = 'house-hunt-session';
+
+/** Not 3100. `pnpm dev:web` runs there, and a harness that quietly attached to the dev server
+ *  somebody had open would be testing whatever code that server was pointed at — including the
+ *  hosted database, which is a real house hunt with real verdicts in it. */
+const PORT = 3199;
+const ORIGIN = `http://127.0.0.1:${PORT}`;
+
+const SHOTS = resolve(import.meta.dirname, '../.fixtures/shots');
+mkdirSync(SHOTS, { recursive: true });
+
+const { url: supabaseUrl, anonKey } = localCredentials();
+const problems: string[] = [];
+const note = (problem: string) => problems.push(problem);
+
+const fixture = await seedFixture();
+console.log(
+  `fixture: ${fixture.listingIds.length} listings (${fixture.unratedCount} unrated), ` +
+    `${fixture.hubCount} hubs, signed in as ${FIXTURE_EMAIL}`,
+);
+
+// Declared out here and started inside the try, so the `finally` covers every one of them. Started
+// above it, a website that failed to build left the function server running — and a stray server is
+// worse than an obvious crash, because the next run's readiness probe passes against it.
+let functions: ChildProcess | undefined;
+let server: ChildProcess | undefined;
+let browser: Browser | undefined;
+
+try {
+  functions = await startFunctions({ supabaseUrl, origin: ORIGIN });
+  server = await startWebApp();
+
+  // A browser with two contexts rather than one persistent context, because the redeem check at the
+  // bottom needs a browser that is genuinely signed out. `localStorage` is per origin and shared by
+  // every page in a context, so planting the session anywhere would be visible everywhere — the two
+  // halves have to be separate contexts or the second one is testing a signed-in browser.
+  browser = await chromium.launch({ headless: true, args: OFFLINE_ARGS });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+
+  // Before the app's own scripts run, so the client finds a session the moment it is constructed
+  // rather than mounting signed-out and repainting.
+  await context.addInitScript(
+    ([key, value]) => window.localStorage.setItem(key as string, value as string),
+    [SESSION_KEY, JSON.stringify(fixture.session)],
+  );
+
+  const offline = await keepOffline(context, {
+    // The app's own origin and its Supabase, and nothing else. Map tiles are allowed because the
+    // map view is under test and a blocked tile renders as an empty grey square that looks exactly
+    // like a broken map.
+    allow: [ORIGIN, supabaseUrl, 'https://tile.openstreetmap.org/'],
+  });
+
+  const page = await context.newPage();
+  page.on('console', (m: ConsoleMessage) => {
+    if (process.env.SMOKE_LOG === 'all') console.log(`[page:${m.type()}] ${m.text()}`);
+    // React's hydration and dev-server noise are not this harness's problem; a thrown error is.
+    else if (m.type() === 'error') note(`console: ${m.text()}`);
+  });
+  page.on('pageerror', (e) => note(`pageerror: ${e.message}`));
+
+  await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
+  await waitForApp(page);
+  await settle(page);
+
+  // Loudly, and first. Every assertion below would pass against a sign-in form.
+  if (await page.locator('.sign-in, [data-testid="signed-out"]').count()) {
+    note('the website is showing the sign-in view despite a valid session');
+  }
+  const whoami = await page.locator('.wrap').innerText();
+  if (!whoami.includes(FIXTURE_NAME)) {
+    note(`the page never names the signed-in user (${FIXTURE_NAME}) — is this really a session?`);
+  }
+
+  // ----------------------------------------------------------------------------------------- //
+  // The list. `DEFAULT_SHOWING` puts excited and maybe on and leaves unrated and rejected off, so
+  // this is a number the fixture decides: one love, one maybe, one rejection, three unrated.
+  // ----------------------------------------------------------------------------------------- //
+  const cards = await page.locator('article.card').count();
+  console.log(`list: ${cards} card(s) shown by default`);
+  if (cards !== 2) {
+    note(`the list shows ${cards} cards; the fixture has exactly 2 rated excited-or-maybe`);
+  }
+  // The rated flats, by id, so a wrong join that returned the right *count* still fails.
+  for (const id of ['smokefix-1', 'smokefix-4']) {
+    if (!(await page.locator(`#card-${id}`).count())) note(`${id} is rated but is not on the list`);
+  }
+  // And the ones default-hidden really are hidden, or "shows 2" means nothing.
+  for (const id of ['smokefix-2', 'smokefix-5']) {
+    if (await page.locator(`#card-${id}`).count()) {
+      note(`${id} is rejected or unrated and should not be on the list by default`);
+    }
+  }
+
+  // The shortlist read is the whole point: a card that rendered with no price or no address is a
+  // join that half-worked, which looks like a design choice rather than a bug.
+  const first = page.locator('#card-smokefix-1');
+  const firstText = await first.innerText();
+  for (const expected of ['Flask Walk', '£2,600 pcm']) {
+    if (!firstText.includes(expected)) note(`the card for smokefix-1 is missing "${expected}"`);
+  }
+  // Attribution: a shared rating whose author is invisible turns a disagreement into a silent
+  // overwrite, which is the reason `set_by_name` is stored at all.
+  if (!(await first.locator('[data-testid="verdict-by"]').count())) {
+    note('the card does not say who set the verdict');
+  }
+
+  await page.screenshot({ path: resolve(SHOTS, 'web-list.png'), fullPage: true });
+
+  // ----------------------------------------------------------------------------------------- //
+  // Rating a flat, through the buttons, read back from Postgres.
+  //
+  // The one write on this screen that nothing checked, and the product's central action. Everything
+  // above is a read, which is not an accident — reads are easy to assert — but it leaves the whole
+  // harness passing against a page that renders beautifully and saves nothing. The mutation is
+  // optimistic on purpose (`queries.ts`): the card repaints from local state the moment it is
+  // clicked and only rolls back if the reply fails, so a verdict that never reached the database
+  // looks identical on screen to one that did. The database is the only witness.
+  //
+  // smokefix-4, which the fixture seeds as `maybe`, so this is a *replacement* rather than a first
+  // rating — the case with the history table behind it, and the one that carries the design's whole
+  // point: a shared opinion whose previous value is kept and whose new author is named. It stays
+  // `love`, so nothing below it moves: the count, the compare table and the triage pile are all
+  // about a flat that was already showing and is still showing.
+  // ----------------------------------------------------------------------------------------- //
+  const rated = page.locator('#card-smokefix-4');
+  const NEW_NOTE = 'Smoke: raised to exciting.';
+  // The note first, then the rating: the buttons pass the note themselves, precisely so that
+  // leaving the field to click a rating does not race two saves. Typing it after would be testing
+  // the blur path, which is a different write.
+  await rated.locator('.note-edit').fill(NEW_NOTE);
+  await rated.locator('[data-testid="rate-love"]').click();
+
+  // What a person would see: the line now reads Exciting, and it is attributed to whoever clicked.
+  await rated
+    .locator('[data-testid="verdict-rating"]')
+    .filter({ hasText: 'Exciting' })
+    .waitFor({ timeout: 10_000 })
+    .catch(() => note('the card never showed the new rating after clicking Exciting'));
+  const by = await rated.locator('[data-testid="verdict-by"]').innerText();
+  if (!by.includes(FIXTURE_NAME)) {
+    note(`the re-rated card is attributed to "${by}", not to ${FIXTURE_NAME} who clicked it`);
+  }
+
+  // And what is actually stored. Polled rather than read once — the click returns as soon as the
+  // optimistic update paints, and a single read here would be a race that passes on a fast laptop.
+  const stored = await settleOn(
+    () => verdictOf('smokefix-4'),
+    (v) => v?.rating === 'love' && v.note === NEW_NOTE,
+  );
+  console.log(`verdict: ${stored?.rating ?? 'none'} — "${stored?.note ?? ''}" by ${stored?.setBy}`);
+  if (stored?.rating !== 'love') note(`the database holds "${stored?.rating ?? 'nothing'}" for smokefix-4, not love`);
+  if (stored?.note !== NEW_NOTE) note(`the note was not saved with the rating (got "${stored?.note ?? ''}")`);
+  // On `set_by`, not on `set_by_name`. The name column belongs to the pre-auth identity model and
+  // the schema says new rows leave it null; the name a reader sees is resolved from project
+  // membership by `authorOf`. Asserting the name here reported a correctly attributed verdict as
+  // anonymous — which is why the check above, on what the card actually renders, is the other half
+  // of this and not a duplicate of it.
+  if (stored?.setBy !== fixture.userId) {
+    note(`the stored verdict is authored by ${stored?.setBy ?? 'nobody'}, not by the user who clicked`);
+  }
+
+  // The previous value is kept. `set_verdict` archives before it replaces, and the seed writes
+  // `verdict` directly, so exactly one row should exist here and it should be the `maybe` this
+  // just overwrote. A silent overwrite is the failure the history table exists to prevent, and it
+  // is invisible from every screen.
+  const history = await verdictHistoryOf('smokefix-4');
+  console.log(`verdict history: ${history.length} prior value(s)`);
+  const archived = history[0];
+  if (history.length !== 1) {
+    note(`smokefix-4 has ${history.length} history rows after one re-rating; expected exactly 1`);
+  } else if (archived?.rating !== 'maybe') {
+    note(`the archived rating is "${archived?.rating}"; the fixture set it to maybe`);
+  }
+
+  // ----------------------------------------------------------------------------------------- //
+  // The compare table, the map and triage. Each is a separate read path and each has failed as a
+  // blank screen before.
+  // ----------------------------------------------------------------------------------------- //
+  await openView(page, 'table');
+  const rows = await page.locator('table tbody tr').count();
+  console.log(`table: ${rows} row(s)`);
+  if (rows < 2) note(`the compare table drew ${rows} rows; the fixture has 2 flats to compare`);
+  await page.screenshot({ path: resolve(SHOTS, 'web-table.png'), fullPage: true });
+
+  await openView(page, 'map');
+  // The tile layer, not merely the container: an empty map div is what a broken map looks like.
+  await page
+    .locator('.leaflet-container')
+    .waitFor({ timeout: 20_000 })
+    .catch(() => note('the map view never rendered a leaflet container'));
+  const tiles = await page.locator('.leaflet-tile').count();
+  console.log(`map: ${tiles} tile(s) loaded`);
+  if (tiles === 0) note('the map drew no tiles');
+  await page.screenshot({ path: resolve(SHOTS, 'web-map.png') });
+
+  // Triage opens as a table, not as cards — the pile is mostly a "no" you can see from one row,
+  // which is the whole reason it has a layout of its own. So this asserts rows, then flips to
+  // cards, because "shows the right number" in one layout says nothing about the other.
+  await openView(page, 'triage');
+  const triageRows = await page.locator('.triage table tbody tr').count();
+  console.log(`triage: ${triageRows} unrated row(s)`);
+  if (triageRows !== fixture.unratedCount) {
+    note(`triage lists ${triageRows} rows; the fixture has ${fixture.unratedCount} unrated`);
+  }
+  await page.screenshot({ path: resolve(SHOTS, 'web-triage.png'), fullPage: true });
+
+  // The bulk-rate buttons are dead until something is ticked. Checked up to the write and no
+  // further, deliberately: the rest of this harness reads, and a bulk write is the one action here
+  // that would put verdicts nobody gave onto rows — which is exactly what the fixture exists to
+  // keep away from a real house hunt, and worth not relying on that alone.
+  const rate = page.locator('.triage-rate button').first();
+  if (await rate.isEnabled()) note('the bulk-rate buttons are live with nothing selected');
+  await page.locator('.triage table tbody tr input[type="checkbox"]').first().check();
+  if (!(await rate.isEnabled())) note('the bulk-rate buttons stayed dead after ticking a row');
+
+  await page.locator('.triage-layout').click();
+  // Scoped to the pile: `article.card` is the shortlist's card too, and an unscoped count here
+  // quietly included whatever else the page had rendered.
+  const triageCards = await page.locator('.triage article.card').count();
+  console.log(`triage as cards: ${triageCards}`);
+  if (triageCards !== fixture.unratedCount) {
+    note(`triage's card layout shows ${triageCards}; the fixture has ${fixture.unratedCount} unrated`);
+  }
+
+  // ----------------------------------------------------------------------------------------- //
+  // The remaining tabs. Shallow on purpose — each is one navigation and one landmark, which is
+  // enough to catch the failure these actually have: a screen that throws on mount, or renders its
+  // frame around a query that errored, and so appears as a heading with nothing under it. A tab
+  // that has never been opened by anything is the one that breaks silently for a month.
+  //
+  // Settings and Project also read the fixture's own rows, so the landmark is a value rather than a
+  // heading wherever there is one to name: `Work` is a place this fixture created, and the two
+  // members are the two accounts it created.
+  // ----------------------------------------------------------------------------------------- //
+  for (const [view, landmarks] of [
+    // `The in-laws` rather than `Work`: this is matched against the whole tab's text, and "Work" is
+    // inside "Working…", so it would report a screen still loading as a screen that had rendered
+    // its places.
+    ['settings', ['Places we measure against', 'The in-laws', 'Neighbourhoods we search', 'Hampstead']],
+    ['project', ['Who is in it', OTHER_NAME, 'Invite someone']],
+    ['sweep', ['Scan']],
+    ['install', ['Install the browser extension']],
+  ] as const) {
+    await openView(page, view);
+    // Case-insensitively, because `innerText` returns text as *rendered* and these headings are
+    // uppercased in CSS. Matching the source's capitalisation reported every one of them missing
+    // from a screen that was drawing them perfectly well.
+    const text = (await page.locator('.wrap').innerText()).toLowerCase();
+    const missing = landmarks.filter((l) => !text.includes(l.toLowerCase()));
+    console.log(`${view}: ${missing.length === 0 ? 'ok' : `missing ${missing.join(', ')}`}`);
+    for (const l of missing) note(`the ${view} tab never rendered "${l}"`);
+    await page.screenshot({ path: resolve(SHOTS, `web-${view}.png`), fullPage: true });
+  }
+
+  console.log(offline());
+
+  // ----------------------------------------------------------------------------------------- //
+  // Joining. The nearest thing this product has to signing up, and until now the only path into it
+  // that nothing exercised: an invite is minted, the code is typed in with a chosen password, and
+  // the account that comes out is the caller's own.
+  //
+  // Worth having as a browser check rather than as a call to the function, because it is four
+  // things in a row that each look fine alone — `create_invite` mints and hashes, `redeem_code`
+  // checks the code against the address, the `password` function makes the account (it is the only
+  // unauthenticated endpoint in the system), and `consume_invites()` turns the invite into a
+  // membership at exactly one moment. A break anywhere in that chain leaves an invited person
+  // holding an account in no project, which is a state the shortlist has a screen for and nobody
+  // would otherwise notice.
+  await checkJoining(browser);
+} finally {
+  // Each guarded and each independent: whichever started gets stopped, whatever happened to the
+  // ones after it.
+  await browser?.close().catch(() => {});
+  server?.kill('SIGTERM');
+  functions?.kill('SIGTERM');
+}
+
+if (problems.length > 0) {
+  console.error('\nPROBLEMS:\n' + problems.map((p) => `  - ${p}`).join('\n'));
+  process.exit(1);
+}
+console.log('\nok');
+
+// --------------------------------------------------------------------------------------------- //
+
+/** Invite somebody, redeem the code in a signed-out browser, and end up in the house hunt. */
+async function checkJoining(browser: Browser): Promise<void> {
+  const invite = await createInvite(fixture.session, REDEEM_EMAIL);
+  if (invite.status !== 'invited' || !invite.code) {
+    note(`inviting ${REDEEM_EMAIL} answered "${invite.status}" with no code — nothing to redeem`);
+    return;
+  }
+  console.log(`invited ${REDEEM_EMAIL}, code ${invite.code}`);
+
+  // Its own context: no planted session, so this is the screen a person actually arrives on.
+  const fresh = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const offline = await keepOffline(fresh, {
+    allow: [ORIGIN, supabaseUrl, 'https://tile.openstreetmap.org/'],
+  });
+  const page = await fresh.newPage();
+  page.on('pageerror', (e) => note(`pageerror (joining): ${e.message}`));
+
+  try {
+    await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
+    await page.locator('.signin').waitFor({ timeout: 60_000 });
+
+    // The refusals first, on the same screen and in the same context, because the interesting
+    // thing about them is that they are *different sentences* and nothing checked which one
+    // appeared. `check:rls` covers the server saying no; this is the screen saying why.
+    await checkRefusals(page);
+
+    // Back to a clean form. The refusals leave the screen in redeem mode with a notice up, and the
+    // real redemption below starts by pressing a button that only exists in the other mode.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('.signin').waitFor({ timeout: 60_000 });
+
+    // Signing in is the default door; redeeming is the other one. If this button is ever renamed
+    // the check should fail rather than quietly fill the sign-in form with a code it has nowhere
+    // to put — hence matching the words a person reads.
+    await page.getByRole('button', { name: 'I have an invite code' }).click();
+
+    await page.locator('.signin input[type="email"]').fill(REDEEM_EMAIL);
+    await page.locator('.signin input[type="password"]').fill(REDEEM_PASSWORD);
+    await page.locator('.signin input[placeholder="ABCD-EFGH-JKMN"]').fill(invite.code);
+    await page.locator('.signin button.primary').click();
+
+    // Wait for the sign-in screen to *go*, which is the only signal that means what it says.
+    // Redeeming deliberately does not mint a session — the screen signs in straight afterwards with
+    // the password just chosen — so this is two round trips through two Edge Functions, and neither
+    // the spinner class `settle()` watches nor a success notice ever appears. Waiting on anything
+    // else reads the button mid-flight, still saying "Checking…", and calls it a failure.
+    await page
+      .locator('.signin')
+      .waitFor({ state: 'detached', timeout: 60_000 })
+      .catch(() => {});
+    await settle(page);
+
+    if (await page.locator('.signin').count()) {
+      const said = (await page.locator('.notice').allInnerTexts().catch(() => [])).join(' | ');
+      note(`redeeming an invite left the sign-in screen up — ${said || 'with nothing said'}`);
+      await page.screenshot({ path: resolve(SHOTS, 'web-join-failed.png'), fullPage: true });
+      return;
+    }
+
+    // Signed in — but a redeemed invite that did not become a *membership* leaves an account in no
+    // project, which renders as its own screen and is exactly what `consume_invites()` exists to
+    // prevent. That is the half worth asserting.
+    if (await page.locator('[data-testid="no-project"]').count()) {
+      note('the invitee signed in but is in no house hunt — consume_invites did not run');
+    }
+    const text = await page.locator('.wrap').innerText();
+    if (!text.includes('Smoke fixture hunt')) {
+      note('the invitee is signed in but not in the project they were invited to');
+    }
+    console.log('joining: invited, redeemed, signed in, and in the house hunt');
+    await page.screenshot({ path: resolve(SHOTS, 'web-joined.png'), fullPage: true });
+    console.log(offline());
+  } finally {
+    await fresh.close();
+  }
+}
+
+/** The two refusals a person actually meets, and which sentence each one gets.
+ *
+ *  Every refusal on this screen has wording of its own — that is the design note at the top of
+ *  `SignIn.tsx`, and it is the whole reason the screen is as long as it is. Nothing checked it, so
+ *  a regression that collapsed them all into "Something went wrong" would have passed every check
+ *  in this repo while making the screen useless: the person who mistyped a code and the person
+ *  whose invite expired need different next actions, and neither can guess.
+ *
+ *  Two, not five. `already-registered` would need an account this fixture then has to work around,
+ *  and `rate-limited` means deliberately hammering the endpoint the real redemption below depends
+ *  on. These are the two that cost nothing and can be provoked honestly. */
+async function checkRefusals(page: Page): Promise<void> {
+  // A wrong password against an address that definitely exists. The sentence is deliberately
+  // two-sided — Supabase answers a wrong password and an unknown address identically, and saying
+  // "wrong password" would make this form an oracle for who has an account — so the assertion is
+  // on the part that carries that: it names both possibilities.
+  await page.locator('.signin input[type="email"]').fill(FIXTURE_EMAIL);
+  await page.locator('.signin input[type="password"]').fill('not-the-fixture-password');
+  await page.locator('.signin button.primary').click();
+  await expectNotice(page, 'do not match an account', 'a wrong password');
+
+  // A wrong code, against an address nobody invited — not against the invite the real redemption
+  // below is about to use. Guessing is rate-limited in the database, and spending an attempt on
+  // the live code would make this check the reason the next one fails.
+  await page.getByRole('button', { name: 'I have an invite code' }).click();
+  await page.locator('.signin input[type="email"]').fill('smoke-fixture-nobody@example.test');
+  await page.locator('.signin input[type="password"]').fill(REDEEM_PASSWORD);
+  await page.locator('.signin input[placeholder="ABCD-EFGH-JKMN"]').fill('ZZZZ-ZZZZ-ZZZZ');
+  await page.locator('.signin button.primary').click();
+  await expectNotice(page, "isn’t right for that address", 'a code nobody was sent');
+}
+
+/** Wait for the screen to say something, and say what it said when it says the wrong thing. */
+async function expectNotice(page: Page, expected: string, what: string): Promise<void> {
+  const notice = page.locator('.signin .notice');
+  await notice.first().waitFor({ timeout: 30_000 }).catch(() => {});
+  const said = (await notice.allInnerTexts().catch(() => [])).join(' | ');
+  if (!said.includes(expected)) {
+    note(`${what} was answered with "${said || 'nothing at all'}", which does not say why`);
+    return;
+  }
+  console.log(`refusal: ${what} → its own sentence`);
+}
+
+
+/** Wait for the app shell, and say what is on screen instead if it never arrives.
+ *
+ *  A bare `waitFor` on `.wrap` reports only that a selector did not appear in 60 seconds, which is
+ *  true of a crashed app, a blocked bundle and a redirect alike. Whatever the page *did* render is
+ *  the thing that tells them apart, so it goes in the failure. */
+async function waitForApp(page: Page): Promise<void> {
+  try {
+    await page.locator('.wrap').waitFor({ timeout: 60_000 });
+  } catch {
+    const body = (await page.locator('body').innerText().catch(() => '')).trim();
+    const html = (await page.content().catch(() => '')).slice(0, 600);
+    throw new Error(
+      `the website never rendered its .wrap shell at ${page.url()}.\n\n` +
+        `what the page says:\n${body || '(nothing)'}\n\nfirst 600 chars of markup:\n${html}`,
+    );
+  }
+}
+
+/** Switch tabs through the URL rather than by clicking.
+ *
+ *  The open view lives in `?v=` precisely so a link lands on it, so this exercises the same path a
+ *  bookmark takes — and it does not depend on a button's label, which is the kind of thing that
+ *  changes without the view behind it changing at all. */
+async function openView(page: Page, view: string): Promise<void> {
+  await page.goto(`${ORIGIN}/?v=${view}`, { waitUntil: 'domcontentloaded' });
+  await waitForApp(page);
+  await settle(page);
+}
+
+/** Wait for the page to stop saying it is working.
+ *
+ *  Every screen here renders immediately and fills in as six queries land, so a screenshot at
+ *  first paint shows an empty shortlist and reads as an empty database — the same trap the panel
+ *  harness documents. */
+async function settle(page: Page, attempts = 60): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    if ((await page.locator('.working').count()) === 0) return;
+    await page.waitForTimeout(500);
+  }
+  note('the page never stopped saying it was working');
+}
+
+/** Poll a database read until it says what the screen already claims, and return whatever it last
+ *  said either way.
+ *
+ *  The verdict mutation is optimistic, so the click resolves the moment the card repaints and the
+ *  round trip lands some milliseconds later. Reading once would be a race with no error message:
+ *  green on a slow laptop, "the database holds nothing" on a fast one. Returning the last read
+ *  rather than throwing keeps the failure legible — the caller says which field is wrong. */
+async function settleOn<T>(
+  read: () => Promise<T>,
+  done: (value: T) => boolean,
+  attempts = 20,
+): Promise<T> {
+  let last = await read();
+  for (let i = 1; i < attempts && !done(last); i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    last = await read();
+  }
+  return last;
+}
+
+/** A production build, served with `next start`, pointed at the local stack.
+ *
+ *  **Not `next dev`, and that is not a preference.** This app ships a deliberately strict
+ *  Content-Security-Policy (see `apps/web/next.config.ts`, where it is load-bearing: sign-in hands
+ *  credentials to the extension over a `postMessage` on this origin, so any script that could run
+ *  here could read them). React's development build needs `eval()`, and the header does not grant
+ *  `unsafe-eval` — so under `next dev` the bundle dies on load and the app renders nothing at all,
+ *  which is exactly what it looked like: a blank page and a selector that never appeared.
+ *
+ *  Serving the production build is also the more honest test. It is the bundle people actually get,
+ *  CSP and all, so this harness would catch a header that broke the app in production — which a dev
+ *  server, with its own relaxed rules, could never do.
+ *
+ *  Which Supabase the website talks to is read from `NEXT_PUBLIC_*` at build time, exactly as the
+ *  extension reads `WXT_*` — so, like `build:smoke`, it cannot be arranged at runtime and is passed
+ *  in here. Nothing about the repo's `.env` is read or changed. */
+async function startWebApp(): Promise<ChildProcess> {
+  const cwd = resolve(import.meta.dirname, '..');
+  const env = {
+    ...process.env,
+    NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anonKey,
+  };
+  // Note: this writes the ordinary `apps/web/.next`, so it replaces whatever `pnpm dev:web` last
+  // built — with a bundle pointed at the *local* stack. Harmless (the next `dev:web` rebuilds from
+  // the root `.env`) but worth knowing if a dev server is running while this does.
+
+  console.log(`building the website against ${supabaseUrl} (this takes a minute)`);
+  const built = spawn('pnpm', ['--filter', '@house-hunt/web', 'exec', 'next', 'build'], {
+    cwd,
+    env,
+    stdio: ['ignore', 'inherit', 'inherit'],
+  });
+  const code = await new Promise<number>((done) => built.on('exit', (c) => done(c ?? 1)));
+  if (code !== 0) throw new Error(`next build failed with code ${code} — the harness cannot run`);
+
+  console.log(`starting the website on ${ORIGIN}`);
+  const child = spawn('pnpm', ['--filter', '@house-hunt/web', 'exec', 'next', 'start', '-p', String(PORT)], {
+    cwd,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  child.stderr?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString();
+    if (/Error|error:/.test(text)) process.stderr.write(`[next] ${text}`);
+  });
+
+  // Poll rather than parse the banner: the "ready" line has moved between Next versions, and a
+  // harness that waits for a string it no longer prints hangs for its whole timeout with the
+  // server up and healthy behind it.
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`next dev exited with code ${child.exitCode}`);
+    try {
+      const response = await fetch(ORIGIN, { signal: AbortSignal.timeout(2_000) });
+      if (response.ok) {
+        console.log('website is up');
+        return child;
+      }
+    } catch {
+      // not up yet
+    }
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  child.kill('SIGTERM');
+  throw new Error(`the website did not come up on ${ORIGIN} within 120s`);
+}

@@ -304,6 +304,24 @@ async function main() {
   const { userA, userB } = await setUp();
   const a = await signIn(EMAIL_A);
 
+  // ----------------------------------------------------------------------------------------- //
+  console.log('\ninvite-only — the boundary every policy below is predicated on');
+
+  // Asserted rather than assumed, and asserted here because everything after it is meaningless
+  // without it: RLS is `to authenticated` throughout, so a stranger who can create an account has
+  // already crossed the only line that matters. It is one setting — `enable_signup = false` under
+  // [auth] — and `config.toml` now explicitly leans on it, because the email provider's own switch
+  // cannot be used on this CLI without disabling login as well. See the comment there.
+  const stranger = createClient(url, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const signedUp = await stranger.auth.signUp({
+    email: 'rls-check-stranger@example.test',
+    password: 'rls-check-stranger-4b1e',
+  });
+  if (signedUp.error) ok(`signUp is refused outright — "${signedUp.error.message}"`);
+  else fail('signUp is refused outright', 'a stranger holding only the publishable key got an account');
+
   const PROJECT_SCOPED = [
     'place', 'verdict', 'verdict_history', 'search_sighting', 'hub_sweep',
     'project_hub', 'project_property', 'invite', 'api_usage',

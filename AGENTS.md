@@ -117,12 +117,45 @@ pnpm fixture <id>              && pnpm check:extractor .fixtures/<id>.html
 pnpm fixture:search <hub>      && pnpm check:sweep .fixtures/search-<hub>.html
 ```
 
-Browser smoke (Playwright loads the built extension; screenshots in `.fixtures/shots/`):
-`pnpm smoke <fixture>` (the listing panel) and `smoke:search` (the search badges and sweep panel —
-the one harness that writes). The website's own shortlist and fill-in run have no browser smoke
-since the app moved off the extension — see `TODO.md`. Harness rules live in `tools/offline.ts` and
-the harness files; the cross-cutting one: no harness may reach Rightmove (`OFFLINE_ARGS` kills DNS
-for the domain).
+Browser smoke (Playwright; screenshots in `.fixtures/shots/`). All three sign a fixture user in
+against the local stack — `tools/fixture-session.ts` is the seed and says why a signed-in harness
+has to be a local-stack one:
+
+| Command | What it drives | Needs a saved page |
+|---|---|---|
+| `pnpm smoke <fixture>` | The listing panel, in the built extension, on a real listing | yes |
+| `pnpm smoke:search` | Search badges and the sweep panel; records real sightings, never completes a sweep | yes |
+| `pnpm smoke:web` | The website: shortlist, compare, map, triage, the other tabs, and joining | **no** |
+
+`pnpm smoke:all` runs all three cheapest-first, stops at the first failure, and prints timings;
+`pnpm smoke:all web search` runs a subset. Within one harness the rule is the opposite — every
+problem is collected and reported together.
+
+`smoke:web` serves the **production** build, not `next dev`: the app ships a CSP with no
+`unsafe-eval` and React's dev build needs `eval()`, so under `next dev` the bundle dies on load and
+renders nothing. Needing no Rightmove page is what makes it the browser check CI can run.
+
+**Both `smoke` and `smoke:web` serve the Edge Functions themselves** (`tools/edge-functions.ts`,
+`functions serve --env-file supabase/.env`), because the runtime `supabase start` brings up has no
+environment of its own: without `WEB_APP_ORIGIN` every travel call is refused by CORS and the page
+spins forever. `smoke` did not, and passed anyway whenever a server left over from something else
+happened to be answering — a green tick that turns red on a clean machine with a message about a
+spinner. Its readiness probe is origin-matched for the same reason: Kong answers the CORS preflight
+204 by itself with nothing behind it, so "did anything reply" stays green with no backend at all.
+
+Harness rules live in `tools/offline.ts` and the harness files; the cross-cutting one: no harness
+may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain). `SMOKE_LOG=all` widens the output —
+on `smoke` it dumps the extension's own diagnostic ring buffer, which is how you tell a write that
+was refused from one that was never attempted.
+
+**What is and is not covered, with timings and what to build next: `docs/coverage.md`.** Read it
+before adding a check — the gaps are ranked, and the biggest is that almost every *write* is
+asserted up to the button and no further.
+
+**Standing a fresh machine up, and where the fixtures come from: `docs/fixtures.md`.** It also
+says why the saved Rightmove pages are deliberately *not* committed — a frozen fixture answers
+"do we still parse last month's page", green, while the live one drifts — and what CI runs
+instead (`.github/workflows/check.yml`: `check:all`, `check:rls`, `check:spend`, `smoke:web`).
 
 ## Debugging
 

@@ -39,8 +39,17 @@ export const FIXTURE_PROJECT = '00000000-0000-4000-b000-0000000000f1';
 export const FIXTURE_EMAIL = 'smoke-fixture@example.test';
 export const FIXTURE_NAME = 'Smoke Fixture';
 const OTHER_EMAIL = 'smoke-fixture-two@example.test';
-const OTHER_NAME = 'The Other One';
+/** Exported so a harness can assert the members list really lists both people rather than just the
+ *  one whose session it is holding. */
+export const OTHER_NAME = 'The Other One';
 const PASSWORD = 'smoke-fixture-password-6c2d';
+
+/** The address `smoke:web` invites and then redeems — the only account in this fixture that is not
+ *  created by the service role, because being created the way a real person's is is the point of
+ *  it. Torn down with the others, so the run after this one invites a stranger again rather than
+ *  somebody who already has an account (which is a different, and separately correct, refusal). */
+export const REDEEM_EMAIL = 'smoke-fixture-invitee@example.test';
+export const REDEEM_PASSWORD = 'smoke-fixture-invitee-9d41';
 /** Every row this fixture owns is named so, so tearing down is a prefix match rather than a list
  *  that drifts out of date and leaves rows behind for the next run to trip over. */
 const PREFIX = 'smokefix-';
@@ -212,18 +221,34 @@ function must(context: string, error: { message: string } | null): void {
   if (error) throw new Error(`fixture: ${context}: ${error.message}`);
 }
 
-async function tearDown(): Promise<void> {
+async function tearDown(alsoCache: ExtraCache[] = []): Promise<void> {
+  const postcodes = [...PROPERTIES.map((p) => p.postcode), ...alsoCache.map((c) => c.postcode)];
+
   await db.from('api_usage').delete().eq('project_id', FIXTURE_PROJECT);
   await db.from('verdict_history').delete().eq('project_id', FIXTURE_PROJECT);
   await db.from('project').delete().eq('id', FIXTURE_PROJECT);
   await db.from('property_analysis').delete().like('rightmove_id', `${PREFIX}%`);
   await db.from('property').delete().like('rightmove_id', `${PREFIX}%`);
-  await db.from('travel_time').delete().in('origin_postcode', PROPERTIES.map((p) => p.postcode));
-  await db.from('station_walk').delete().in('postcode', PROPERTIES.map((p) => p.postcode));
+  // The listing the smoke harness opens is a real one and so carries no `smokefix-` prefix. Left
+  // behind, the second run finds the row already there and `record_property` takes its
+  // on-conflict-update path — so the assertion that opening a new listing creates the row would
+  // pass without that path ever running again.
+  //
+  // Deleted by id and not by postcode, which is what this did first: a real postcode holds real
+  // listings, and matching on it would take out the flat next door because somebody else's project
+  // happened to have opened it. `property_analysis` goes first for the foreign key.
+  const alsoIds = alsoCache.map((c) => c.rightmoveId);
+  if (alsoIds.length > 0) {
+    await db.from('property_analysis').delete().in('rightmove_id', alsoIds);
+    await db.from('property').delete().in('rightmove_id', alsoIds);
+  }
+  await db.from('travel_time').delete().in('origin_postcode', postcodes);
+  await db.from('station_walk').delete().in('postcode', postcodes);
 
+  const owned = new Set([FIXTURE_EMAIL, OTHER_EMAIL, REDEEM_EMAIL]);
   const { data } = await db.auth.admin.listUsers({ perPage: 1000 });
   for (const user of data?.users ?? []) {
-    if (user.email === FIXTURE_EMAIL || user.email === OTHER_EMAIL) await db.auth.admin.deleteUser(user.id);
+    if (user.email && owned.has(user.email)) await db.auth.admin.deleteUser(user.id);
   }
 }
 
@@ -253,7 +278,18 @@ export interface FixtureData {
   unratedCount: number;
 }
 
-async function seed(): Promise<FixtureData> {
+/** An origin the harness wants already in the travel cache, beyond the fixture's own flats.
+ *
+ *  `stations` is by name because that is the key `station_walk` is on and the name is what the
+ *  panel asks with — it comes straight out of the listing blob's `nearestStations`. */
+export interface ExtraCache {
+  /** The listing itself, so tearing down removes this row and only this row. */
+  rightmoveId: string;
+  postcode: string;
+  stations: string[];
+}
+
+async function seed(alsoCache: ExtraCache[]): Promise<FixtureData> {
   const userId = await createUser(FIXTURE_EMAIL, FIXTURE_NAME);
   const otherUserId = await createUser(OTHER_EMAIL, OTHER_NAME);
 
@@ -364,8 +400,15 @@ async function seed(): Promise<FixtureData> {
   )).error);
 
   // Travel: every property to every place, in all three modes, already cached and on the basis
-  // the code currently asks for. Complete on purpose — a gap here would make the panel call TfL,
-  // which is slow, non-deterministic and not what any of these harnesses are about.
+  // the code currently asks for. Complete on purpose, and more load-bearing than it was when this
+  // said "would make the panel call TfL" — travel resolution is server-side now, so an uncached
+  // origin makes the panel call the `travel` Edge Function, which is not running in a harness. It
+  // does not fail fast either: the panel sits on "Working…" and never settles, which the harness
+  // then reports as "panel never left its loading state" with nothing to say about why.
+  //
+  // Hence `alsoCache`. The listing smoke deliberately opens a listing this project has never seen
+  // (that is the point — it exercises `record_property`), and a listing nobody has seen is a
+  // guaranteed cache miss by construction.
   const legs = [
     { mode: 'walking', basis: 'anytime' },
     { mode: 'cycling', basis: 'anytime' },
@@ -374,7 +417,9 @@ async function seed(): Promise<FixtureData> {
   // Keyed on the postcode, not the listing — which is the whole point of the re-key in D5, and
   // which the two Danbury Street listings would otherwise break: they are one flat, one postcode
   // and therefore one cached journey, and inserting per property duplicates the primary key.
-  const origins = [...new Set(PROPERTIES.map((p) => p.postcode))];
+  const origins = [
+    ...new Set([...PROPERTIES.map((p) => p.postcode), ...alsoCache.map((c) => c.postcode)]),
+  ];
   const travel = origins.flatMap((postcode, pi) =>
     PLACES.flatMap((place, di) =>
       legs.map((leg, li) => ({
@@ -406,10 +451,17 @@ async function seed(): Promise<FixtureData> {
   );
   must('seeding the travel cache', (await db.from('travel_time').insert(travel)).error);
 
+  // Each origin gets a walk to its *own* stations. The fixture flats all claim `STATIONS`; a real
+  // listing claims whatever its blob says, and seeding the fixture's two names against its postcode
+  // would leave the panel asking for walks it has no row for — a miss that goes to the Edge
+  // Function exactly like an uncached journey does.
+  const stationsFor = new Map<string, string[]>(origins.map((p) => [p, STATIONS.map((s) => s.name)]));
+  for (const extra of alsoCache) stationsFor.set(extra.postcode, extra.stations);
+
   must('seeding the station walks', (await db.from('station_walk').insert(
-    origins.flatMap((postcode) => STATIONS.map((s) => ({
-      postcode, station_name: s.name, seconds: 360,
-    }))),
+    [...stationsFor].flatMap(([postcode, names]) =>
+      names.map((station_name) => ({ postcode, station_name, seconds: 360 })),
+    ),
   )).error);
 
   return {
@@ -434,9 +486,9 @@ export interface Fixture extends FixtureData {
  *
  *  Torn down first rather than upserted: a run that inherits half of the previous run's rows is a
  *  run whose assertions are about something nobody wrote down. */
-export async function seedFixture(): Promise<Fixture> {
-  await tearDown();
-  const data = await seed();
+export async function seedFixture({ alsoCache = [] }: { alsoCache?: ExtraCache[] } = {}): Promise<Fixture> {
+  await tearDown(alsoCache);
+  const data = await seed(alsoCache);
 
   const client = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: signedIn, error } = await client.auth.signInWithPassword({
@@ -470,6 +522,80 @@ export async function plantSession(worker: Worker, session: Session): Promise<vo
   if (typeof stored !== 'string' || !stored.includes(session.access_token.slice(0, 24))) {
     throw new Error(`fixture: the session did not land in chrome.storage.local under ${SESSION_STORAGE_KEY}`);
   }
+}
+
+/** The extension's own diagnostic ring buffer, read out of the worker it is written in.
+ *
+ *  Worth having because of where the failures actually are. Almost everything that can go wrong
+ *  here goes wrong in the background worker — every database write, every TfL call — and a
+ *  harness watching only the page console sees none of it. `record_property` refusing a listing
+ *  surfaced as one flat line, "did not link it to the project", with the reason three clicks deep
+ *  in a console Chrome wipes when it tears the worker down. That is the exact problem the ring
+ *  buffer was built for (`lib/log.ts`); it just had no reader outside Settings until now.
+ *
+ *  Shape duplicated rather than imported: `lib/log.ts` reaches for `chrome.*` at module load and
+ *  cannot be imported into a Node process. It is two fields, and `formatLog` is the thing that
+ *  would actually hurt to duplicate — this deliberately does not reproduce it. */
+interface WorkerLogEntry {
+  at: string;
+  level: 'info' | 'warn' | 'error';
+  scope: string;
+  message: string;
+  detail?: unknown;
+}
+
+export async function extensionLog(
+  worker: Worker,
+  { levels = ['warn', 'error'] as Array<WorkerLogEntry['level']> } = {},
+): Promise<string[]> {
+  const entries = (await worker.evaluate(
+    async () => (await chrome.storage.local.get('log'))['log'] ?? [],
+  )) as WorkerLogEntry[];
+
+  return entries
+    .filter((e) => levels.includes(e.level))
+    .map((e) => {
+      let detail = '';
+      if (e.detail !== undefined) {
+        try {
+          detail = ` ${JSON.stringify(e.detail)}`;
+        } catch {
+          detail = ` ${String(e.detail)}`;
+        }
+      }
+      return `${e.level.toUpperCase()} [${e.scope}] ${e.message}${detail}`;
+    });
+}
+
+/** Invite somebody, and get the code back in the clear.
+ *
+ *  Through the `invite` Edge Function rather than by writing a row, because the code is the whole
+ *  point and the row never holds it: `create_invite` is given a *hash*, and the plaintext exists
+ *  for exactly one moment, in that function's reply. A fixture that inserted its own invite row
+ *  would have to hash a code itself, and would then be testing its own hashing rather than the
+ *  path a real invite takes.
+ *
+ *  The address is deliberately a parameter with no default. This mints a real invite against the
+ *  fixture project, and the caller is the one who knows whether it is about to redeem it. */
+export async function createInvite(
+  session: Session,
+  email: string,
+): Promise<{ status: string; code: string | null }> {
+  const response = await fetch(`${url}/functions/v1/invite`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: anonKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ email, projectId: FIXTURE_PROJECT }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`fixture: inviting ${email}: HTTP ${response.status} ${await response.text()}`);
+  }
+  const reply = (await response.json()) as { status?: string; code?: string };
+  return { status: reply.status ?? 'unknown', code: reply.code ?? null };
 }
 
 export interface FixtureHub {
@@ -508,6 +634,61 @@ export async function projectHasListing(rightmoveId: string): Promise<boolean> {
     .eq('rightmove_id', rightmoveId);
   if (error) throw new Error(`fixture: reading project_property: ${error.message}`);
   return (count ?? 0) > 0;
+}
+
+/** One stored rating, as the database holds it rather than as a screen states it.
+ *
+ *  `setBy` is the author and `setByName` is very nearly always null — the column exists for the
+ *  eighteen verdicts written under the pre-auth identity model, and its own comment in the schema
+ *  says new rows set `set_by` and leave it empty. The name on screen is resolved from project
+ *  membership by `authorOf`, so a harness asserting on `setByName` is asserting against a legacy
+ *  column and would report a perfectly attributed verdict as anonymous. */
+export interface StoredVerdict {
+  rating: string;
+  note: string;
+  setBy: string | null;
+  setByName: string | null;
+}
+
+/** The project's rating for a listing, read past every view that renders one.
+ *
+ *  A verdict is the product's central action and the only write with a history table behind it, so
+ *  a harness that stops at the button is checking the half that cannot silently do nothing. The
+ *  mutation is optimistic: the card repaints from local state the instant it is clicked and only
+ *  rolls back when the reply fails, so a rating that never reached Postgres looks exactly like one
+ *  that did — until the next reload, on the other laptop, days later. */
+export async function verdictOf(rightmoveId: string): Promise<StoredVerdict | null> {
+  const { data, error } = await db
+    .from('verdict')
+    .select('rating, note, set_by, set_by_name')
+    .eq('project_id', FIXTURE_PROJECT)
+    .eq('rightmove_id', rightmoveId);
+  if (error) throw new Error(`fixture: reading verdict: ${error.message}`);
+  // Not `.single()`: two rows for one property is a real failure mode (the optimistic-update note
+  // in `queries.ts` records the bug that produced it), and `.single()` reports it as "no rows",
+  // which reads as a write that never happened.
+  if ((data ?? []).length > 1) {
+    throw new Error(`fixture: ${data!.length} verdicts for ${rightmoveId} — a project holds one`);
+  }
+  const row = (data ?? [])[0];
+  return row
+    ? { rating: row.rating, note: row.note, setBy: row.set_by, setByName: row.set_by_name }
+    : null;
+}
+
+/** What the previous ratings were, newest first. Empty is the honest answer for a flat rated once —
+ *  the seed writes `verdict` directly, so anything here was archived by `set_verdict`. */
+export async function verdictHistoryOf(rightmoveId: string): Promise<StoredVerdict[]> {
+  const { data, error } = await db
+    .from('verdict_history')
+    .select('rating, note, set_by, set_by_name')
+    .eq('project_id', FIXTURE_PROJECT)
+    .eq('rightmove_id', rightmoveId)
+    .order('updated_at', { ascending: false });
+  if (error) throw new Error(`fixture: reading verdict_history: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    rating: r.rating, note: r.note, setBy: r.set_by, setByName: r.set_by_name,
+  }));
 }
 
 /** Ask the extension who it thinks is signed in, from a page it owns.

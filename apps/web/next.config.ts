@@ -55,7 +55,13 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   // Rightmove's own photo URLs. We link to them and never re-host them (their terms, 13.4), which
   // means the images load from their origin and this has to say so.
-  "img-src 'self' data: blob: https://media.rightmove.co.uk https://*.rightmove.co.uk",
+  //
+  // And the map's tiles, which `screens/Map.tsx` loads from OpenStreetMap. Missing here until
+  // `smoke:web` was written, and the symptom was as quiet as this sort of thing gets: the map view
+  // laid out correctly, drew its markers and its controls, and rendered every tile as blank grey.
+  // Nothing errored on screen — the refusals go to the console — so it read as a map of somewhere
+  // with no streets rather than as a policy blocking the images.
+  "img-src 'self' data: blob: https://media.rightmove.co.uk https://*.rightmove.co.uk https://tile.openstreetmap.org",
   "font-src 'self' data:",
   `connect-src 'self' ${SUPABASE_ORIGIN}`.trim(),
   "frame-ancestors 'none'",
