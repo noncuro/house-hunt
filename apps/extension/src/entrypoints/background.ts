@@ -39,6 +39,7 @@ import {
   listHubSweeps,
   listInvites,
   listMembers,
+  listOffMarket,
   NoActiveProject,
   pendingSightings,
   locateProperties,
@@ -57,6 +58,7 @@ import {
   revokeInvite,
   setActiveProject,
   setDisplayName,
+  setOffMarket,
   setVerdict,
   spendSummary,
   updateHub,
@@ -260,6 +262,17 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
 
     case 'verdicts:get':
       return await getVerdicts(request.rightmoveIds);
+
+    case 'off-market:get': {
+      // A plain membership check against the project's off-market set — cheaper to reason about than
+      // a bespoke single-id query, and the set is small.
+      const off = await listOffMarket();
+      return off.includes(request.rightmoveId);
+    }
+
+    case 'off-market:set':
+      await setOffMarket(request.rightmoveId, request.off, request.reason ?? '');
+      return null;
 
     case 'places:list':
       return await listPlaces();

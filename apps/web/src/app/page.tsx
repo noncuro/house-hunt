@@ -18,6 +18,7 @@ import { SizeFact } from '@house-hunt/ui';
 import { SpendWarning } from '@house-hunt/ui';
 import { RATINGS, ratingOf } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
+import { OffMarketRow } from '@house-hunt/ui';
 import { scoreEntries, sortForTriage, isSurprise, SORT_LABEL, type SortMode } from '@/lib/score';
 import type { StoredModel } from '@house-hunt/core/db';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
@@ -838,21 +839,14 @@ function Card({ entry, places, hubs, twins, rate, scores, offMarket, setOffMarke
           (design D6), and one renderer states it. */}
       <Detail entry={entry} places={places} onRate={(value, note) => rate(entry, value, note)} />
 
-      {/* Off the market, but still a place you liked. Keeping the verdict but withholding it from
-          training is the whole point — the model shouldn't learn from a flat you can't rent, and
-          deleting the verdict would lose that you ever liked it. Only offered where there is a
-          positive verdict to withhold. */}
-      {(canGoOffMarket || isOff) && (
-        <div className="off-market-row">
-          {isOff && <span className="off-market-tag" title="Withheld from the score's training.">Off the market</span>}
-          <button
-            className="linkish off-market-toggle"
-            onClick={() => setOffMarket(entry, !isOff)}
-          >
-            {isOff ? 'Back on the market' : 'Mark off the market'}
-          </button>
-        </div>
-      )}
+      {/* Off the market, but still a place you liked — kept in the shortlist with its verdict,
+          withheld only from training. The same control, and the same rules for when it shows, as
+          the Rightmove panel: one renderer in packages/ui. */}
+      <OffMarketRow
+        isOff={isOff}
+        canGoOffMarket={canGoOffMarket}
+        onToggle={(next) => setOffMarket(entry, next)}
+      />
     </article>
   );
 }

@@ -5,6 +5,7 @@ import { Toasts, useToasts } from '@house-hunt/ui';
 import { CappedNotice, SpendWarning } from '@house-hunt/ui';
 import { VerdictLine, RatingButtons } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
+import { OffMarketRow } from '@house-hunt/ui';
 import { scoreListing } from '@/lib/score';
 import { send, type AnalysisRequest, type SessionUser, type SpendSummary } from '@/lib/messages';
 import {
@@ -86,6 +87,10 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   /** Undefined until the postcode has been resolved — the hub fix distinguishes "still looking"
    *  from "nowhere near a hub", which are not the same claim. */
   const [point, setPoint] = useState<Point | null | undefined>(undefined);
+  /** Whether this flat is off the market for the project — kept in the shortlist with its verdict,
+   *  withheld only from the score's training. Read alongside the verdict, toggled from the footer. */
+  const [offMarket, setOffMarket] = useState(false);
+  const [offMarketBusy, setOffMarketBusy] = useState(false);
 
   // The hub fix is drawn from the postcode, never from listing.latitude/longitude: Rightmove
   // fuzzes the pin, and a fuzzed origin rotates a bearing taken from half a mile away by tens of
@@ -116,14 +121,19 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
     setAnalysisPending(true);
 
     void (async () => {
-      const [existing, placeList, spending, hubList, storedModel] = await Promise.all([
+      const [existing, placeList, spending, hubList, storedModel, offState] = await Promise.all([
         send({ type: 'verdicts:get', rightmoveIds: [listing.rightmoveId] }),
         send({ type: 'places:list' }),
         send({ type: 'spend:summary' }),
         send({ type: 'hubs:list' }),
         send({ type: 'model:get' }),
+        send({ type: 'off-market:get', rightmoveId: listing.rightmoveId }),
       ]);
       if (!live) return;
+
+      // A failed read leaves this false — "on the market" is the safe default, since it only ever
+      // withholds a flat from training and the toggle re-reads on the next open anyway.
+      if (offState.ok) setOffMarket(offState.data);
 
       if (placeList.ok) setPlaces(placeList.data);
       if (spending.ok) setSpend(spending.data);
@@ -285,6 +295,21 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
     if (fresh.ok) setVerdict(fresh.data[0] ?? null);
     setPending(null);
     setError(null);
+  }
+
+  /** Off the market, or back on. Optimistic like the rating, and rolled back with a toast on
+   *  failure — a control that silently did nothing would leave the model still learning from a flat
+   *  you meant to withhold. */
+  async function toggleOffMarket(next: boolean) {
+    const before = offMarket;
+    setOffMarketBusy(true);
+    setOffMarket(next);
+    const result = await send({ type: 'off-market:set', rightmoveId: listing.rightmoveId, off: next });
+    setOffMarketBusy(false);
+    if (!result.ok) {
+      setOffMarket(before);
+      push(`Not saved — ${result.error}`);
+    }
   }
 
   if (collapsed) {
@@ -502,6 +527,15 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
           author={verdict?.person ?? null}
           setNote={setNote}
           save={(text) => verdict && void rate(verdict.rating, text)}
+        />
+        {/* Same control, and same rules for when it shows, as the website card — one renderer in
+            packages/ui. Offered only where there is a positive verdict to withhold, or where it is
+            already off. */}
+        <OffMarketRow
+          isOff={offMarket}
+          canGoOffMarket={mood === 'love' || mood === 'maybe'}
+          onToggle={(next) => void toggleOffMarket(next)}
+          busy={offMarketBusy}
         />
       </div>
     </div>

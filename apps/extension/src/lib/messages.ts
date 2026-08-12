@@ -85,6 +85,11 @@ export type Request =
   | { type: 'listing:seen'; listing: Listing }
   | { type: 'verdict:set'; rightmoveId: string; rating: Rating; note: string }
   | { type: 'verdicts:get'; rightmoveIds: string[] }
+  /** Off the market: withheld from the verdict-score model's training, the verdict itself untouched
+   *  (design in the verdict-score migration). The panel needs both to read the current state and to
+   *  set it — the website could do this already, the panel could not. */
+  | { type: 'off-market:get'; rightmoveId: string }
+  | { type: 'off-market:set'; rightmoveId: string; off: boolean; reason?: string }
   | { type: 'places:list' }
   | { type: 'places:add'; label: string; postcode: string }
   | { type: 'places:remove'; id: string }
@@ -171,6 +176,9 @@ export interface ResponseMap {
    *  the display name of whoever set it — the author, not the owner of a private opinion — and it
    *  is shown alongside `updatedAt` so last-write-wins stays visible rather than silent. */
   'verdicts:get': Verdict[];
+  /** Whether this listing is off the market for the active project. */
+  'off-market:get': boolean;
+  'off-market:set': null;
   'places:list': Place[];
   'places:add': Place;
   'places:remove': null;
