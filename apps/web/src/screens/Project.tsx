@@ -93,8 +93,13 @@ const AMENITY_OPTIONS: { key: AmenityKey; label: string }[] = [
 ];
 
 /** Offered as the great-room bar when it is first switched on — a sensible "large reception room"
- *  size, and the same number `BIGGEST_ROOM_SMALL_SQFT` uses for the other end of the scale. */
+ *  size, and the same number `BIGGEST_ROOM_SMALL_SQFT` uses for the other end of the scale. The
+ *  range is what a bar could sensibly be: below the small-room mark it stops meaning "great", and a
+ *  four-figure single room is a typo. Enforced on save, not just as input attributes, which a typed
+ *  value slips past. */
 const DEFAULT_GREAT_ROOM_SQFT = 450;
+const GREAT_ROOM_MIN_SQFT = 100;
+const GREAT_ROOM_MAX_SQFT = 2000;
 
 const WANT_CHOICES: { value: AmenityWant | null; label: string }[] = [
   { value: null, label: "Don't mind" },
@@ -179,16 +184,25 @@ function HuntSettings({ notify }: { notify: Notify }) {
           <span className="hunt-pref-greatroom-size">
             <input
               type="number"
-              min={100}
-              max={2000}
+              min={GREAT_ROOM_MIN_SQFT}
+              max={GREAT_ROOM_MAX_SQFT}
+              disabled={busy}
               // Typed into the local draft as you go, and saved once on blur — not one write per
-              // keystroke, which would also fight the disabled-while-saving guard.
+              // keystroke, which would also fight the disabled-while-saving guard. The value that
+              // reaches a write is clamped to the control's range on blur (`min`/`max` alone do not
+              // stop a typed 1 or 3000 from reaching `commit`).
               value={draft.greatRoomMinSqft ?? DEFAULT_GREAT_ROOM_SQFT}
               onChange={(e) => {
                 const n = Number(e.target.value);
                 if (Number.isFinite(n) && n > 0) setDraft({ ...draft, greatRoomMinSqft: Math.round(n) });
               }}
-              onBlur={() => commit(draft)}
+              onBlur={() => {
+                const clamped = Math.min(
+                  GREAT_ROOM_MAX_SQFT,
+                  Math.max(GREAT_ROOM_MIN_SQFT, draft.greatRoomMinSqft ?? DEFAULT_GREAT_ROOM_SQFT),
+                );
+                commit({ ...draft, greatRoomMinSqft: clamped });
+              }}
             />
             <span className="dim">sq ft or bigger</span>
           </span>
