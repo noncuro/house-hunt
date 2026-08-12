@@ -37,7 +37,11 @@ import type {
   UsageRow,
 } from '../contracts';
 import type { HuntPreferences } from '../facts';
-import { lookupPostcode, lookupPostcodes } from '../postcode';
+// Postcode resolution goes through the travel Edge Function, not postcodes.io directly: the
+// website's CSP allows `connect-src` to Supabase alone, so a browser fetch to postcodes.io is
+// refused at the preflight. `locatePostcode`/`locatePostcodes` are the function-routed path that
+// works on both surfaces. (The Edge Function still calls `../postcode` itself, server-side.)
+import { locatePostcode, locatePostcodes } from './travel';
 import { MODEL_VERSION, type LabelMode, type Model, type ModelMetrics } from '../predict';
 import type { SearchCard } from '../search-card';
 import { sweepProgress } from '../sweep';
@@ -576,7 +580,9 @@ export async function addPlace(label: string, postcode: string): Promise<Place> 
   const projectId = await activeProjectId();
   // Resolve before saving: a postcode that can't be located produces silently missing travel
   // times later, and the moment to catch that is while the person is looking at the field.
-  const { point, terminated } = await lookupPostcode(postcode);
+  // A terminated postcode still resolves — the function falls back to its last known location —
+  // it just no longer signals the fact back here, where it was only ever a console note.
+  const point = await locatePostcode(postcode);
   if (!point) throw new Error(`"${postcode}" is not a UK postcode we can find — check it?`);
 
   const { data, error } = await db()
@@ -586,16 +592,13 @@ export async function addPlace(label: string, postcode: string): Promise<Place> 
     .single();
   fail('adding place', error);
   if (!data) throw new Error('adding place: no row returned');
-  if (terminated) {
-    console.warn(`${postcode} is a terminated postcode; using its last known location`);
-  }
   return { id: data.id, label: data.label, postcode: data.postcode, lat: data.lat, lon: data.lon };
 }
 
 /** Fill in coordinates for places saved before we resolved them. */
 export async function backfillPlaceCoords(place: Place): Promise<Place> {
   if (place.lat !== null && place.lon !== null) return place;
-  const { point } = await lookupPostcode(place.postcode);
+  const point = await locatePostcode(place.postcode);
   if (!point) return place;
   const projectId = await activeProjectId();
   const { error } = await db()
@@ -1121,7 +1124,7 @@ export async function addHub(draft: HubDraft): Promise<ProjectHub> {
     // Same reasoning as `addPlace`: resolve while the person is looking at the field. A hub with
     // no point silently rotates nothing — it simply cannot answer "what is this listing near" —
     // but finding that out a week later is worse than finding it out now.
-    const { point } = await lookupPostcode(draft.postcode);
+    const point = await locatePostcode(draft.postcode);
     if (!point) throw new Error(`"${draft.postcode}" is not a UK postcode we can find — check it?`);
     lat = point.lat;
     lon = point.lon;
@@ -1335,7 +1338,7 @@ export async function locateProperties(): Promise<number> {
   const rows = (data ?? []) as Array<{ rightmove_id: string; postcode: string }>;
   if (rows.length === 0) return 0;
 
-  const points = await lookupPostcodes([...new Set(rows.map((r) => r.postcode))]);
+  const points = await locatePostcodes(rows.map((r) => r.postcode));
   let located = 0;
 
   for (const row of rows) {

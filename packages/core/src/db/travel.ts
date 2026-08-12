@@ -211,6 +211,31 @@ export async function locatePostcode(postcode: string): Promise<Point | null> {
   return point;
 }
 
+/** Where each of many postcodes is — the read behind the map and the property/place coordinate
+ *  backfill.
+ *
+ *  Through the function, not `postcodes.io` directly: the website's CSP allows `connect-src` to
+ *  Supabase alone, so a browser fetch to postcodes.io is refused before it leaves the page — which
+ *  is the same reason the single lookup and the journeys all route through here. The extension could
+ *  reach it directly, but one path that works on both surfaces beats two that each work on one.
+ *
+ *  One postcode at a time rather than postcodes.io's hundred-per-call batch, because the function
+ *  exposes the single `postcode` kind and looping it reuses the per-process memo above — so the
+ *  second property on a street costs nothing. Bounded so a project with a hundred un-located rows
+ *  does not open a hundred requests in the same tick. An unresolved postcode is simply absent from
+ *  the map, exactly as the direct bulk lookup left it. */
+export async function locatePostcodes(postcodes: string[]): Promise<Map<string, Point>> {
+  const unique = [...new Set(postcodes)];
+  const found = new Map<string, Point>();
+  const CONCURRENCY = 6;
+  for (let at = 0; at < unique.length; at += CONCURRENCY) {
+    const batch = unique.slice(at, at + CONCURRENCY);
+    const located = await Promise.all(batch.map(async (pc) => [pc, await locatePostcode(pc)] as const));
+    for (const [pc, point] of located) if (point) found.set(pc, point);
+  }
+  return found;
+}
+
 /** What the cache already knows for a set of postcodes — no TfL calls, ever.
  *
  *  The compare table shows one row per property and a column per place, so it needs a number for
