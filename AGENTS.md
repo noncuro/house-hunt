@@ -148,3 +148,28 @@ for the domain).
 
 `pnpm package` → `rightmove-house-hunt.zip` (gitignored). `SETUP.md` goes with it. The manifest
 carries a fixed `key` so the extension id survives moving the folder.
+
+## Code Review
+
+In addition to the usual:
+
+- **Comments explain why, not what.** Flag comments that restate the code, and overly long ones
+  where a few words would do.
+- **Copy-paste instead of reuse.** Two blocks differing by a variable or a string get a shared
+  function with a parameter. Same for reinventing a helper the repo (or stdlib) already has —
+  search before accepting a new utility.
+- **Swallowed errors and silent defaults.** Empty catches, catch-and-log-only, or a
+  plausible-looking fallback where the code should throw. Corollary of "fail loudly": a default
+  should be intentional, not a way to dodge error handling.
+- **Fixing tests instead of code.** Changed assertions or expected values that make a check
+  tautological — especially replacing a hardcoded expected value with the computation under test.
+- **Orphaned scaffolding.** Imports, functions, or variables added in the diff and never
+  referenced; `TODO`/stub bodies in code that's meant to be finished.
+- **Collateral damage.** Deletions, rewrites, or reformatting unrelated to the stated change —
+  and safety checks (validation, guards, auth) removed to get past an error instead of fixing it.
+- **Unnecessary abstraction.** Wrappers that delegate with the same signature, patterns with
+  exactly one implementation, when the problem needed one function.
+- **Regex-parsing structured output.** String-splitting CLI or API output that offers `--json`
+  or an equivalent structured form.
+- **Lazy non-typing.** `any` (or a blind `as` cast) where a real type would do — untyped JSON
+  from the network or `__PAGE_MODEL` should be parsed with zod, not asserted.

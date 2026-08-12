@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Opener } from '@house-hunt/ui';
 import { toSweepHub } from '@house-hunt/core';
 import { listHubSweeps, locateProperties, pendingSightings, type HubSweep } from '@house-hunt/core/db';
-import { useHubs } from '@/lib/queries';
+import { keys, useHubs } from '@/lib/queries';
 import { helloExtension } from '@/lib/bridge';
 import type { ProjectHub } from '@house-hunt/core';
 import { sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
@@ -41,19 +41,11 @@ export function Sweep() {
 
   const pending = useQuery({
     queryKey: ['pending'],
-    queryFn: async () => {
-      // Geocode anything newly recorded before counting. A sighting only leaves this list once it
-      // has a map position (`postcode_lat`), and opening a listing records its postcode but never
-      // geocodes it — that backfill is separate, and left to itself runs once per page load and
-      // would not revisit the rows this sweep just added. Doing it here, in the count's own read,
-      // is what lets the number actually fall as listings land. Idempotent and near-free when there
-      // is nothing new to locate; best-effort, so a geocoding hiccup still lets the recount run.
-      await locateProperties().catch(() => {});
-      return pendingSightings();
-    },
+    queryFn: pendingSightings,
     // Every listing the opener opens changes this answer, and each one takes a while to finish
     // extracting. Refetching on focus is how the count comes back down after a run without anyone
-    // pressing anything — and it re-runs the geocode above over whatever finished while you were away.
+    // pressing anything — the opener's worklist is "opened and analysed yet", both of which land
+    // asynchronously as the background tabs finish.
     refetchOnWindowFocus: true,
   });
 
@@ -177,6 +169,7 @@ function FillIn({
   // The opener throws when a tab fails to open, and `Opener` stops the run on it; without somewhere
   // to show the reason the run would just stop with nothing on screen.
   const [error, setError] = useState<string | null>(null);
+  const client = useQueryClient();
 
   // A fill-in run opens each listing in a background tab, which is `chrome.tabs.create` over the
   // bridge — the website has no such call. So the run is only offered when the extension answered
@@ -219,12 +212,25 @@ function FillIn({
                 label: row.displayAddress || row.rightmoveId,
               }))}
               what="we haven't opened yet"
-              onFinished={() => {
+              onFinished={async () => {
                 setError(null);
-                // Recount. The query does the geocoding first, so listings that finished recording
-                // during the run drop out here; the rest follow as their analysis lands and the
-                // window-focus refetch re-runs this.
+                // Recount first, so the pending number updates the moment the run ends rather than
+                // waiting on the geocode below — the count is "opened and analysed", not "mapped",
+                // so a slow postcode lookup must not hold it up. Listings whose analysis landed
+                // during the run drop out here; the rest follow as it lands and the window-focus
+                // refetch re-runs this.
                 refresh();
+                // Then fill in map positions for the flats this run just opened. Opening records a
+                // postcode but never geocodes it, and the once-per-page-load backfill will not
+                // revisit these rows while this tab stays mounted — so do it here, or their pins
+                // would not appear until a hard reload. Best-effort: a geocoding hiccup must not
+                // stop the repaint below.
+                await locateProperties().catch(() => {});
+                // Repaint the shortlist and map regardless of the geocode's outcome: the run opened
+                // (and usually geocoded) listings, and even a geocode that threw after writing some
+                // coordinates has left the shortlist holding stale null/fuzzed positions. Same
+                // invalidation `useLocateProperties` does for the page-load backfill.
+                await client.invalidateQueries({ queryKey: keys.shortlist });
               }}
               onError={setError}
             />

@@ -102,7 +102,6 @@ export type Request =
   /** The project's verdict-score model, for scoring the open listing on the panel. Read once per
    *  panel; scoring itself is pure arithmetic, done in the content script against these weights. */
   | { type: 'model:get' }
-  | { type: 'properties:locate' }
   // --- hubs --------------------------------------------------------------------------------
   | { type: 'hubs:list' }
   | { type: 'hubs:add'; hub: HubDraft }
@@ -195,7 +194,6 @@ export interface ResponseMap {
   'analysis:get': Analysis | null;
   'analysis:request': AnalysisRequest;
   'model:get': StoredModel | null;
-  'properties:locate': number;
 
   'hubs:list': ProjectHub[];
   'hubs:add': ProjectHub;

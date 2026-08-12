@@ -42,7 +42,6 @@ import {
   listOffMarket,
   NoActiveProject,
   pendingSightings,
-  locateProperties,
   readAuthState,
   getVerdicts,
   listPlaces,
@@ -303,9 +302,6 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
 
     case 'postcode:point':
       return await locatePostcode(request.postcode);
-
-    case 'properties:locate':
-      return await locateProperties();
 
     // --- hubs ------------------------------------------------------------------------------
     case 'hubs:list':
