@@ -407,13 +407,22 @@ async function checkTriage({ page }: Stage): Promise<void> {
     const fresh = await page.context().newPage();
     try {
       await fresh.goto(`${ORIGIN}/${href}`, { waitUntil: 'domcontentloaded' });
-      await settle(fresh);
       const cold = fresh.locator(`article${href}`);
-      // Unrated and rejected piles start shut on a fresh load, so this is a real question: the card
-      // exists only if the hash was read, and is visible only if it opened the pile it is in.
-      if ((await cold.count()) === 0) note(`loading ${href} in a new tab drew no such card`);
-      else if (!(await cold.isVisible())) note(`loading ${href} in a new tab left it in a shut pile`);
-      else console.log(`${href} opens that card from cold`);
+      // Waited for rather than settled and read, which is what this did first and which passed here
+      // and failed on CI: `settle` asks whether anything says "Working…", and on a tab that has not
+      // mounted yet nothing does — so it returned at once and the card was read before the app had
+      // drawn. Unrated and rejected piles start shut on a fresh load, so waiting for *visible* is
+      // the whole assertion: the card exists only if the hash was read, and is visible only if that
+      // opened the pile it is in.
+      const arrived = await cold
+        .waitFor({ state: 'visible', timeout: 20_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (arrived) console.log(`${href} opens that card from cold`);
+      else if ((await fresh.locator('[data-testid="signed-out"]').count()) > 0) {
+        note(`loading ${href} in a new tab landed on the sign-in screen`);
+      } else if ((await cold.count()) === 0) note(`loading ${href} in a new tab drew no such card`);
+      else note(`loading ${href} in a new tab left it in a shut pile`);
     } finally {
       await fresh.close();
     }
