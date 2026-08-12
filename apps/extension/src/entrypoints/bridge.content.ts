@@ -56,11 +56,14 @@ export default defineContentScript({
 async function answer(ask: { kind: string } & Record<string, unknown>): Promise<BridgeReply> {
   switch (ask.kind) {
     case 'hello': {
+      // The one place the extension tells the website which build it is, so an install older than
+      // the shipped one gets an "out of date" notice rather than silently misbehaving.
+      const version = chrome.runtime.getManifest().version;
       const state = await send({ type: 'auth:state' });
       if (!state.ok) return { kind: 'error', message: state.error };
       return state.data.status === 'signed-in'
-        ? { kind: 'hello', signedIn: true, email: state.data.user.email }
-        : { kind: 'hello', signedIn: false, email: null };
+        ? { kind: 'hello', signedIn: true, email: state.data.user.email, version }
+        : { kind: 'hello', signedIn: false, email: null, version };
     }
 
     case 'sign-in': {

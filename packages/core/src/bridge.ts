@@ -50,7 +50,11 @@ export type BridgeAsk =
  *  back across would be the first project data on a bridge whose whole justification is that none
  *  travels on it. */
 export type BridgeReply =
-  | { kind: 'hello'; signedIn: boolean; email: string | null }
+  /** `version` is the installed extension's manifest version, so the website can tell when a build
+   *  older than the one it ships is loaded and say "re-download". An extension too old to know to
+   *  send it answers without the field, which reads as `null` on the website — itself a sign it is
+   *  stale (it predates this handshake). */
+  | { kind: 'hello'; signedIn: boolean; email: string | null; version: string | null }
   | { kind: 'sign-in'; outcome: SignInOutcome }
   | { kind: 'sign-out' }
   /** The background tab was opened. Carries nothing back — a fill-in run only needs to know it

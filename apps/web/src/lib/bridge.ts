@@ -50,8 +50,11 @@ async function ask(message: BridgeAsk, deadlineMs: number): Promise<BridgeReply 
 /** What the extension is, from here: absent, present and signed out, or present and signed in. */
 export type ExtensionState =
   | { status: 'absent' }
-  | { status: 'signed-out' }
-  | { status: 'signed-in'; email: string }
+  /** `version` is the installed extension's manifest version (null from a build too old to report
+   *  it). The caller compares it against what the site ships to decide whether to nudge a
+   *  re-download — see `extensionBehind`. */
+  | { status: 'signed-out'; version: string | null }
+  | { status: 'signed-in'; email: string; version: string | null }
   /** Present, and something went wrong asking it. Kept apart from `absent` because the two want
    *  opposite copy: one says "install it", and saying that to somebody who already has it installed
    *  is how a real fault gets ignored. */
@@ -69,8 +72,8 @@ export async function helloExtension(): Promise<ExtensionState> {
   if (reply.kind === 'error') return { status: 'broken', message: reply.message };
   if (reply.kind !== 'hello') return { status: 'broken', message: `unexpected ${reply.kind} reply` };
   return reply.signedIn && reply.email
-    ? { status: 'signed-in', email: reply.email }
-    : { status: 'signed-out' };
+    ? { status: 'signed-in', email: reply.email, version: reply.version }
+    : { status: 'signed-out', version: reply.version };
 }
 
 /** Hand the credentials over, once.
