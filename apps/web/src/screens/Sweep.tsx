@@ -185,8 +185,26 @@ function FillIn({
   if (failed) return <p className="error">Could not read what still needs opening.</p>;
   if (!pending) return null;
 
+  // Both notices are about the run that just finished, so they have to outlive the list that run was
+  // working through. `onFinished` recounts before it geocodes, and a run that opened the last pending
+  // listing empties the list on that recount — so a notice rendered only beside the list would be set
+  // and then immediately hidden by the early return below, which is the case it most needs to cover.
+  const notices = (
+    <>
+      {error && <p className="error">{error}</p>}
+      {/* Under the error and dimmer than it: the run worked, only the pins are missing, and
+          the page-load backfill places them next time. */}
+      {mapNote && <p className="dim">{mapNote}. They will be placed next time this page loads.</p>}
+    </>
+  );
+
   if (pending.length === 0) {
-    return <p className="dim">Everything scanned has been opened and filled in.</p>;
+    return (
+      <>
+        <p className="dim">Everything scanned has been opened and filled in.</p>
+        {notices}
+      </>
+    );
   }
 
   // Grouped only to say where the work is. The run itself goes newest-sighting-first across all
@@ -247,10 +265,7 @@ function FillIn({
               }}
               onError={setError}
             />
-            {error && <p className="error">{error}</p>}
-            {/* Under the error and dimmer than it: the run worked, only the pins are missing, and
-                the page-load backfill places them next time. */}
-            {mapNote && <p className="dim">{mapNote}. They will be placed next time this page loads.</p>}
+            {notices}
             <p className="dim sweep-fill-note">
               Each listing opens in a background tab through the extension, so the run does not steal
               focus. It runs while this tab is open; stopping loses nothing — the ones already opened
