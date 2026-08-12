@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Opener } from '@house-hunt/ui';
 import { toSweepHub } from '@house-hunt/core';
 import { listHubSweeps, locateProperties, pendingSightings, type HubSweep } from '@house-hunt/core/db';
-import { useHubs } from '@/lib/queries';
+import { keys, useHubs } from '@/lib/queries';
 import { helloExtension } from '@/lib/bridge';
 import type { ProjectHub } from '@house-hunt/core';
 import { sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
@@ -169,6 +169,7 @@ function FillIn({
   // The opener throws when a tab fails to open, and `Opener` stops the run on it; without somewhere
   // to show the reason the run would just stop with nothing on screen.
   const [error, setError] = useState<string | null>(null);
+  const client = useQueryClient();
 
   // A fill-in run opens each listing in a background tab, which is `chrome.tabs.create` over the
   // bridge — the website has no such call. So the run is only offered when the extension answered
@@ -219,7 +220,11 @@ function FillIn({
                 // done, or their pins would not appear until a hard reload. Best-effort: a geocoding
                 // hiccup must not swallow the recount. It does not gate the count (the opener is
                 // "opened and analysed", not "mapped"); it just makes the map catch up.
-                await locateProperties().catch(() => {});
+                const located = await locateProperties().catch(() => 0);
+                // If anything got a real position, the shortlist and map are holding stale
+                // null/fuzzed coordinates for those rows — invalidate so they repaint, exactly as
+                // `useLocateProperties` does for the page-load backfill.
+                if (located > 0) await client.invalidateQueries({ queryKey: keys.shortlist });
                 // Recount. Listings whose analysis landed during the run drop out; the rest follow
                 // as their analysis lands and the window-focus refetch re-runs this.
                 refresh();
