@@ -131,6 +131,14 @@ has to be a local-stack one:
 `pnpm smoke:all web search` runs a subset. Within one harness the rule is the opposite — every
 problem is collected and reported together.
 
+`smoke:web` takes names too, one level down: `pnpm smoke:web list rating` runs those sections and
+`pnpm smoke:web joining` runs that one, in the order the file declares them (`session`, `list`,
+`rating`, `table`, `map`, `triage`, `tabs`, `refusals`, `joining`). The setup is not optional — the
+fixture, the Edge Functions and a production build of the website happen either way — so a subset
+saves the browser work and a few seconds of a forty-second run, which is the difference worth having
+while you iterate on one assertion. A name that matches no section stops the run and prints the
+list, as `smoke:all` does with harnesses.
+
 `smoke:web` serves the **production** build, not `next dev`: the app ships a CSP with no
 `unsafe-eval` and React's dev build needs `eval()`, so under `next dev` the bundle dies on load and
 renders nothing. Needing no Rightmove page is what makes it the browser check CI can run.

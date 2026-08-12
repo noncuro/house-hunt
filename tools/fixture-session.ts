@@ -245,6 +245,13 @@ async function tearDown(alsoCache: ExtraCache[] = []): Promise<void> {
   await db.from('travel_time').delete().in('origin_postcode', postcodes);
   await db.from('station_walk').delete().in('postcode', postcodes);
 
+  // The invite guesses the harnesses leave behind. `redeem_code` counts failures per address for an
+  // hour and `smoke:web` makes one on purpose, so the fifth run inside an hour was answered "too
+  // many attempts" — the section that exists to check which refusal a person gets, refused about
+  // the four runs before it. Matched on the prefix every fixture address shares, so this takes out
+  // the fixture's own knocking and leaves the counting that protects a real invite alone.
+  await db.from('redeem_attempt').delete().like('email', 'smoke-fixture%');
+
   const owned = new Set([FIXTURE_EMAIL, OTHER_EMAIL, REDEEM_EMAIL]);
   const { data } = await db.auth.admin.listUsers({ perPage: 1000 });
   for (const user of data?.users ?? []) {

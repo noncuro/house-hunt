@@ -33,6 +33,15 @@ run a subset (`pnpm smoke:all web search`) and prints per-harness timings either
 single harness the opposite rule holds: each one collects every problem and reports them together,
 because three findings from one run beat three runs.
 
+`smoke:web` takes names of its own, for the same reason and with the same rule about a name that
+matches nothing: `pnpm smoke:web list rating`, or `pnpm smoke:web joining`. The sections are
+`session`, `list`, `rating`, `table`, `map`, `triage`, `tabs`, `refusals` and `joining`, and they
+always run in that order. What a subset cannot skip is the setup — the fixture, the Edge Functions
+and a production build of the website — so the saving is the browser work: six seconds for the list
+and the rating against forty for all of it, and nearly all of those six are the setup. Every
+section is written to stand on its own against that setup, which is what makes running one of them
+mean anything.
+
 ## Covered
 
 **The listing panel** (`smoke`) — the decode of a real `__PAGE_MODEL`, the panel rendering under
