@@ -169,6 +169,9 @@ function FillIn({
   // The opener throws when a tab fails to open, and `Opener` stops the run on it; without somewhere
   // to show the reason the run would just stop with nothing on screen.
   const [error, setError] = useState<string | null>(null);
+  /** Separate from `error`, because it is not one. The fill-in run succeeded and only the map
+   *  positions did not land, so this says so quietly rather than colouring a finished run red. */
+  const [mapNote, setMapNote] = useState<string | null>(null);
   const client = useQueryClient();
 
   // A fill-in run opens each listing in a background tab, which is `chrome.tabs.create` over the
@@ -214,13 +217,25 @@ function FillIn({
               what="we haven't opened yet"
               onFinished={async () => {
                 setError(null);
+                setMapNote(null);
                 // Fill in map positions for the flats this run just opened. Opening records a
                 // postcode but never geocodes it, and the once-per-page-load backfill will not
                 // revisit these rows while this tab stays mounted — so do it here, once the run is
                 // done, or their pins would not appear until a hard reload. Best-effort: a geocoding
                 // hiccup must not swallow the recount. It does not gate the count (the opener is
                 // "opened and analysed", not "mapped"); it just makes the map catch up.
-                const located = await locateProperties().catch(() => 0);
+                //
+                // Best-effort, but not silent. `catch(() => 0)` said nothing at all, which is the
+                // swallowed-error case this repo's own review rules name: the pins simply would not
+                // appear and nothing on screen or in the console would connect that to a geocoding
+                // call that failed. The run itself still counts as finished, so the reason goes in
+                // its own quiet line rather than into `error`.
+                const located = await locateProperties().catch((e: unknown) => {
+                  const why = e instanceof Error ? e.message : String(e);
+                  console.warn('[sweep] filling in map positions failed', e);
+                  setMapNote(`Map pins for this run could not be placed — ${why}`);
+                  return 0;
+                });
                 // If anything got a real position, the shortlist and map are holding stale
                 // null/fuzzed coordinates for those rows — invalidate so they repaint, exactly as
                 // `useLocateProperties` does for the page-load backfill.
@@ -232,6 +247,13 @@ function FillIn({
               onError={setError}
             />
             {error && <p className="error">{error}</p>}
+            {/* Under the error, and dimmer than it: the run worked and only the pins are missing.
+                They land on the next page load, which the backfill runs on its own. */}
+            {mapNote && (
+              <p className="dim">
+                {mapNote}. They will be placed the next time this page loads.
+              </p>
+            )}
             <p className="dim sweep-fill-note">
               Each listing opens in a background tab through the extension, so the run does not steal
               focus. It runs while this tab is open; stopping loses nothing — the ones already opened
