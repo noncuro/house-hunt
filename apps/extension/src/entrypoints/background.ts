@@ -130,6 +130,14 @@ export default defineBackground(() => {
   // Reap the sweep tabs opened above once their listing has had time to settle. Registered here so
   // it is back in place when an alarm wakes a torn-down worker. Other alarms (the session
   // heartbeat) share this event and are left alone — hence the name check.
+  // If the user clicks into a sweep tab while its reap is pending, it is one they are reading — cancel
+  // the reap so it is never closed out from under them, and stays cancelled even after they move on to
+  // another tab. Clearing an alarm that does not exist is a no-op, so this is safe for every other tab
+  // activation too, and the alarm's own persistence means an evicted worker still honours it.
+  chrome.tabs.onActivated.addListener((info) => {
+    void chrome.alarms.clear(`${CLOSE_SWEEP_TAB_ALARM}${info.tabId}`);
+  });
+
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (!alarm.name.startsWith(CLOSE_SWEEP_TAB_ALARM)) return;
     const tabId = Number(alarm.name.slice(CLOSE_SWEEP_TAB_ALARM.length));
@@ -379,12 +387,14 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
         throw new Error(`refusing to open ${request.url} — only Rightmove listings`);
       }
       const tab = await chrome.tabs.create({ url: request.url, active: false });
-      // Schedule its own closing. Keyed by tab id so each tab reaps exactly itself, and only when
-      // the tab actually opened (a create with no id is nothing to close).
+      // Schedule its own closing. Keyed by tab id so each tab reaps exactly itself, and only when the
+      // tab actually opened (a create with no id is nothing to close). A failure to schedule must not
+      // fail the open — the tab has already loaded and is doing its job; the worst case is one tab
+      // that outlives its window, which is far better than killing a working tab or stopping the run.
       if (tab.id !== undefined) {
-        await chrome.alarms.create(`${CLOSE_SWEEP_TAB_ALARM}${tab.id}`, {
-          delayInMinutes: SWEEP_TAB_TTL_MINUTES,
-        });
+        await chrome.alarms
+          .create(`${CLOSE_SWEEP_TAB_ALARM}${tab.id}`, { delayInMinutes: SWEEP_TAB_TTL_MINUTES })
+          .catch((e) => logWarn('sweep', 'could not schedule the tab to close', { error: describe(e) }));
       }
       return null;
   }
