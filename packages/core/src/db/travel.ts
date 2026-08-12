@@ -1,3 +1,4 @@
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { db } from './client';
 import { accessToken } from './session';
 import { Unauthenticated } from './session';
@@ -42,11 +43,38 @@ async function ask<T>(payload: Record<string, unknown>): Promise<T> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (error) {
-    // The function answers a refusal it has a story for with a status and a code — rate-limited is
-    // the one that matters here. Surface the message; the caller renders it.
-    throw new Error(error.message || 'the travel service refused');
+    throw await describeInvokeError(error, payload);
   }
   return data as T;
+}
+
+/** Turn a `functions.invoke` failure into an error a human can act on.
+ *
+ *  The function answers every refusal it has a story for with `{ code, error }` as JSON and a real
+ *  status — 429 rate-limited, 401 unauthenticated, 500 failed. supabase-js collapses all of that to
+ *  a single `FunctionsHttpError` whose message is the literal string "Edge Function returned a
+ *  non-2xx status code" and hangs the actual `Response` off `.context`, unread. Rendered as-is that
+ *  string fits every failure and points at none — which is what the panel was showing. Read the body
+ *  back so the surface names the code, and log it, since a 500 here is the one thing no client cache
+ *  papers over. */
+async function describeInvokeError(error: unknown, payload: Record<string, unknown>): Promise<Error> {
+  if (error instanceof FunctionsHttpError) {
+    const res = error.context as Response;
+    let code: string | undefined;
+    let detail: string | undefined;
+    try {
+      const parsed = (await res.clone().json()) as { code?: string; error?: string };
+      code = parsed.code;
+      detail = parsed.error;
+    } catch {
+      // A non-JSON body (a gateway 502, say) has no code; the status still tells the story.
+    }
+    const label = [code, detail].filter(Boolean).join(': ') || 'the travel service refused';
+    logWarn('travel', `invoke failed (${res.status})`, { kind: payload.kind, code, status: res.status, detail });
+    return new Error(label);
+  }
+  logWarn('travel', 'invoke failed', { kind: payload.kind, error: error instanceof Error ? error.message : String(error) });
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 /** Lookups already running, by postcode, so two askers share one set of calls.

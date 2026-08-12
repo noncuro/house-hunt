@@ -268,7 +268,22 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
   );
 
   await recordCalls(caller, made);
-  console.log(`travel ${origin}: ${answers.length} legs, ${answers.length - made} cached, ${made} from TfL`);
+  // Transient leg errors — TfL or postcodes.io unreachable, a parse failure — come back to the
+  // caller inside a 200 and are invisible in the log otherwise: "15 from TfL" reads the same whether
+  // all fifteen answered or all fifteen threw. A settled no-route carries `transient: false` and is
+  // a real answer, not a fault, so it is not counted here.
+  const brokenLegs = answers.filter((a) => a.error && a.transient);
+  console.log(
+    `travel ${origin}: ${answers.length} legs, ${answers.length - made} cached, ${made} from TfL` +
+      (brokenLegs.length > 0 ? `, ${brokenLegs.length} failed` : ''),
+  );
+  if (brokenLegs.length > 0) {
+    const sample = brokenLegs.slice(0, 3).map((a) => `${a.destPostcode} ${a.mode}: ${a.error}`);
+    const line = `${brokenLegs.length} of ${answers.length} travel legs failed for ${origin}:\n  ${sample.join('\n  ')}`;
+    // Every attempted leg failing is an upstream outage, not a bad destination — say so loudly.
+    if (made > 0 && brokenLegs.length >= made) console.error(`ALL TfL legs failed — upstream likely down. ${line}`);
+    else console.warn(line);
+  }
   if (cacheWriteFailures.length > 0) {
     console.error(
       `CACHE NOT WRITTEN for ${cacheWriteFailures.length} of ${answers.length} legs — every lookup ` +
