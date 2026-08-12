@@ -214,20 +214,23 @@ function FillIn({
               what="we haven't opened yet"
               onFinished={async () => {
                 setError(null);
-                // Fill in map positions for the flats this run just opened. Opening records a
-                // postcode but never geocodes it, and the once-per-page-load backfill will not
-                // revisit these rows while this tab stays mounted — so do it here, once the run is
-                // done, or their pins would not appear until a hard reload. Best-effort: a geocoding
-                // hiccup must not swallow the recount. It does not gate the count (the opener is
-                // "opened and analysed", not "mapped"); it just makes the map catch up.
-                const located = await locateProperties().catch(() => 0);
-                // If anything got a real position, the shortlist and map are holding stale
-                // null/fuzzed coordinates for those rows — invalidate so they repaint, exactly as
-                // `useLocateProperties` does for the page-load backfill.
-                if (located > 0) await client.invalidateQueries({ queryKey: keys.shortlist });
-                // Recount. Listings whose analysis landed during the run drop out; the rest follow
-                // as their analysis lands and the window-focus refetch re-runs this.
+                // Recount first, so the pending number updates the moment the run ends rather than
+                // waiting on the geocode below — the count is "opened and analysed", not "mapped",
+                // so a slow postcode lookup must not hold it up. Listings whose analysis landed
+                // during the run drop out here; the rest follow as it lands and the window-focus
+                // refetch re-runs this.
                 refresh();
+                // Then fill in map positions for the flats this run just opened. Opening records a
+                // postcode but never geocodes it, and the once-per-page-load backfill will not
+                // revisit these rows while this tab stays mounted — so do it here, or their pins
+                // would not appear until a hard reload. Best-effort: a geocoding hiccup must not
+                // stop the repaint below.
+                await locateProperties().catch(() => {});
+                // Repaint the shortlist and map regardless of the geocode's outcome: the run opened
+                // (and usually geocoded) listings, and even a geocode that threw after writing some
+                // coordinates has left the shortlist holding stale null/fuzzed positions. Same
+                // invalidation `useLocateProperties` does for the page-load backfill.
+                await client.invalidateQueries({ queryKey: keys.shortlist });
               }}
               onError={setError}
             />
