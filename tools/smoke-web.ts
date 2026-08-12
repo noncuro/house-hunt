@@ -28,6 +28,8 @@ import {
   REDEEM_EMAIL,
   REDEEM_PASSWORD,
   seedFixture,
+  verdictHistoryOf,
+  verdictOf,
 } from './fixture-session';
 import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
@@ -136,6 +138,72 @@ try {
   }
 
   await page.screenshot({ path: resolve(SHOTS, 'web-list.png'), fullPage: true });
+
+  // ----------------------------------------------------------------------------------------- //
+  // Rating a flat, through the buttons, read back from Postgres.
+  //
+  // The one write on this screen that nothing checked, and the product's central action. Everything
+  // above is a read, which is not an accident — reads are easy to assert — but it leaves the whole
+  // harness passing against a page that renders beautifully and saves nothing. The mutation is
+  // optimistic on purpose (`queries.ts`): the card repaints from local state the moment it is
+  // clicked and only rolls back if the reply fails, so a verdict that never reached the database
+  // looks identical on screen to one that did. The database is the only witness.
+  //
+  // smokefix-4, which the fixture seeds as `maybe`, so this is a *replacement* rather than a first
+  // rating — the case with the history table behind it, and the one that carries the design's whole
+  // point: a shared opinion whose previous value is kept and whose new author is named. It stays
+  // `love`, so nothing below it moves: the count, the compare table and the triage pile are all
+  // about a flat that was already showing and is still showing.
+  // ----------------------------------------------------------------------------------------- //
+  const rated = page.locator('#card-smokefix-4');
+  const NEW_NOTE = 'Smoke: raised to exciting.';
+  // The note first, then the rating: the buttons pass the note themselves, precisely so that
+  // leaving the field to click a rating does not race two saves. Typing it after would be testing
+  // the blur path, which is a different write.
+  await rated.locator('.note-edit').fill(NEW_NOTE);
+  await rated.locator('[data-testid="rate-love"]').click();
+
+  // What a person would see: the line now reads Exciting, and it is attributed to whoever clicked.
+  await rated
+    .locator('[data-testid="verdict-rating"]')
+    .filter({ hasText: 'Exciting' })
+    .waitFor({ timeout: 10_000 })
+    .catch(() => note('the card never showed the new rating after clicking Exciting'));
+  const by = await rated.locator('[data-testid="verdict-by"]').innerText();
+  if (!by.includes(FIXTURE_NAME)) {
+    note(`the re-rated card is attributed to "${by}", not to ${FIXTURE_NAME} who clicked it`);
+  }
+
+  // And what is actually stored. Polled rather than read once — the click returns as soon as the
+  // optimistic update paints, and a single read here would be a race that passes on a fast laptop.
+  const stored = await settleOn(
+    () => verdictOf('smokefix-4'),
+    (v) => v?.rating === 'love' && v.note === NEW_NOTE,
+  );
+  console.log(`verdict: ${stored?.rating ?? 'none'} — "${stored?.note ?? ''}" by ${stored?.setBy}`);
+  if (stored?.rating !== 'love') note(`the database holds "${stored?.rating ?? 'nothing'}" for smokefix-4, not love`);
+  if (stored?.note !== NEW_NOTE) note(`the note was not saved with the rating (got "${stored?.note ?? ''}")`);
+  // On `set_by`, not on `set_by_name`. The name column belongs to the pre-auth identity model and
+  // the schema says new rows leave it null; the name a reader sees is resolved from project
+  // membership by `authorOf`. Asserting the name here reported a correctly attributed verdict as
+  // anonymous — which is why the check above, on what the card actually renders, is the other half
+  // of this and not a duplicate of it.
+  if (stored?.setBy !== fixture.userId) {
+    note(`the stored verdict is authored by ${stored?.setBy ?? 'nobody'}, not by the user who clicked`);
+  }
+
+  // The previous value is kept. `set_verdict` archives before it replaces, and the seed writes
+  // `verdict` directly, so exactly one row should exist here and it should be the `maybe` this
+  // just overwrote. A silent overwrite is the failure the history table exists to prevent, and it
+  // is invisible from every screen.
+  const history = await verdictHistoryOf('smokefix-4');
+  console.log(`verdict history: ${history.length} prior value(s)`);
+  const archived = history[0];
+  if (history.length !== 1) {
+    note(`smokefix-4 has ${history.length} history rows after one re-rating; expected exactly 1`);
+  } else if (archived?.rating !== 'maybe') {
+    note(`the archived rating is "${archived?.rating}"; the fixture set it to maybe`);
+  }
 
   // ----------------------------------------------------------------------------------------- //
   // The compare table, the map and triage. Each is a separate read path and each has failed as a
@@ -413,6 +481,26 @@ async function settle(page: Page, attempts = 60): Promise<void> {
     await page.waitForTimeout(500);
   }
   note('the page never stopped saying it was working');
+}
+
+/** Poll a database read until it says what the screen already claims, and return whatever it last
+ *  said either way.
+ *
+ *  The verdict mutation is optimistic, so the click resolves the moment the card repaints and the
+ *  round trip lands some milliseconds later. Reading once would be a race with no error message:
+ *  green on a slow laptop, "the database holds nothing" on a fast one. Returning the last read
+ *  rather than throwing keeps the failure legible — the caller says which field is wrong. */
+async function settleOn<T>(
+  read: () => Promise<T>,
+  done: (value: T) => boolean,
+  attempts = 20,
+): Promise<T> {
+  let last = await read();
+  for (let i = 1; i < attempts && !done(last); i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    last = await read();
+  }
+  return last;
 }
 
 /** A production build, served with `next start`, pointed at the local stack.

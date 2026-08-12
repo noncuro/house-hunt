@@ -637,6 +637,61 @@ export async function projectHasListing(rightmoveId: string): Promise<boolean> {
   return (count ?? 0) > 0;
 }
 
+/** One stored rating, as the database holds it rather than as a screen states it.
+ *
+ *  `setBy` is the author and `setByName` is very nearly always null — the column exists for the
+ *  eighteen verdicts written under the pre-auth identity model, and its own comment in the schema
+ *  says new rows set `set_by` and leave it empty. The name on screen is resolved from project
+ *  membership by `authorOf`, so a harness asserting on `setByName` is asserting against a legacy
+ *  column and would report a perfectly attributed verdict as anonymous. */
+export interface StoredVerdict {
+  rating: string;
+  note: string;
+  setBy: string | null;
+  setByName: string | null;
+}
+
+/** The project's rating for a listing, read past every view that renders one.
+ *
+ *  A verdict is the product's central action and the only write with a history table behind it, so
+ *  a harness that stops at the button is checking the half that cannot silently do nothing. The
+ *  mutation is optimistic: the card repaints from local state the instant it is clicked and only
+ *  rolls back when the reply fails, so a rating that never reached Postgres looks exactly like one
+ *  that did — until the next reload, on the other laptop, days later. */
+export async function verdictOf(rightmoveId: string): Promise<StoredVerdict | null> {
+  const { data, error } = await db
+    .from('verdict')
+    .select('rating, note, set_by, set_by_name')
+    .eq('project_id', FIXTURE_PROJECT)
+    .eq('rightmove_id', rightmoveId);
+  if (error) throw new Error(`fixture: reading verdict: ${error.message}`);
+  // Not `.single()`: two rows for one property is a real failure mode (the optimistic-update note
+  // in `queries.ts` records the bug that produced it), and `.single()` reports it as "no rows",
+  // which reads as a write that never happened.
+  if ((data ?? []).length > 1) {
+    throw new Error(`fixture: ${data!.length} verdicts for ${rightmoveId} — a project holds one`);
+  }
+  const row = (data ?? [])[0];
+  return row
+    ? { rating: row.rating, note: row.note, setBy: row.set_by, setByName: row.set_by_name }
+    : null;
+}
+
+/** What the previous ratings were, newest first. Empty is the honest answer for a flat rated once —
+ *  the seed writes `verdict` directly, so anything here was archived by `set_verdict`. */
+export async function verdictHistoryOf(rightmoveId: string): Promise<StoredVerdict[]> {
+  const { data, error } = await db
+    .from('verdict_history')
+    .select('rating, note, set_by, set_by_name')
+    .eq('project_id', FIXTURE_PROJECT)
+    .eq('rightmove_id', rightmoveId)
+    .order('updated_at', { ascending: false });
+  if (error) throw new Error(`fixture: reading verdict_history: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    rating: r.rating, note: r.note, setBy: r.set_by, setByName: r.set_by_name,
+  }));
+}
+
 /** Ask the extension who it thinks is signed in, from a page it owns.
  *
  *  Worth doing loudly at the top of every harness: an expired token, a project the fixture forgot
