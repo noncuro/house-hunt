@@ -94,6 +94,11 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   /** The page says this flat is off the market and it is rated love/maybe, so we ask before
    *  withholding it rather than doing so silently — see the load effect. */
   const [confirmOffMarket, setConfirmOffMarket] = useState(false);
+  /** The listing on screen right now, readable from inside an in-flight async without capturing a
+   *  stale closure — so a reply for the flat you were just looking at cannot paint the one you have
+   *  moved on to. */
+  const listingIdRef = useRef(listing.rightmoveId);
+  listingIdRef.current = listing.rightmoveId;
 
   // The hub fix is drawn from the postcode, never from listing.latitude/longitude: Rightmove
   // fuzzes the pin, and a fuzzed origin rotates a bearing taken from half a mile away by tens of
@@ -122,6 +127,11 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
     setAnalysis(null);
     setRequest(null);
     setAnalysisPending(true);
+    // A new listing starts from "on the market, not asking, not saving" until its own read lands.
+    // Left standing, a failed off-market read would keep the previous flat's status on screen.
+    setOffMarket(false);
+    setOffMarketBusy(false);
+    setConfirmOffMarket(false);
 
     void (async () => {
       const [existing, placeList, spending, hubList, storedModel, offState] = await Promise.all([
@@ -317,10 +327,14 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
    *  failure — a control that silently did nothing would leave the model still learning from a flat
    *  you meant to withhold. */
   async function toggleOffMarket(next: boolean, announce?: string) {
+    const id = listing.rightmoveId;
     const before = offMarket;
     setOffMarketBusy(true);
     setOffMarket(next);
-    const result = await send({ type: 'off-market:set', rightmoveId: listing.rightmoveId, off: next });
+    const result = await send({ type: 'off-market:set', rightmoveId: id, off: next });
+    // The listing may have changed while this was in flight; a late reply must not touch the flat
+    // now on screen, whose own load has already set its state.
+    if (listingIdRef.current !== id) return;
     setOffMarketBusy(false);
     if (!result.ok) {
       setOffMarket(before);

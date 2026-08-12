@@ -396,7 +396,8 @@ export function flagsFor({ analysis, floorplanUrl }: FlagSource, prefs?: HuntPre
   if (room !== null && room < BIGGEST_ROOM_SMALL_SQFT) {
     // Yellow: a small main room is a real objection, but one you can settle by standing in it.
     flags.push({ key: 'rooms', severity: 'yellow', icon: AMBER, text: claimLabel('rooms-small', rooms), confidence: rooms });
-  } else if (room !== null && room > bigThreshold) {
+  } else if (room !== null && room >= bigThreshold) {
+    // At or above the bar counts — "450 sq ft or bigger" includes exactly 450.
     // When the bar is the hunt's own, name it a great room and say the size — that is the number
     // the preference was set against, so it is the one worth showing.
     const named = prefs?.greatRoomMinSqft != null;
@@ -527,7 +528,11 @@ function applyAmenityWants(
   for (const key of Object.keys(prefs.amenities) as AmenityKey[]) {
     const want = prefs.amenities[key];
     if (!want) continue;
+    // Persisted preferences are a jsonb blob and could carry a key from a newer or hand-edited
+    // build; an unknown one is skipped rather than dereferenced, so bad data can never crash the
+    // shortlist or the compare table.
     const spec = AMENITY[key];
+    if (!spec) continue;
     // Only an amenity the flat is *known* to lack is escalated — unknown is not an absence, and
     // present is what the hunt wanted.
     if (spec.present(analysis) !== false) continue;

@@ -16,8 +16,10 @@ export const EXPECTED_EXTENSION_VERSION = '0.1.0';
  *  at all — it predates the `hello` version field) counts as behind. A version equal to or ahead of
  *  ours does not. Compares dot-separated numeric parts; anything unparseable is treated as behind,
  *  because a version string we cannot read is not one we can vouch for. */
-export function extensionBehind(installed: string | null): boolean {
-  if (installed === null) return true;
+export function extensionBehind(installed: string | null | undefined): boolean {
+  // No usable version — null, undefined (a build predating the handshake), or empty — counts as
+  // behind, and guards the `.split()` below against ever running on a non-string.
+  if (!installed) return true;
   const parse = (v: string) => v.split('.').map((p) => Number(p));
   const got = parse(installed);
   const want = parse(EXPECTED_EXTENSION_VERSION);

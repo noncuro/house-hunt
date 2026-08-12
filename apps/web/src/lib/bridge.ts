@@ -71,9 +71,11 @@ export async function helloExtension(): Promise<ExtensionState> {
   if (!reply) return { status: 'absent' };
   if (reply.kind === 'error') return { status: 'broken', message: reply.message };
   if (reply.kind !== 'hello') return { status: 'broken', message: `unexpected ${reply.kind} reply` };
+  // `?? null` because a build too old to know this handshake omits `version` entirely — that
+  // arrives as `undefined`, which must become the null that `extensionBehind` reads as "stale".
   return reply.signedIn && reply.email
-    ? { status: 'signed-in', email: reply.email, version: reply.version }
-    : { status: 'signed-out', version: reply.version };
+    ? { status: 'signed-in', email: reply.email, version: reply.version ?? null }
+    : { status: 'signed-out', version: reply.version ?? null };
 }
 
 /** Hand the credentials over, once.

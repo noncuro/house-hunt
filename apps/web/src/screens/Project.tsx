@@ -105,23 +105,56 @@ const WANT_CHOICES: { value: AmenityWant | null; label: string }[] = [
 function HuntSettings({ notify }: { notify: Notify }) {
   const settings = useProjectSettings();
   const save = useSetProjectSettings();
-  const prefs: HuntPreferences = settings.data ?? {};
 
-  const update = (next: HuntPreferences) =>
+  // A local draft is the source of truth for edits. Each control builds the next full-object write
+  // from THIS, not from the server read, so two quick changes compose onto each other rather than
+  // each rebuilding from a `settings.data` that has not refetched yet — which would drop the earlier
+  // one. Re-seeded whenever a fresh read lands (another laptop, or our own write coming back).
+  const [draft, setDraft] = useState<HuntPreferences | null>(settings.data ?? null);
+  useEffect(() => {
+    if (settings.data) setDraft(settings.data);
+  }, [settings.data]);
+
+  // Full-object writes go one at a time — the mutation stays disabled while one is in flight — so
+  // two replacements cannot land out of order and restore a stale set. The local draft still updates
+  // immediately, so the controls stay responsive; only the save waits its turn.
+  const commit = (next: HuntPreferences) => {
+    setDraft(next);
     save.mutate(next, {
       onError: (e) => notify(`Couldn't save that preference — ${(e as Error).message}`, 'error'),
     });
+  };
 
+  if (settings.isError) {
+    return (
+      <section className="setting">
+        <h2>What you&rsquo;re looking for</h2>
+        <p className="error">Could not read this hunt&rsquo;s preferences.</p>
+      </section>
+    );
+  }
+  // No editing until the first read lands — otherwise a partial object would replace whatever is
+  // already stored.
+  if (!draft) {
+    return (
+      <section className="setting">
+        <h2>What you&rsquo;re looking for</h2>
+        <p className="working">Working…</p>
+      </section>
+    );
+  }
+
+  const busy = save.isPending;
   const setAmenity = (key: AmenityKey, want: AmenityWant | null) => {
-    const amenities = { ...(prefs.amenities ?? {}) };
+    const amenities = { ...(draft.amenities ?? {}) };
     // "Don't mind" removes the key rather than storing a third value — absent already means that,
     // and one representation of "no preference" cannot disagree with itself.
     if (want) amenities[key] = want;
     else delete amenities[key];
-    update({ ...prefs, amenities });
+    commit({ ...draft, amenities });
   };
 
-  const greatRoomOn = prefs.greatRoomMinSqft != null;
+  const greatRoomOn = draft.greatRoomMinSqft != null;
 
   return (
     <section className="setting">
@@ -132,14 +165,13 @@ function HuntSettings({ notify }: { notify: Notify }) {
         what counts as a great room. Nothing here hides a flat; it only changes the emphasis.
       </p>
 
-      {settings.isError && <p className="error">Could not read this hunt&rsquo;s preferences.</p>}
-
       <label className="hunt-pref-greatroom">
         <input
           type="checkbox"
           checked={greatRoomOn}
+          disabled={busy}
           onChange={(e) =>
-            update({ ...prefs, greatRoomMinSqft: e.target.checked ? DEFAULT_GREAT_ROOM_SQFT : null })
+            commit({ ...draft, greatRoomMinSqft: e.target.checked ? DEFAULT_GREAT_ROOM_SQFT : null })
           }
         />
         <span>Has a great room</span>
@@ -149,11 +181,14 @@ function HuntSettings({ notify }: { notify: Notify }) {
               type="number"
               min={100}
               max={2000}
-              value={prefs.greatRoomMinSqft ?? DEFAULT_GREAT_ROOM_SQFT}
+              // Typed into the local draft as you go, and saved once on blur — not one write per
+              // keystroke, which would also fight the disabled-while-saving guard.
+              value={draft.greatRoomMinSqft ?? DEFAULT_GREAT_ROOM_SQFT}
               onChange={(e) => {
                 const n = Number(e.target.value);
-                if (Number.isFinite(n) && n > 0) update({ ...prefs, greatRoomMinSqft: Math.round(n) });
+                if (Number.isFinite(n) && n > 0) setDraft({ ...draft, greatRoomMinSqft: Math.round(n) });
               }}
+              onBlur={() => commit(draft)}
             />
             <span className="dim">sq ft or bigger</span>
           </span>
@@ -162,7 +197,7 @@ function HuntSettings({ notify }: { notify: Notify }) {
 
       <div className="hunt-pref-amenities">
         {AMENITY_OPTIONS.map(({ key, label }) => {
-          const want = prefs.amenities?.[key] ?? null;
+          const want = draft.amenities?.[key] ?? null;
           return (
             <div className="hunt-pref-row" key={key}>
               <span className="hunt-pref-name">{label}</span>
@@ -173,6 +208,7 @@ function HuntSettings({ notify }: { notify: Notify }) {
                     type="button"
                     className={want === choice.value ? 'key key-on' : 'key'}
                     aria-pressed={want === choice.value}
+                    disabled={busy}
                     onClick={() => setAmenity(key, choice.value)}
                   >
                     {choice.label}

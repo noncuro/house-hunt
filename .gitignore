@@ -37,3 +37,10 @@ apps/web/next-env.d.ts
 *.tsbuildinfo
 .vercel
 .env*
+
+# Local agent state: settings, and any git worktrees created under here. The worktrees are whole
+# second checkouts (one carried a real .env before this rule), so never vendor them into the repo.
+.claude/
+
+# Python bytecode from the tools/ scripts.
+__pycache__/

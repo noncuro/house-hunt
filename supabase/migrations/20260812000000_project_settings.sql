@@ -18,11 +18,12 @@ create table if not exists project_setting (
 alter table project_setting enable row level security;
 
 -- Project data: members read and write their own project's row, exactly like `verdict` and
--- `training_exclusion`. `updated_by` is pinned to the caller so a change records who made it.
+-- `training_exclusion`. `updated_by` must be the caller — required, not merely "null or the caller",
+-- so a member cannot write a row that erases who changed it. `setProjectSettings` always sets it.
 drop policy if exists project_scoped on project_setting;
 create policy project_scoped on project_setting for all to authenticated
   using (public.is_member(project_id))
-  with check (public.is_member(project_id) and (updated_by is null or updated_by = auth.uid()));
+  with check (public.is_member(project_id) and updated_by = auth.uid());
 
 -- Realtime, so a preference changed on one laptop re-flags the flats on another the same way a
 -- verdict or a retrain does.
