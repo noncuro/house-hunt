@@ -262,6 +262,41 @@ try {
   if (triageCards !== fixture.unratedCount) {
     note(`triage's card layout shows ${triageCards}; the fixture has ${fixture.unratedCount} unrated`);
   }
+  // The card layout keeps its own way out to the listing, at the foot of every card's detail.
+  const cardExits = await page.locator('.triage article.card .rightmove-link').count();
+  if (cardExits !== triageCards) {
+    note(`${cardExits} of ${triageCards} triage cards offer a link to Rightmove`);
+  }
+
+  // Back to the table for the click the pile is actually worked by. The address used to be the
+  // Rightmove link, which made the most obvious thing to click in triage the one that left the
+  // site; it now opens this app's own card for the flat, and Rightmove is the second, named link
+  // beside it. Counting rows says nothing about where they point, so both are read here.
+  //
+  // Reopened rather than toggled back with the layout button, which is one button in two states
+  // and would leave this depending on how many times it had been pressed above. A fresh triage
+  // page is the table by default, which is the layout this asserts about.
+  await openView(page, 'triage');
+  const rowExit = await page.locator('.triage table tbody tr .rightmove-link').first().getAttribute('href');
+  if (!rowExit?.startsWith('https://www.rightmove.co.uk/')) {
+    note(`the first triage row's Rightmove link points at "${rowExit}"`);
+  }
+  const address = page.locator('.triage table tbody tr .compare-open').first();
+  const href = await address.getAttribute('href');
+  // `#card-<id>`, where the id is whatever the property is keyed by — Rightmove's own number in a
+  // real hunt, and the fixture's `smokefix-n` here.
+  if (href === null || !/^#card-\S+$/.test(href)) {
+    note(`the first triage row's address points at "${href}", not at a #card-<id> deep link`);
+  } else {
+    await address.click();
+    await settle(page);
+    // On the shortlist, in whichever pile the flat is in — unrated starts collapsed, so a card
+    // that exists but is not visible means the jump opened the wrong one.
+    const card = page.locator(`article${href}`);
+    if ((await card.count()) === 0) note(`opening a triage row drew no ${href} on the shortlist`);
+    else if (!(await card.isVisible())) note(`opening a triage row left ${href} in a shut pile`);
+    console.log(`triage row opens ${href}`);
+  }
 
   // ----------------------------------------------------------------------------------------- //
   // The remaining tabs. Shallow on purpose — each is one navigation and one landmark, which is
