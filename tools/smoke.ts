@@ -22,6 +22,8 @@ import {
 } from './fixture-session';
 import { listingFromHtml } from './read-listing';
 import { keepOffline, OFFLINE_ARGS } from './offline';
+import { startFunctions } from './edge-functions';
+import { localCredentials } from './supabase-local';
 
 const { path: EXTENSION, allowedHosts: ALLOWED_HOSTS } = smokeBuild();
 const SHOTS = resolve(import.meta.dirname, '../.fixtures/shots');
@@ -37,10 +39,16 @@ const url = `https://www.rightmove.co.uk/properties/${listingId}`;
 mkdirSync(SHOTS, { recursive: true });
 
 // Read the listing here, from the same extractor the content script uses, so the fixture can put
-// this postcode's journeys and station walks in the cache before the panel asks for them. Without
-// it the panel goes to the `travel` Edge Function, which no harness runs, and hangs on "Working…"
-// until the settle timeout — reported as "panel never left its loading state", which reads as a
-// broken panel rather than as a missing backend.
+// this postcode's journeys and station walks in the cache before the panel asks for them. That
+// keeps the panel fast and its numbers fixed, rather than depending on what TfL says this morning.
+//
+// It is not what keeps the panel off the network, though — that was the belief this harness ran on
+// for a while, and it was wrong. The panel asks the `travel` function for the station walks
+// regardless and the function decides what it already knows, so with nothing serving the functions
+// it gets a 502, waits, and reports "panel never left its loading state": a sentence about a
+// spinner for what is really a process nobody started. It only ever passed because a
+// `supabase functions serve` happened to be running from something else. Hence `startFunctions`
+// below, which is now explicit and shared with `smoke:web`.
 const listing = listingFromHtml(fixturePath, url);
 const alsoCache =
   listing.postcode === null
@@ -58,6 +66,10 @@ if (alsoCache.length === 0) {
 // time" this claims is really the first time.
 const fixture = await seedFixture({ alsoCache });
 console.log(`fixture: signed in as ${FIXTURE_EMAIL}, opening listing ${listingId} for the first time`);
+
+// Before the browser: the panel asks for travel the moment it renders, and a function that comes
+// up late is a panel that has already given up.
+const functions = await startFunctions({ supabaseUrl: localCredentials().url });
 
 const context = await chromium.launchPersistentContext('', {
   // Extensions need a real browser context; the headless shell cannot load them.
@@ -198,6 +210,7 @@ try {
   }
 } finally {
   await context.close();
+  functions.kill('SIGTERM');
 }
 
 if (problems.length > 0) {

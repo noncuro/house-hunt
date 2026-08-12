@@ -133,10 +133,15 @@ problem is collected and reported together.
 
 `smoke:web` serves the **production** build, not `next dev`: the app ships a CSP with no
 `unsafe-eval` and React's dev build needs `eval()`, so under `next dev` the bundle dies on load and
-renders nothing. It also serves the Edge Functions itself (`functions serve --env-file
-supabase/.env`) because the runtime `supabase start` brings up has no environment, and without
-`WEB_APP_ORIGIN` every travel call is refused by CORS and the page spins forever. Needing no
-Rightmove page is what makes it the browser check CI can run.
+renders nothing. Needing no Rightmove page is what makes it the browser check CI can run.
+
+**Both `smoke` and `smoke:web` serve the Edge Functions themselves** (`tools/edge-functions.ts`,
+`functions serve --env-file supabase/.env`), because the runtime `supabase start` brings up has no
+environment of its own: without `WEB_APP_ORIGIN` every travel call is refused by CORS and the page
+spins forever. `smoke` did not, and passed anyway whenever a server left over from something else
+happened to be answering — a green tick that turns red on a clean machine with a message about a
+spinner. Its readiness probe is origin-matched for the same reason: Kong answers the CORS preflight
+204 by itself with nothing behind it, so "did anything reply" stays green with no backend at all.
 
 Harness rules live in `tools/offline.ts` and the harness files; the cross-cutting one: no harness
 may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain). `SMOKE_LOG=all` widens the output —

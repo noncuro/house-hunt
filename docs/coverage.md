@@ -10,9 +10,16 @@ Timings are a warm run on a laptop, measured with `pnpm smoke:all`, and exclude 
 | Harness | Time | Drives |
 |---|---|---|
 | `pnpm check:all` | 8s | Every pure function. No database, no browser. |
-| `pnpm smoke:search` | 3.5s | The extension on a saved search page. |
-| `pnpm smoke` | 5.3s | The extension's panel on a saved listing page. |
-| `pnpm smoke:web` | ~31s | The website, end to end, including joining. |
+| `pnpm smoke:search` | 2.2s | The extension on a saved search page. |
+| `pnpm smoke` | 5.7s | The extension's panel on a saved listing page. |
+| `pnpm smoke:web` | ~32s | The website, end to end, including joining and the refusals. |
+
+`supabase start` is the only thing you have to have running. Both browser harnesses that need the
+Edge Functions now serve them themselves (`tools/edge-functions.ts`) and stop them again. `pnpm
+smoke` did not, for a while, and passed anyway — because a `supabase functions serve` left over
+from something else was answering. That is the worst shape a green tick can have: it goes red the
+first time somebody runs it on a clean machine, and it says "panel never left its loading state",
+which is a sentence about a spinner for what is really a process nobody started.
 | `pnpm check:rls` | ~25s | 180 assertions on the security boundary. |
 | `pnpm check:spend` | ~15s | 53 assertions on the cap arithmetic. |
 
@@ -56,6 +63,14 @@ in *and in the project*. Four things in a row that each look fine alone: `create
 only unauthenticated endpoint in the system), and `consume_invites()` turns the invite into a
 membership. A break anywhere leaves an invited person holding an account in no project.
 
+**Two refusals on the sign-in screen** (`smoke:web`) — a wrong password, and a code nobody was
+sent. Each refusal has wording of its own, which is most of why that screen is as long as it is, so
+a regression collapsing them into "Something went wrong" would have passed every check in this repo
+while leaving the person who mistyped a code and the person whose invite expired with the same
+useless sentence. The wrong code is aimed at an uninvited address rather than at the live invite:
+guessing is rate-limited in the database, and spending an attempt would make this check the reason
+the joining check below it fails.
+
 **The boundary** (`check:rls`, `check:spend`) — asserted from outside by real clients holding real
 JWTs, including that `signUp()` is refused outright, which every `to authenticated` policy is
 predicated on.
@@ -71,7 +86,7 @@ Roughly in the order the risk deserves.
 | **The extension↔website bridge.** `check:bridge` covers the contract as a pure function; nothing drives the actual handover. | It is how signing in on the website signs the extension in. It fails silently by design (`handOver` swallows), so a break shows up as "the extension is signed out" days later. |
 | **The paced opener** (Sweep's fill-in run). | It was covered by `smoke:sweep` before the split, and that harness was deleted rather than ported. It opens tabs one at a time; the old harness stubbed its worklist so the pacing assertion could not silently skip. |
 | **The Detail view** and the flat-by-URL deep link (`#card-<id>`). | The reason the app moved off `chrome-extension://` at all. |
-| **Sign-in refusals.** Wrong password, wrong code, expired code, already-registered, rate-limited. | Every one is its own sentence on purpose — that is the design note at the top of `SignIn.tsx` — and nothing checks that the right sentence appears. `check:rls` covers the server's refusals; this is the screen's. |
+| **The rest of the sign-in refusals.** A wrong password and a code nobody was sent are now checked; expired, already-registered and rate-limited are not. | Every refusal is its own sentence on purpose — the design note at the top of `SignIn.tsx` — and the three left over are the ones that cost something to provoke: `already-registered` needs an account the fixture then has to work around, and `rate-limited` means hammering the endpoint the real joining check depends on. |
 | **`analyse`.** No harness analyses anything. | It costs money per run, which is a real reason. The cap arithmetic around it is covered by `check:spend`. |
 | **Driving times**, which deliberately throw. | Cheap to pin; nothing does. |
 | **`check:predict` is skipping.** | It needs `.fixtures/predict-*.json`, which is committable by design (`.gitignore` un-ignores it) and has never been generated. It says "this proves nothing; it only declines to fail" — but it is still a green tick in `check:all` for a check that did not run. Generate one with `tools/export-predict-fixture.ts`. |

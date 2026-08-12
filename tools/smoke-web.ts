@@ -33,6 +33,7 @@ import {
 } from './fixture-session';
 import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
+import { startFunctions } from './edge-functions';
 
 /** Must match `storageKey` in `apps/web/src/lib/client.ts`. Asserted below rather than trusted:
  *  a session written under the wrong key renders a perfectly good sign-in form, and every
@@ -58,7 +59,7 @@ console.log(
     `${fixture.hubCount} hubs, signed in as ${FIXTURE_EMAIL}`,
 );
 
-const functions = await startFunctions();
+const functions = await startFunctions({ supabaseUrl, origin: ORIGIN });
 const server = await startWebApp();
 
 // A browser with two contexts rather than one persistent context, because the redeem check at the
@@ -335,6 +336,16 @@ async function checkJoining(): Promise<void> {
     await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
     await page.locator('.signin').waitFor({ timeout: 60_000 });
 
+    // The refusals first, on the same screen and in the same context, because the interesting
+    // thing about them is that they are *different sentences* and nothing checked which one
+    // appeared. `check:rls` covers the server saying no; this is the screen saying why.
+    await checkRefusals(page);
+
+    // Back to a clean form. The refusals leave the screen in redeem mode with a notice up, and the
+    // real redemption below starts by pressing a button that only exists in the other mode.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('.signin').waitFor({ timeout: 60_000 });
+
     // Signing in is the default door; redeeming is the other one. If this button is ever renamed
     // the check should fail rather than quietly fill the sign-in form with a code it has nowhere
     // to put — hence matching the words a person reads.
@@ -381,65 +392,50 @@ async function checkJoining(): Promise<void> {
   }
 }
 
-/** Serve the Edge Functions with an environment, and wait until they will talk to us.
+/** The two refusals a person actually meets, and which sentence each one gets.
  *
- *  Needed because travel resolution is server-side: the shortlist asks the `travel` function for
- *  every flat, and the function answers `Access-Control-Allow-Origin` built from `WEB_APP_ORIGIN`.
- *  Without a match the browser discards every reply and the page sits on "Working…" until the
- *  settle timeout — which reaches the harness output as "the page never stopped saying it was
- *  working", a sentence about a spinner for what is really a missing environment variable.
+ *  Every refusal on this screen has wording of its own — that is the design note at the top of
+ *  `SignIn.tsx`, and it is the whole reason the screen is as long as it is. Nothing checked it, so
+ *  a regression that collapsed them all into "Something went wrong" would have passed every check
+ *  in this repo while making the screen useless: the person who mistyped a code and the person
+ *  whose invite expired need different next actions, and neither can guess.
  *
- *  And it has to be `functions serve` rather than the runtime `supabase start` already has, which
- *  was the surprise here: that container is built with no environment of its own. `supabase/.env`
- *  does not reach it, and neither does the host's — both were tried. `functions serve --env-file`
- *  is the documented way to give the functions an environment locally, and Kong routes
- *  `/functions/v1/*` to it, so nothing else has to know it happened. */
-async function startFunctions(): Promise<ChildProcess> {
-  const root = resolve(import.meta.dirname, '..');
-  const envFile = resolve(root, 'supabase/.env');
-  if (!existsSync(envFile)) {
-    throw new Error(
-      `no supabase/.env, so the Edge Functions would run with no WEB_APP_ORIGIN and refuse this\n` +
-        `harness's origin. Copy the template and try again:\n\n` +
-        '    cp supabase/.env.example supabase/.env\n',
-    );
-  }
+ *  Two, not five. `already-registered` would need an account this fixture then has to work around,
+ *  and `rate-limited` means deliberately hammering the endpoint the real redemption below depends
+ *  on. These are the two that cost nothing and can be provoked honestly. */
+async function checkRefusals(page: Page): Promise<void> {
+  // A wrong password against an address that definitely exists. The sentence is deliberately
+  // two-sided — Supabase answers a wrong password and an unknown address identically, and saying
+  // "wrong password" would make this form an oracle for who has an account — so the assertion is
+  // on the part that carries that: it names both possibilities.
+  await page.locator('.signin input[type="email"]').fill(FIXTURE_EMAIL);
+  await page.locator('.signin input[type="password"]').fill('not-the-fixture-password');
+  await page.locator('.signin button.primary').click();
+  await expectNotice(page, 'do not match an account', 'a wrong password');
 
-  console.log('serving the edge functions');
-  const child = spawn('supabase', ['functions', 'serve', '--env-file', 'supabase/.env'], {
-    cwd: root,
-    stdio: ['ignore', 'ignore', 'pipe'],
-  });
-  child.stderr?.on('data', (chunk: Buffer) => {
-    if (process.env.SMOKE_LOG === 'all') process.stderr.write(`[functions] ${chunk.toString()}`);
-  });
-
-  // Poll the thing we actually depend on — the CORS answer — rather than a readiness line. It is
-  // the only signal that distinguishes "serving" from "serving, and will talk to us".
-  const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`supabase functions serve exited (${child.exitCode})`);
-    const allowed = await fetch(`${supabaseUrl}/functions/v1/travel`, {
-      method: 'OPTIONS',
-      headers: { Origin: ORIGIN, 'Access-Control-Request-Method': 'POST' },
-      signal: AbortSignal.timeout(3_000),
-    })
-      .then((r) => r.headers.get('access-control-allow-origin'))
-      .catch(() => null);
-
-    if (allowed === ORIGIN) {
-      console.log(`edge functions accept ${ORIGIN}`);
-      return child;
-    }
-    await new Promise((r) => setTimeout(r, 1_000));
-  }
-
-  child.kill('SIGTERM');
-  throw new Error(
-    `the travel function never answered Access-Control-Allow-Origin: ${ORIGIN}.\n` +
-      `Check that supabase/.env says WEB_APP_ORIGIN=${ORIGIN} and that \`supabase start\` is up.`,
-  );
+  // A wrong code, against an address nobody invited — not against the invite the real redemption
+  // below is about to use. Guessing is rate-limited in the database, and spending an attempt on
+  // the live code would make this check the reason the next one fails.
+  await page.getByRole('button', { name: 'I have an invite code' }).click();
+  await page.locator('.signin input[type="email"]').fill('smoke-fixture-nobody@example.test');
+  await page.locator('.signin input[type="password"]').fill(REDEEM_PASSWORD);
+  await page.locator('.signin input[placeholder="ABCD-EFGH-JKMN"]').fill('ZZZZ-ZZZZ-ZZZZ');
+  await page.locator('.signin button.primary').click();
+  await expectNotice(page, "isn’t right for that address", 'a code nobody was sent');
 }
+
+/** Wait for the screen to say something, and say what it said when it says the wrong thing. */
+async function expectNotice(page: Page, expected: string, what: string): Promise<void> {
+  const notice = page.locator('.signin .notice');
+  await notice.first().waitFor({ timeout: 30_000 }).catch(() => {});
+  const said = (await notice.allInnerTexts().catch(() => [])).join(' | ');
+  if (!said.includes(expected)) {
+    note(`${what} was answered with "${said || 'nothing at all'}", which does not say why`);
+    return;
+  }
+  console.log(`refusal: ${what} → its own sentence`);
+}
+
 
 /** Wait for the app shell, and say what is on screen instead if it never arrives.
  *
