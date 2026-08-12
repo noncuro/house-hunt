@@ -275,6 +275,10 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   const cardProps = { places, hubs, twins, rate, scores, offMarket, setOffMarket: setEntryOffMarket, prefs };
   const byId = useMemo(() => new Map((entries ?? []).map((e) => [e.rightmoveId, e])), [entries]);
 
+  /** The one jump from anywhere pointing at a flat — a map pin, a compare row, a triage row — so
+   *  the three cannot disagree about which pile the card is waiting in. */
+  const open = (id: string) => openCard(id, groupOf(byId.get(id)?.verdicts ?? []));
+
   /** Rate everything ticked, in one go.
    *
    *  Notes are the reason a verdict is worth reading later, and this writes none — which is
@@ -431,6 +435,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           entries={grouped.unrated}
           selected={selected}
           setSelected={setSelected}
+          onOpen={open}
           onRate={rateSelected}
           storedModel={modelQuery.data ?? null}
           retrain={retrain}
@@ -445,7 +450,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         <Compare
           entries={entries}
           places={places}
-          onOpen={(id) => openCard(id, groupOf(byId.get(id)?.verdicts ?? []))}
+          onOpen={open}
           prefs={prefs}
         />
       )}
@@ -454,7 +459,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         <ShortlistMap
           entries={entries}
           selectedId={null}
-          onSelect={(id) => openCard(id, groupOf(byId.get(id)?.verdicts ?? []))}
+          onSelect={open}
         />
       )}
 
@@ -516,6 +521,7 @@ function Triage({
   entries,
   selected,
   setSelected,
+  onOpen,
   onRate,
   storedModel,
   retrain,
@@ -527,6 +533,11 @@ function Triage({
   entries: ShortlistEntry[];
   selected: string[];
   setSelected: (next: string[]) => void;
+  /** Leave the pile for the flat itself. A row here is four numbers and a thumbnail's worth of
+   *  judgement, and some of the pile is a "maybe" you cannot settle without the photos and the
+   *  commute — so the address goes to the card rather than to Rightmove, which is where the rest
+   *  of what we know about the place is already written down. */
+  onOpen: (rightmoveId: string) => void;
   onRate: (rating: Rating) => void;
   storedModel: StoredModel | null;
   retrain: ReturnType<typeof useRetrain>;
@@ -655,7 +666,7 @@ function Triage({
         <Compare
           entries={shown}
           places={cardProps.places}
-          onOpen={() => {}}
+          onOpen={onOpen}
           selection={{ chosen, toggle, setMany }}
           filters={false}
           columnsKey="triage"
@@ -766,9 +777,11 @@ function Card({ entry, places, hubs, twins, rate, scores, offMarket, setOffMarke
             <span className="visually-hidden">Select {entry.displayAddress}</span>
           </label>
         )}
-        <a className="address" href={entry.url} target="_blank" rel="noopener">
-          {entry.displayAddress}
-        </a>
+        {/* The address, and only the address. It was a link to Rightmove, which made the most
+            obvious thing to click on a card the one thing that took you off the site; the card
+            below already holds the photos, the times and the verdict, and `Detail` ends with the
+            explicit way out to the listing. */}
+        <span className="address">{entry.displayAddress}</span>
         {score !== undefined && (
           <span className="card-score">
             <ScoreBadge score={score} surprise={surprise} />

@@ -21,6 +21,18 @@
 import { spawnSync, type ChildProcess } from 'node:child_process';
 import { connect } from 'node:net';
 
+/** The children somebody asked to stop.
+ *
+ *  A watcher on a dying server has to tell "we ended it" from "it died", and the exit alone cannot:
+ *  a tidy shutdown and a container the kernel killed both arrive as a number and a signal. Asking
+ *  here instead means the question is answered by intent rather than by guessing from the code. */
+const asked = new WeakSet<ChildProcess>();
+
+/** Whether `stopTree` was called on this child — i.e. its death, whenever it comes, is ours. */
+export function wasAskedToStop(child: ChildProcess): boolean {
+  return asked.has(child);
+}
+
 /** Stop a server and everything it started.
  *
  *  Errors are reported rather than thrown: this runs from a `finally`, and a tidy-up that throws
@@ -28,11 +40,16 @@ import { connect } from 'node:net';
  *  died — which is the ordinary case when the server crashed on its own. */
 export function stopTree(child: ChildProcess | undefined, signal: NodeJS.Signals = 'SIGTERM'): void {
   if (!child?.pid) return;
+  asked.add(child);
   try {
     // The negative pid is the group `detached: true` made, so this reaches the wrapper and the
     // server it runs. A plain `child.kill()` would reach only the wrapper.
     process.kill(-child.pid, signal);
   } catch (error) {
+    // We did not stop it, so the claim is withdrawn: a watcher that kept it would treat the death
+    // this process had already died of as the one we asked for, and swallow the reason. ESRCH is
+    // exactly that case — the server crashed on its own, which is news rather than tidy-up.
+    asked.delete(child);
     if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
       console.error(`could not stop the process group of pid ${child.pid}: ${String(error)}`);
     }

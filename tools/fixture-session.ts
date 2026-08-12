@@ -51,8 +51,22 @@ const PASSWORD = 'smoke-fixture-password-6c2d';
 export const REDEEM_EMAIL = 'smoke-fixture-invitee@example.test';
 export const REDEEM_PASSWORD = 'smoke-fixture-invitee-9d41';
 /** Every row this fixture owns is named so, so tearing down is a prefix match rather than a list
- *  that drifts out of date and leaves rows behind for the next run to trip over. */
-const PREFIX = 'smokefix-';
+ *  that drifts out of date and leaves rows behind for the next run to trip over.
+ *
+ *  Digits, because a Rightmove id is digits and the app validates that: `#card-<id>` on a cold load
+ *  is read by `/^#card-(\d+)$/`, so a fixture with `smokefix-1` in it could never open a deep link
+ *  and the harness could only ever test the in-app click. A fixture that cannot hold the shape
+ *  production has is a fixture that quietly excuses the surface from being checked.
+ *
+ *  Leading zeros because that is the one thing a real id never has, which keeps teardown by prefix
+ *  provably unable to reach the real listing `pnpm smoke` seeds beside these. */
+const PREFIX = '000';
+
+/** The nth flat this fixture seeds. Exported so the harness names them the same way the seed does,
+ *  rather than repeating the scheme at every assertion that reads one. */
+export function fixtureId(n: number): string {
+  return `${PREFIX}${n}`;
+}
 
 const { url, anonKey, serviceKey } = localCredentials();
 
@@ -148,7 +162,7 @@ interface FixtureProperty {
  *  case `duplicateIds` marks with ⧉. */
 const PROPERTIES: FixtureProperty[] = [
   {
-    id: `${PREFIX}1`, address: '12 Flask Walk, Hampstead, London', postcode: 'NW3 1HE',
+    id: fixtureId(1), address: '12 Flask Walk, Hampstead, London', postcode: 'NW3 1HE',
     price: '£2,600 pcm', bedrooms: 2, bathrooms: 1, lat: 51.55597, lon: -0.17705,
     floorAreaSqft: 780, floorAreaSource: 'sizings', furnishType: 'Furnished',
     listingUpdate: 'Added on 05/08/2026',
@@ -156,7 +170,7 @@ const PROPERTIES: FixtureProperty[] = [
     verdict: { rating: 'love', note: 'The garden is the whole thing.', by: 'one' },
   },
   {
-    id: `${PREFIX}2`, address: '4 Danbury Street, Islington, London', postcode: 'N1 8JU',
+    id: fixtureId(2), address: '4 Danbury Street, Islington, London', postcode: 'N1 8JU',
     price: '£2,400 pcm', bedrooms: 2, bathrooms: 1, lat: 51.53601, lon: -0.10131,
     floorAreaSqft: 690, floorAreaSource: 'description', furnishType: 'Unfurnished',
     listingUpdate: 'Reduced on 07/08/2026',
@@ -166,7 +180,7 @@ const PROPERTIES: FixtureProperty[] = [
   {
     // The same flat as the one above, by a second agent: same postcode, same rent, different
     // photos and therefore a different set of inferences. `duplicateIds` marks both ⧉.
-    id: `${PREFIX}3`, address: '4 Danbury St, Islington', postcode: 'N1 8JU',
+    id: fixtureId(3), address: '4 Danbury St, Islington', postcode: 'N1 8JU',
     price: '£2,400 pcm', bedrooms: 2, bathrooms: 1, lat: 51.53601, lon: -0.10131,
     floorAreaSqft: 705, floorAreaSource: 'description', furnishType: 'Unfurnished',
     listingUpdate: 'Added on 01/08/2026',
@@ -174,7 +188,7 @@ const PROPERTIES: FixtureProperty[] = [
     verdict: null,
   },
   {
-    id: `${PREFIX}4`, address: '88 Regents Park Road, Primrose Hill, London', postcode: 'NW1 8UG',
+    id: fixtureId(4), address: '88 Regents Park Road, Primrose Hill, London', postcode: 'NW1 8UG',
     price: '£3,100 pcm', bedrooms: 3, bathrooms: 2, lat: 51.54101, lon: -0.15736,
     floorAreaSqft: 1020, floorAreaSource: 'sizings', furnishType: 'Part furnished',
     listingUpdate: 'Added on 08/08/2026',
@@ -184,7 +198,7 @@ const PROPERTIES: FixtureProperty[] = [
   {
     // Nobody has analysed this one. The flags, the compare table and the card all have to say
     // "not known" rather than rendering the absence as a finding.
-    id: `${PREFIX}5`, address: '21 Old Street, Clerkenwell, London', postcode: 'EC1V 9HL',
+    id: fixtureId(5), address: '21 Old Street, Clerkenwell, London', postcode: 'EC1V 9HL',
     price: '£2,150 pcm', bedrooms: 1, bathrooms: 1, lat: 51.52489, lon: -0.09705,
     floorAreaSqft: null, floorAreaSource: null, furnishType: 'Furnished',
     listingUpdate: 'Added on 09/08/2026',
@@ -192,7 +206,7 @@ const PROPERTIES: FixtureProperty[] = [
     verdict: null,
   },
   {
-    id: `${PREFIX}6`, address: '7 Rochester Road, Camden, London', postcode: 'NW1 9JH',
+    id: fixtureId(6), address: '7 Rochester Road, Camden, London', postcode: 'NW1 9JH',
     price: '£2,750 pcm', bedrooms: 2, bathrooms: 2, lat: 51.54339, lon: -0.13749,
     floorAreaSqft: 830, floorAreaSource: 'sizings', furnishType: 'Unfurnished',
     listingUpdate: 'Added on 06/08/2026',
@@ -229,7 +243,7 @@ async function tearDown(alsoCache: ExtraCache[] = []): Promise<void> {
   await db.from('project').delete().eq('id', FIXTURE_PROJECT);
   await db.from('property_analysis').delete().like('rightmove_id', `${PREFIX}%`);
   await db.from('property').delete().like('rightmove_id', `${PREFIX}%`);
-  // The listing the smoke harness opens is a real one and so carries no `smokefix-` prefix. Left
+  // The listing the smoke harness opens is a real one, so no leading zeros and no prefix match. Left
   // behind, the second run finds the row already there and `record_property` takes its
   // on-conflict-update path — so the assertion that opening a new listing creates the row would
   // pass without that path ever running again.

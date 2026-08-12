@@ -1010,6 +1010,27 @@ export async function pendingSightings(): Promise<PendingSighting[]> {
   });
 }
 
+/** Drop every sighting of a listing that no longer exists, across all this project's hubs.
+ *
+ *  The fill-in worklist is "sighted, and not complete yet" (see `pendingSightings`), and complete
+ *  needs a postcode and a finished analysis — both of which come from opening the listing. A flat
+ *  the agent withdraws between the scan and the run can never supply either, so without this it
+ *  stays pending for good: reopened in a background tab on every run, and inflating the count of
+ *  what is left to do with flats nobody can ever do anything about.
+ *
+ *  Deleting rather than flagging, because the sighting is a record that Rightmove was showing this
+ *  card — and it is not. If it comes back the next sweep sights it again, which is the right
+ *  answer to a listing that was relisted. */
+export async function forgetSightings(rightmoveId: string): Promise<void> {
+  const projectId = await activeProjectId();
+  const { error } = await db()
+    .from('search_sighting')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('rightmove_id', rightmoveId);
+  fail('forgetting a withdrawn listing', error);
+}
+
 /** Record every card on a search page as a sighting for this hub.
  *
  *  Upsert rather than insert: sweeping the same neighbourhood weekly means seeing the same flat

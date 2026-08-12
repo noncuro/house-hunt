@@ -7,12 +7,26 @@
  *    pnpm fixture 88023648
  *    pnpm check:extractor .fixtures/88023648.html
  */
+import { ListingWithdrawn } from '../apps/extension/src/lib/extract';
 import { listingFromHtml } from './read-listing';
 
 const path = process.argv[2];
 if (!path) throw new Error('usage: check-extractor <saved-listing.html>');
 
-const listing = listingFromHtml(path);
+let listing;
+try {
+  listing = listingFromHtml(path);
+} catch (e) {
+  // A withdrawn listing is a page shape this extractor understands, so it is a result rather than a
+  // crash — and saying so here is what stops it being read as "Rightmove changed the page", which
+  // is the thing this check exists to detect and would then be reporting falsely.
+  if (e instanceof ListingWithdrawn) {
+    console.log('This listing has been withdrawn: the page model is present but emptied.');
+    console.log('Not an extraction failure — Rightmove serves this for a listing the agent removed.');
+    process.exit(0);
+  }
+  throw e;
+}
 
 console.log(JSON.stringify(listing, null, 2));
 

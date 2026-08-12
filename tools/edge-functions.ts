@@ -20,7 +20,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { stopTree } from './servers';
+import { stopTree, wasAskedToStop } from './servers';
 
 /** What `supabase/.env.example` sets WEB_APP_ORIGIN to, and the port `smoke:web` serves on.
  *
@@ -82,14 +82,30 @@ export async function startFunctions({
     // leaves the server behind. A group of its own is what lets `stopTree` take both.
     detached: true,
   });
-  child.stderr?.on('data', (chunk: Buffer) => {
-    if (process.env.SMOKE_LOG === 'all') process.stderr.write(`[functions] ${chunk.toString()}`);
+  // Before the readiness poll below, not after it: dying during startup is the likeliest moment of
+  // all, and a watcher attached later misses it — Node does not replay the event it was not there
+  // for, so the run would fall back to reporting the wrapper's own exit code, which is the sentence
+  // this exists to replace.
+  watchForDeath(child);
+
+  // A machine with no `supabase` on its PATH never runs the command at all, and a `ChildProcess`
+  // with nobody listening for `error` takes the whole harness down with an unhandled event —
+  // ninety seconds of polling followed by a stack trace, for the one failure with a one-line fix.
+  let spawnFailure: Error | null = null;
+  child.once('error', (error) => {
+    spawnFailure = error;
   });
 
   // Poll the thing we actually depend on — the CORS answer — rather than a readiness line. It is
   // the only signal that distinguishes "serving" from "serving, and will talk to us".
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
+    if (spawnFailure !== null) {
+      throw new Error(
+        `could not run \`supabase functions serve\`: ${(spawnFailure as Error).message}\n` +
+          'Install the Supabase CLI, or put it on PATH.',
+      );
+    }
     if (child.exitCode !== null) throw new Error(`supabase functions serve exited (${child.exitCode})`);
     const allowed = await fetch(`${supabaseUrl}/functions/v1/travel`, {
       method: 'OPTIONS',
@@ -119,7 +135,9 @@ export async function startFunctions({
       const permitted = (allowed.headers ?? '').toLowerCase();
       const missing = SDK_HEADERS.filter((h) => !permitted.includes(h));
       if (missing.length > 0) {
-        child.kill('SIGTERM');
+        // `stopTree` rather than `child.kill`, which reaches the wrapper and leaves the server it
+        // started holding the container for the next run to trip over.
+        stopTree(child);
         throw new Error(
           `the functions allow ${origin} but not the headers supabase-js sends: ` +
             `${missing.join(', ')} missing from "${allowed.headers}".\n` +
@@ -138,4 +156,80 @@ export async function startFunctions({
     `the travel function never answered Access-Control-Allow-Origin: ${origin}.\n` +
       `Check that supabase/.env says WEB_APP_ORIGIN=${origin} and that \`supabase start\` is up.`,
   );
+}
+
+/** The container telling us it has gone, which is the line that matters and the one nobody sees:
+ *  `supabase` is a wrapper and reports 1 whatever happened underneath, so its own exit code names
+ *  nothing. 137 is SIGKILL, and on this container that is nearly always the kernel taking it for
+ *  memory. */
+const CONTAINER_DIED = /\berror running container: exit (\d+)/;
+
+/** Say it out loud when the functions container dies mid-run.
+ *
+ *  Everything downstream of the death is a 502 from Kong, which the caller reports as whatever it
+ *  happened to be asking for at the time — "inviting someone: HTTP 502" for a run that got nowhere
+ *  near a problem with invites. The one that cost an afternoon was the container being killed for
+ *  memory because Docker had 1.87 GiB and a second project's Supabase stack was also up.
+ *
+ *  Announced from the stderr line rather than from the child's exit, which is what this did first
+ *  and which stayed silent on exactly the run that needed it: the container goes, the next call
+ *  502s, the harness throws, and its `finally` stops the wrapper before Node has delivered the
+ *  wrapper's own `close` — so the death arrives looking like the tidy shutdown we asked for. The
+ *  container says so itself, at the moment it happens, and that is not a race. */
+function watchForDeath(child: ChildProcess): void {
+  const lastWords: string[] = [];
+  let pending = '';
+  let announced = false;
+
+  const remember = (lines: string[]): void => {
+    for (const line of lines) {
+      if (line.trim().length === 0) continue;
+      lastWords.push(line);
+      if (lastWords.length > 5) lastWords.shift();
+      const died = CONTAINER_DIED.exec(line)?.[1];
+      if (died !== undefined && !announced) {
+        announced = true;
+        report(`the edge functions' container died mid-run (exit ${died})`, lastWords, died);
+      }
+    }
+  };
+
+  // Kept as well as streamed, because the interesting lines are the last few before it dies and
+  // they are otherwise only visible under SMOKE_LOG=all — which nobody has set on the run that
+  // failed.
+  child.stderr?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString();
+    if (process.env.SMOKE_LOG === 'all') process.stderr.write(`[functions] ${text}`);
+    // A `data` event is an arbitrary slice of the stream rather than a line, so the sentence naming
+    // the cause can arrive in two halves. Held over to the next event instead of counted as two of
+    // the five kept, which is how a fragment ends up evicting the line worth printing.
+    const lines = (pending + text).split(/\r?\n/);
+    pending = lines.pop() ?? '';
+    remember(lines);
+  });
+
+  // The wrapper going without the container having said why — a `supabase` that failed to start one
+  // at all, or was killed itself. `close` rather than `exit`, because stderr can still be draining
+  // and what it was draining is the whole point of this.
+  child.once('close', (code, signal) => {
+    if (pending.trim().length > 0) remember([pending]);
+    // A harness that finished and stopped its own server is the ordinary case. Asked rather than
+    // inferred from the signal, because a tidy shutdown and a kill are both just a signal here.
+    // `pid` is undefined when the command never ran at all — the caller throws a sentence naming the
+    // binary for that, and "died mid-run (exit -2)" above it is noise about a run that never began.
+    if (announced || child.pid === undefined || wasAskedToStop(child)) return;
+    report(`the edge functions died mid-run (${signal ?? `exit ${code}`})`, lastWords, null);
+  });
+}
+
+function report(what: string, lastWords: string[], containerExit: string | null): void {
+  console.error(`\n${what}. Everything after this point fails as an HTTP 502 about whatever it was asking for.`);
+  for (const line of lastWords) console.error(`  [functions] ${line}`);
+  if (containerExit === '137') {
+    console.error(
+      '\n137 is SIGKILL, which here is nearly always the kernel taking it for memory. Check\n' +
+        "`docker info | grep Memory` and `docker ps` — another project's `supabase start` left\n" +
+        'up is enough to do it.',
+    );
+  }
 }

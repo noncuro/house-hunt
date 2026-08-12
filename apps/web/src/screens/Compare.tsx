@@ -18,6 +18,7 @@ import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime } from '@hou
 import { FlagChip } from '@house-hunt/ui';
 import { SizeValue } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
+import { RightmoveLink } from '@/components/RightmoveLink';
 import { useCachedTravel } from '@/lib/queries';
 import { isSurprise } from '@/lib/score';
 
@@ -47,6 +48,9 @@ export function Compare({
 }: {
   entries: ShortlistEntry[];
   places: Place[];
+  /** Go to this app's own view of a flat — the shortlist card, which carries the photos, the
+   *  travel times and the verdict buttons. Both the address in every row and (outside triage,
+   *  where a click on the row means ticking it) the row itself do this. */
   onOpen: (rightmoveId: string) => void;
   /** Which stored set of column choices this table uses. Compare and triage answer different
    *  questions — one is "which of these do we like best", the other is "is this worth a second
@@ -130,8 +134,8 @@ export function Compare({
   // the table on purpose, so `buildColumns` is handed the map only there.
   const scoreColumn = columnsKey === 'triage' ? scores : null;
   const all = useMemo(
-    () => buildColumns(places, twins, scoreColumn, prefs),
-    [places, twins, scoreColumn, prefs],
+    () => buildColumns(places, twins, onOpen, scoreColumn, prefs),
+    [places, twins, onOpen, scoreColumn, prefs],
   );
   // The first column is the address and never hides — a row you cannot identify is not a row.
   // Before the picker has ever been touched, `chosen` is null and the defaults decide. After, the
@@ -403,6 +407,7 @@ function useColumnChoice(key: string): [Set<string> | null, (next: Set<string> |
 function buildColumns(
   places: Place[],
   twins: Map<string, string[]>,
+  onOpen: (rightmoveId: string) => void,
   scores: Map<string, number> | null = null,
   prefs?: HuntPreferences,
 ): Column[] {
@@ -414,9 +419,25 @@ function buildColumns(
       render: (e) => (
         <span className="compare-address">
           <span className="compare-mark">{VERDICT_MARK[groupOf(e.verdicts)]}</span>
-          <a href={e.url} target="_blank" rel="noopener" onClick={(ev) => ev.stopPropagation()}>
-            {e.displayAddress}
-          </a>
+          <span className="compare-address-lines">
+            {/* A real href rather than a bare button, so the address can be copied, opened in a
+                second tab and sent to the other laptop — `#card-<id>` is the deep link the
+                shortlist already honours on load. The click is handled here instead of letting the
+                browser jump, because the pile you are looking at is a different view from the one
+                the card lives in, and the card is not on the page yet to jump to. */}
+            <a
+              className="compare-open"
+              href={`#card-${e.rightmoveId}`}
+              onClick={(ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                onOpen(e.rightmoveId);
+              }}
+            >
+              {e.displayAddress}
+            </a>
+            <RightmoveLink url={e.url} />
+          </span>
           {(twins.get(e.rightmoveId)?.length ?? 0) > 0 && (
             <span className="twin" title="Listed twice — same postcode and rent">
               ⧉
