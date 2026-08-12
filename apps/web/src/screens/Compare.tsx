@@ -165,6 +165,29 @@ export function Compare({
     return tally;
   }, [entries]);
 
+  // Shift-click selects the whole run between the last ticked row and this one. Shared by the row
+  // body and the checkbox itself, so the range lands the same however you click — the checkbox used
+  // to miss out entirely, because its label stops the click ever reaching the row handler where this
+  // logic used to live. Returns true when it handled a range (the caller does nothing more), false
+  // when it only moved the anchor and the caller should still toggle this one.
+  const rangeSelect = (id: string, shiftKey: boolean): boolean => {
+    if (!selection) return false;
+    const from = anchor.current;
+    if (shiftKey && from && from !== id) {
+      const order = sorted.map((e) => e.rightmoveId);
+      const a = order.indexOf(from);
+      const b = order.indexOf(id);
+      if (a !== -1 && b !== -1) {
+        // The anchor's own state decides the run's, which is what makes a second shift-click undo
+        // the first rather than re-select what is already on.
+        selection.setMany(order.slice(Math.min(a, b), Math.max(a, b) + 1), selection.chosen.has(from));
+        return true;
+      }
+    }
+    anchor.current = id;
+    return false;
+  };
+
   if (entries.length === 0) return <p className="dim">Nothing to compare yet.</p>;
 
   return (
@@ -272,20 +295,7 @@ export function Compare({
                     onOpen(entry.rightmoveId);
                     return;
                   }
-                  const from = anchor.current;
-                  if (event.shiftKey && from && from !== entry.rightmoveId) {
-                    const order = sorted.map((e) => e.rightmoveId);
-                    const a = order.indexOf(from);
-                    const b = order.indexOf(entry.rightmoveId);
-                    if (a !== -1 && b !== -1) {
-                      // The anchor's own state decides the run's, which is what makes a second
-                      // shift-click undo the first rather than re-select what is already on.
-                      const run = order.slice(Math.min(a, b), Math.max(a, b) + 1);
-                      selection.setMany(run, selection.chosen.has(from));
-                      return;
-                    }
-                  }
-                  anchor.current = entry.rightmoveId;
+                  if (rangeSelect(entry.rightmoveId, event.shiftKey)) return;
                   selection.toggle(entry.rightmoveId);
                 }}
               >
@@ -295,6 +305,14 @@ export function Compare({
                       <input
                         type="checkbox"
                         checked={selection.chosen.has(entry.rightmoveId)}
+                        onClick={(e) => {
+                          // The same range logic as the row. The label above stops the click ever
+                          // reaching the row handler, so a shift-click on the box is handled here.
+                          // A range op preventDefaults to suppress the box's own toggle and its
+                          // onChange; a plain click only records the anchor and lets onChange do the
+                          // single toggle.
+                          if (rangeSelect(entry.rightmoveId, e.shiftKey)) e.preventDefault();
+                        }}
                         onChange={() => selection.toggle(entry.rightmoveId)}
                       />
                       <span className="visually-hidden">Select {entry.displayAddress}</span>
