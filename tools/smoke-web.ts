@@ -14,9 +14,19 @@
  *  the assertions can name numbers: the fixture decides how many flats are rated and how.
  *
  *    supabase start
- *    pnpm smoke:web
+ *    pnpm smoke:web                # all of it
+ *    pnpm smoke:web list rating    # just those sections, in the order below
+ *
+ *  The sections are named so that iterating on one assertion does not cost the whole run. What they
+ *  cannot skip is the setup — the fixture, the Edge Functions and a production build of the website
+ *  — so a subset saves the browser work, which on a warm build is most of it: six seconds for the
+ *  list and the rating against forty for everything, and `joining` alone is half of that forty.
+ *  Every section is written to stand on its own against that setup: the ones that look at a tab
+ *  navigate to it, the two sign-in ones take a signed-out context each, and `rating` deliberately
+ *  leaves the counts `table` and `triage` assert unchanged — so no section is quietly reading state
+ *  an earlier one left behind.
  */
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
@@ -34,6 +44,7 @@ import {
 import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 import { startFunctions } from './edge-functions';
+import { demandFreePort, stopTree } from './servers';
 
 /** Must match `storageKey` in `apps/web/src/lib/client.ts`. Asserted below rather than trusted:
  *  a session written under the wrong key renders a perfectly good sign-in form, and every
@@ -50,8 +61,54 @@ const SHOTS = resolve(import.meta.dirname, '../.fixtures/shots');
 mkdirSync(SHOTS, { recursive: true });
 
 const { url: supabaseUrl, anonKey } = localCredentials();
+
+/** The app's own origin and its Supabase, and nothing else. Map tiles are allowed because the map
+ *  view is under test and a blocked tile renders as an empty grey square that looks exactly like a
+ *  broken map. */
+const ALLOW = [ORIGIN, supabaseUrl, 'https://tile.openstreetmap.org/'];
+
 const problems: string[] = [];
 const note = (problem: string) => problems.push(problem);
+
+interface Stage {
+  /** The signed-in page, already on the shortlist. */
+  page: Page;
+  /** For the two sections that need a browser nobody has signed in on. */
+  browser: Browser;
+}
+
+/** Every section, in the order they run: the reads first, then the one write, then the tabs, then
+ *  the way in from outside. Ordered so that none of them needs an earlier one to have run — a
+ *  section that only passes as part of the whole run is a section nobody can iterate on, which is
+ *  the reason for naming them in the first place. */
+const SECTIONS = [
+  { name: 'session', run: checkSession },
+  { name: 'list', run: checkList },
+  { name: 'rating', run: checkRating },
+  { name: 'table', run: checkTable },
+  { name: 'map', run: checkMap },
+  { name: 'triage', run: checkTriage },
+  { name: 'tabs', run: checkTabs },
+  { name: 'refusals', run: checkRefusals },
+  { name: 'joining', run: checkJoining },
+] as const satisfies ReadonlyArray<{ name: string; run: (stage: Stage) => Promise<void> }>;
+
+const wanted = process.argv.slice(2);
+
+// Same rule as `smoke:all`, for the same reason: a name that matches nothing has to stop the run
+// rather than leave the sections it does match to exit 0. A green `pnpm smoke:web typo` is the
+// silent skip in its most convincing costume, and this is the argument list most likely to be
+// mistyped, since the names are only written down here.
+const unknown = wanted.filter((name) => !SECTIONS.some((s) => s.name === name));
+if (unknown.length > 0) {
+  console.error(
+    `no section called ${unknown.map((n) => `"${n}"`).join(', ')}.\n` +
+      `usage: pnpm smoke:web [${SECTIONS.map((s) => s.name).join('|')}]`,
+  );
+  process.exit(1);
+}
+
+const chosen = wanted.length === 0 ? SECTIONS : SECTIONS.filter((s) => wanted.includes(s.name));
 
 const fixture = await seedFixture();
 console.log(
@@ -66,14 +123,25 @@ let functions: ChildProcess | undefined;
 let server: ChildProcess | undefined;
 let browser: Browser | undefined;
 
+// Ctrl-C used to reach both servers through the terminal's process group. They are started in
+// groups of their own now, so that no longer happens and the harness has to pass the interrupt on
+// itself — otherwise the most ordinary way to end a run, giving up on it, is the one way that
+// leaves a website holding the port for the next one.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    stopTree(server);
+    stopTree(functions);
+    process.exit(130);
+  });
+}
+
 try {
   functions = await startFunctions({ supabaseUrl, origin: ORIGIN });
   server = await startWebApp();
 
-  // A browser with two contexts rather than one persistent context, because the redeem check at the
-  // bottom needs a browser that is genuinely signed out. `localStorage` is per origin and shared by
-  // every page in a context, so planting the session anywhere would be visible everywhere — the two
-  // halves have to be separate contexts or the second one is testing a signed-in browser.
+  // A browser rather than a persistent context, because the sign-in sections need one that is
+  // genuinely signed out and this one has a session planted in it. `signedOutPage` makes them a
+  // context each.
   browser = await chromium.launch({ headless: true, args: OFFLINE_ARGS });
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
 
@@ -84,12 +152,7 @@ try {
     [SESSION_KEY, JSON.stringify(fixture.session)],
   );
 
-  const offline = await keepOffline(context, {
-    // The app's own origin and its Supabase, and nothing else. Map tiles are allowed because the
-    // map view is under test and a blocked tile renders as an empty grey square that looks exactly
-    // like a broken map.
-    allow: [ORIGIN, supabaseUrl, 'https://tile.openstreetmap.org/'],
-  });
+  const offline = await keepOffline(context, { allow: ALLOW });
 
   const page = await context.newPage();
   page.on('console', (m: ConsoleMessage) => {
@@ -103,7 +166,37 @@ try {
   await waitForApp(page);
   await settle(page);
 
-  // Loudly, and first. Every assertion below would pass against a sign-in form.
+  // Each section timed, because the reason to be able to run one is that the whole thing is slow,
+  // and the only way that claim stays honest is if every run says what it cost.
+  const ran: Array<{ name: string; seconds: number }> = [];
+  for (const section of chosen) {
+    console.log(`\n─── ${section.name} ───`);
+    const started = Date.now();
+    await section.run({ page, browser });
+    ran.push({ name: section.name, seconds: (Date.now() - started) / 1000 });
+  }
+
+  console.log(offline());
+  console.log(`\nsections: ${ran.map((s) => `${s.name} ${s.seconds.toFixed(1)}s`).join(', ')}`);
+} finally {
+  // Each guarded and each independent: whichever started gets stopped, whatever happened to the
+  // ones after it.
+  await browser?.close().catch(() => {});
+  stopTree(server);
+  stopTree(functions);
+}
+
+if (problems.length > 0) {
+  console.error('\nPROBLEMS:\n' + problems.map((p) => `  - ${p}`).join('\n'));
+  process.exit(1);
+}
+console.log('\nok');
+
+// --------------------------------------------------------------------------------------------- //
+
+/** Signed in at all, and as whom. Loudly, and first: every other section would pass against a
+ *  perfectly rendered sign-in form. */
+async function checkSession({ page }: Stage): Promise<void> {
   if (await page.locator('.sign-in, [data-testid="signed-out"]').count()) {
     note('the website is showing the sign-in view despite a valid session');
   }
@@ -111,11 +204,11 @@ try {
   if (!whoami.includes(FIXTURE_NAME)) {
     note(`the page never names the signed-in user (${FIXTURE_NAME}) — is this really a session?`);
   }
+}
 
-  // ----------------------------------------------------------------------------------------- //
-  // The list. `DEFAULT_SHOWING` puts excited and maybe on and leaves unrated and rejected off, so
-  // this is a number the fixture decides: one love, one maybe, one rejection, three unrated.
-  // ----------------------------------------------------------------------------------------- //
+/** The list. `DEFAULT_SHOWING` puts excited and maybe on and leaves unrated and rejected off, so
+ *  this is a number the fixture decides: one love, one maybe, one rejection, three unrated. */
+async function checkList({ page }: Stage): Promise<void> {
   const cards = await page.locator('article.card').count();
   console.log(`list: ${cards} card(s) shown by default`);
   if (cards !== 2) {
@@ -146,23 +239,23 @@ try {
   }
 
   await page.screenshot({ path: resolve(SHOTS, 'web-list.png'), fullPage: true });
+}
 
-  // ----------------------------------------------------------------------------------------- //
-  // Rating a flat, through the buttons, read back from Postgres.
-  //
-  // The one write on this screen that nothing checked, and the product's central action. Everything
-  // above is a read, which is not an accident — reads are easy to assert — but it leaves the whole
-  // harness passing against a page that renders beautifully and saves nothing. The mutation is
-  // optimistic on purpose (`queries.ts`): the card repaints from local state the moment it is
-  // clicked and only rolls back if the reply fails, so a verdict that never reached the database
-  // looks identical on screen to one that did. The database is the only witness.
-  //
-  // smokefix-4, which the fixture seeds as `maybe`, so this is a *replacement* rather than a first
-  // rating — the case with the history table behind it, and the one that carries the design's whole
-  // point: a shared opinion whose previous value is kept and whose new author is named. It stays
-  // `love`, so nothing below it moves: the count, the compare table and the triage pile are all
-  // about a flat that was already showing and is still showing.
-  // ----------------------------------------------------------------------------------------- //
+/** Rating a flat, through the buttons, read back from Postgres.
+ *
+ *  The one write on this screen that nothing checked, and the product's central action. Everything
+ *  above it is a read, which is not an accident — reads are easy to assert — but it leaves the whole
+ *  harness passing against a page that renders beautifully and saves nothing. The mutation is
+ *  optimistic on purpose (`queries.ts`): the card repaints from local state the moment it is
+ *  clicked and only rolls back if the reply fails, so a verdict that never reached the database
+ *  looks identical on screen to one that did. The database is the only witness.
+ *
+ *  smokefix-4, which the fixture seeds as `maybe`, so this is a *replacement* rather than a first
+ *  rating — the case with the history table behind it, and the one that carries the design's whole
+ *  point: a shared opinion whose previous value is kept and whose new author is named. It stays
+ *  `love`, so nothing below it moves: the count, the compare table and the triage pile are all
+ *  about a flat that was already showing and is still showing, whether or not this section ran. */
+async function checkRating({ page }: Stage): Promise<void> {
   const rated = page.locator('#card-smokefix-4');
   const NEW_NOTE = 'Smoke: raised to exciting.';
   // The note first, then the rating: the buttons pass the note themselves, precisely so that
@@ -212,17 +305,18 @@ try {
   } else if (archived?.rating !== 'maybe') {
     note(`the archived rating is "${archived?.rating}"; the fixture set it to maybe`);
   }
+}
 
-  // ----------------------------------------------------------------------------------------- //
-  // The compare table, the map and triage. Each is a separate read path and each has failed as a
-  // blank screen before.
-  // ----------------------------------------------------------------------------------------- //
+/** The compare table, which is its own read path and has failed as a blank screen before. */
+async function checkTable({ page }: Stage): Promise<void> {
   await openView(page, 'table');
   const rows = await page.locator('table tbody tr').count();
   console.log(`table: ${rows} row(s)`);
   if (rows < 2) note(`the compare table drew ${rows} rows; the fixture has 2 flats to compare`);
   await page.screenshot({ path: resolve(SHOTS, 'web-table.png'), fullPage: true });
+}
 
+async function checkMap({ page }: Stage): Promise<void> {
   await openView(page, 'map');
   // The tile layer, not merely the container: an empty map div is what a broken map looks like.
   await page
@@ -233,10 +327,12 @@ try {
   console.log(`map: ${tiles} tile(s) loaded`);
   if (tiles === 0) note('the map drew no tiles');
   await page.screenshot({ path: resolve(SHOTS, 'web-map.png') });
+}
 
-  // Triage opens as a table, not as cards — the pile is mostly a "no" you can see from one row,
-  // which is the whole reason it has a layout of its own. So this asserts rows, then flips to
-  // cards, because "shows the right number" in one layout says nothing about the other.
+/** Triage opens as a table, not as cards — the pile is mostly a "no" you can see from one row,
+ *  which is the whole reason it has a layout of its own. So this asserts rows, then flips to
+ *  cards, because "shows the right number" in one layout says nothing about the other. */
+async function checkTriage({ page }: Stage): Promise<void> {
   await openView(page, 'triage');
   const triageRows = await page.locator('.triage table tbody tr').count();
   console.log(`triage: ${triageRows} unrated row(s)`);
@@ -262,17 +358,17 @@ try {
   if (triageCards !== fixture.unratedCount) {
     note(`triage's card layout shows ${triageCards}; the fixture has ${fixture.unratedCount} unrated`);
   }
+}
 
-  // ----------------------------------------------------------------------------------------- //
-  // The remaining tabs. Shallow on purpose — each is one navigation and one landmark, which is
-  // enough to catch the failure these actually have: a screen that throws on mount, or renders its
-  // frame around a query that errored, and so appears as a heading with nothing under it. A tab
-  // that has never been opened by anything is the one that breaks silently for a month.
-  //
-  // Settings and Project also read the fixture's own rows, so the landmark is a value rather than a
-  // heading wherever there is one to name: `Work` is a place this fixture created, and the two
-  // members are the two accounts it created.
-  // ----------------------------------------------------------------------------------------- //
+/** The remaining tabs. Shallow on purpose — each is one navigation and one landmark, which is
+ *  enough to catch the failure these actually have: a screen that throws on mount, or renders its
+ *  frame around a query that errored, and so appears as a heading with nothing under it. A tab
+ *  that has never been opened by anything is the one that breaks silently for a month.
+ *
+ *  Settings and Project also read the fixture's own rows, so the landmark is a value rather than a
+ *  heading wherever there is one to name: `Work` is a place this fixture created, and the two
+ *  members are the two accounts it created. */
+async function checkTabs({ page }: Stage): Promise<void> {
   for (const [view, landmarks] of [
     // `The in-laws` rather than `Work`: this is matched against the whole tab's text, and "Work" is
     // inside "Working…", so it would report a screen still loading as a screen that had rendered
@@ -292,40 +388,60 @@ try {
     for (const l of missing) note(`the ${view} tab never rendered "${l}"`);
     await page.screenshot({ path: resolve(SHOTS, `web-${view}.png`), fullPage: true });
   }
-
-  console.log(offline());
-
-  // ----------------------------------------------------------------------------------------- //
-  // Joining. The nearest thing this product has to signing up, and until now the only path into it
-  // that nothing exercised: an invite is minted, the code is typed in with a chosen password, and
-  // the account that comes out is the caller's own.
-  //
-  // Worth having as a browser check rather than as a call to the function, because it is four
-  // things in a row that each look fine alone — `create_invite` mints and hashes, `redeem_code`
-  // checks the code against the address, the `password` function makes the account (it is the only
-  // unauthenticated endpoint in the system), and `consume_invites()` turns the invite into a
-  // membership at exactly one moment. A break anywhere in that chain leaves an invited person
-  // holding an account in no project, which is a state the shortlist has a screen for and nobody
-  // would otherwise notice.
-  await checkJoining(browser);
-} finally {
-  // Each guarded and each independent: whichever started gets stopped, whatever happened to the
-  // ones after it.
-  await browser?.close().catch(() => {});
-  server?.kill('SIGTERM');
-  functions?.kill('SIGTERM');
 }
 
-if (problems.length > 0) {
-  console.error('\nPROBLEMS:\n' + problems.map((p) => `  - ${p}`).join('\n'));
-  process.exit(1);
+/** The two refusals a person actually meets, and which sentence each one gets.
+ *
+ *  Every refusal on this screen has wording of its own — that is the design note at the top of
+ *  `SignIn.tsx`, and it is the whole reason the screen is as long as it is. Nothing checked it, so
+ *  a regression that collapsed them all into "Something went wrong" would have passed every check
+ *  in this repo while making the screen useless: the person who mistyped a code and the person
+ *  whose invite expired need different next actions, and neither can guess. `check:rls` covers the
+ *  server saying no; this is the screen saying why.
+ *
+ *  Two, not five. `already-registered` would need an account this fixture then has to work around,
+ *  and `rate-limited` means deliberately hammering the endpoint `joining` depends on. These are the
+ *  two that cost nothing and can be provoked honestly. */
+async function checkRefusals({ browser }: Stage): Promise<void> {
+  const { page, close } = await signedOutPage(browser);
+  try {
+    // A wrong password against an address that definitely exists. The sentence is deliberately
+    // two-sided — Supabase answers a wrong password and an unknown address identically, and saying
+    // "wrong password" would make this form an oracle for who has an account — so the assertion is
+    // on the part that carries that: it names both possibilities.
+    await page.locator('.signin input[type="email"]').fill(FIXTURE_EMAIL);
+    await page.locator('.signin input[type="password"]').fill('not-the-fixture-password');
+    await page.locator('.signin button.primary').click();
+    await expectNotice(page, 'do not match an account', 'a wrong password');
+
+    // A wrong code, against an address nobody invited — not against the invite `joining` is about
+    // to use. Guessing is rate-limited in the database, and spending an attempt on the live code
+    // would make this check the reason the next one fails.
+    await page.getByRole('button', { name: 'I have an invite code' }).click();
+    await page.locator('.signin input[type="email"]').fill('smoke-fixture-nobody@example.test');
+    await page.locator('.signin input[type="password"]').fill(REDEEM_PASSWORD);
+    await page.locator('.signin input[placeholder="ABCD-EFGH-JKMN"]').fill('ZZZZ-ZZZZ-ZZZZ');
+    await page.locator('.signin button.primary').click();
+    await expectNotice(page, "isn’t right for that address", 'a code nobody was sent');
+  } finally {
+    await close();
+  }
 }
-console.log('\nok');
 
-// --------------------------------------------------------------------------------------------- //
-
-/** Invite somebody, redeem the code in a signed-out browser, and end up in the house hunt. */
-async function checkJoining(browser: Browser): Promise<void> {
+/** Invite somebody, redeem the code in a signed-out browser, and end up in the house hunt.
+ *
+ *  The nearest thing this product has to signing up, and until this harness the only path into it
+ *  that nothing exercised: an invite is minted, the code is typed in with a chosen password, and
+ *  the account that comes out is the caller's own.
+ *
+ *  Worth having as a browser check rather than as a call to the function, because it is four
+ *  things in a row that each look fine alone — `create_invite` mints and hashes, `redeem_code`
+ *  checks the code against the address, the `password` function makes the account (it is the only
+ *  unauthenticated endpoint in the system), and `consume_invites()` turns the invite into a
+ *  membership at exactly one moment. A break anywhere in that chain leaves an invited person
+ *  holding an account in no project, which is a state the shortlist has a screen for and nobody
+ *  would otherwise notice. */
+async function checkJoining({ browser }: Stage): Promise<void> {
   const invite = await createInvite(fixture.session, REDEEM_EMAIL);
   if (invite.status !== 'invited' || !invite.code) {
     note(`inviting ${REDEEM_EMAIL} answered "${invite.status}" with no code — nothing to redeem`);
@@ -333,28 +449,12 @@ async function checkJoining(browser: Browser): Promise<void> {
   }
   console.log(`invited ${REDEEM_EMAIL}, code ${invite.code}`);
 
-  // Its own context: no planted session, so this is the screen a person actually arrives on.
-  const fresh = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
-  const offline = await keepOffline(fresh, {
-    allow: [ORIGIN, supabaseUrl, 'https://tile.openstreetmap.org/'],
-  });
-  const page = await fresh.newPage();
-  page.on('pageerror', (e) => note(`pageerror (joining): ${e.message}`));
+  // A context of its own rather than the one the refusals used: those leave the screen in redeem
+  // mode with a notice up, and this starts by pressing a button that only exists in the other mode.
+  // A context each is also what lets either section be run without the other.
+  const { page, offline, close } = await signedOutPage(browser);
 
   try {
-    await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
-    await page.locator('.signin').waitFor({ timeout: 60_000 });
-
-    // The refusals first, on the same screen and in the same context, because the interesting
-    // thing about them is that they are *different sentences* and nothing checked which one
-    // appeared. `check:rls` covers the server saying no; this is the screen saying why.
-    await checkRefusals(page);
-
-    // Back to a clean form. The refusals leave the screen in redeem mode with a notice up, and the
-    // real redemption below starts by pressing a button that only exists in the other mode.
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.locator('.signin').waitFor({ timeout: 60_000 });
-
     // Signing in is the default door; redeeming is the other one. If this button is ever renamed
     // the check should fail rather than quietly fill the sign-in form with a code it has nowhere
     // to put — hence matching the words a person reads.
@@ -397,40 +497,27 @@ async function checkJoining(browser: Browser): Promise<void> {
     await page.screenshot({ path: resolve(SHOTS, 'web-joined.png'), fullPage: true });
     console.log(offline());
   } finally {
-    await fresh.close();
+    await close();
   }
 }
 
-/** The two refusals a person actually meets, and which sentence each one gets.
+/** A browser that is genuinely signed out, sitting on the sign-in screen.
  *
- *  Every refusal on this screen has wording of its own — that is the design note at the top of
- *  `SignIn.tsx`, and it is the whole reason the screen is as long as it is. Nothing checked it, so
- *  a regression that collapsed them all into "Something went wrong" would have passed every check
- *  in this repo while making the screen useless: the person who mistyped a code and the person
- *  whose invite expired need different next actions, and neither can guess.
- *
- *  Two, not five. `already-registered` would need an account this fixture then has to work around,
- *  and `rate-limited` means deliberately hammering the endpoint the real redemption below depends
- *  on. These are the two that cost nothing and can be provoked honestly. */
-async function checkRefusals(page: Page): Promise<void> {
-  // A wrong password against an address that definitely exists. The sentence is deliberately
-  // two-sided — Supabase answers a wrong password and an unknown address identically, and saying
-  // "wrong password" would make this form an oracle for who has an account — so the assertion is
-  // on the part that carries that: it names both possibilities.
-  await page.locator('.signin input[type="email"]').fill(FIXTURE_EMAIL);
-  await page.locator('.signin input[type="password"]').fill('not-the-fixture-password');
-  await page.locator('.signin button.primary').click();
-  await expectNotice(page, 'do not match an account', 'a wrong password');
+ *  A context of its own every time, rather than another page in the main one: `localStorage` is per
+ *  origin and shared by every page in a context, so the session planted at the top is visible
+ *  everywhere in there — a sign-in screen looked at from that context is a sign-in screen looked at
+ *  while signed in, which is to say not one at all. */
+async function signedOutPage(
+  browser: Browser,
+): Promise<{ page: Page; offline: () => string; close: () => Promise<void> }> {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const offline = await keepOffline(context, { allow: ALLOW });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(`pageerror (signed out): ${e.message}`));
 
-  // A wrong code, against an address nobody invited — not against the invite the real redemption
-  // below is about to use. Guessing is rate-limited in the database, and spending an attempt on
-  // the live code would make this check the reason the next one fails.
-  await page.getByRole('button', { name: 'I have an invite code' }).click();
-  await page.locator('.signin input[type="email"]').fill('smoke-fixture-nobody@example.test');
-  await page.locator('.signin input[type="password"]').fill(REDEEM_PASSWORD);
-  await page.locator('.signin input[placeholder="ABCD-EFGH-JKMN"]').fill('ZZZZ-ZZZZ-ZZZZ');
-  await page.locator('.signin button.primary').click();
-  await expectNotice(page, "isn’t right for that address", 'a code nobody was sent');
+  await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
+  await page.locator('.signin').waitFor({ timeout: 60_000 });
+  return { page, offline, close: () => context.close() };
 }
 
 /** Wait for the screen to say something, and say what it said when it says the wrong thing. */
@@ -525,6 +612,10 @@ async function settleOn<T>(
  *  extension reads `WXT_*` — so, like `build:smoke`, it cannot be arranged at runtime and is passed
  *  in here. Nothing about the repo's `.env` is read or changed. */
 async function startWebApp(): Promise<ChildProcess> {
+  // Before the build rather than after it, so a port somebody else holds costs a second instead of
+  // a minute — and so nothing is built for a server that is not going to be started.
+  await demandFreePort(PORT, 'the website under test');
+
   const cwd = resolve(import.meta.dirname, '..');
   const env = {
     ...process.env,
@@ -549,6 +640,10 @@ async function startWebApp(): Promise<ChildProcess> {
     cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    // In a process group of its own, so `stopTree` can take the `next start` underneath pnpm with
+    // it. Signalling pnpm alone leaves the server holding the port, and the run after this one
+    // then asserts against it — see `tools/servers.ts`.
+    detached: true,
   });
 
   child.stderr?.on('data', (chunk: Buffer) => {
@@ -573,6 +668,8 @@ async function startWebApp(): Promise<ChildProcess> {
     }
     await new Promise((r) => setTimeout(r, 1_000));
   }
-  child.kill('SIGTERM');
+  // The caller never got a handle on this one, so its `finally` cannot stop it and this is the only
+  // place that can.
+  stopTree(child);
   throw new Error(`the website did not come up on ${ORIGIN} within 120s`);
 }

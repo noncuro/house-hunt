@@ -27,11 +27,25 @@ from something else was answering. That is the worst shape a green tick can have
 first time somebody runs it on a clean machine, and it says "panel never left its loading state",
 which is a sentence about a spinner for what is really a process nobody started.
 
+The same thing arrives by the other door when a harness leaves a server behind, and `smoke:web` did:
+`next start` under `pnpm` survived the kill and kept 3199, so the run after it quietly asserted
+against the previous build. The servers are stopped as a process group now, and `smoke:web` refuses
+to start at all when something already holds the port — see `tools/servers.ts`.
+
 `pnpm smoke:all` runs the three browser harnesses cheapest-first and **stops at the first failure**
 — there is no point building the website to discover the extension never loaded. It takes names to
 run a subset (`pnpm smoke:all web search`) and prints per-harness timings either way. Within a
 single harness the opposite rule holds: each one collects every problem and reports them together,
 because three findings from one run beat three runs.
+
+`smoke:web` takes names of its own, for the same reason and with the same rule about a name that
+matches nothing: `pnpm smoke:web list rating`, or `pnpm smoke:web joining`. The sections are
+`session`, `list`, `rating`, `table`, `map`, `triage`, `tabs`, `refusals` and `joining`, and they
+always run in that order. What a subset cannot skip is the setup — the fixture, the Edge Functions
+and a production build of the website — so the saving is the browser work: six seconds for the list
+and the rating against forty for all of it, and nearly all of those six are the setup. Every
+section is written to stand on its own against that setup, which is what makes running one of them
+mean anything.
 
 ## Covered
 
