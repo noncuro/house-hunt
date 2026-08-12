@@ -19,7 +19,7 @@
  *  signal handlers in `smoke-web.ts` and `smoke.ts`.
  */
 import { spawnSync, type ChildProcess } from 'node:child_process';
-import { createServer } from 'node:net';
+import { connect } from 'node:net';
 
 /** Stop a server and everything it started.
  *
@@ -46,8 +46,8 @@ export function stopTree(child: ChildProcess | undefined, signal: NodeJS.Signals
  *  website on the right port answers every request perfectly well while being the wrong build, so
  *  the run is green about code that is not on this branch.
  *
- *  Asked by binding rather than by reading `lsof`, so the answer is the kernel's and does not
- *  depend on a tool being installed; `lsof` is then asked who it is, and the message survives it
+ *  Asked by dialling the port rather than by reading `lsof`, so the answer is the kernel's and does
+ *  not depend on a tool being installed; `lsof` is then asked who it is, and the message survives it
  *  being absent. Nothing is killed here on purpose — the process may well be somebody's `pnpm
  *  dev:web`, and a harness that reaps strangers is worse than one that stops. */
 export async function demandFreePort(port: number, what: string): Promise<void> {
@@ -66,13 +66,29 @@ export async function demandFreePort(port: number, what: string): Promise<void> 
   );
 }
 
+/** Asked by connecting, not by binding.
+ *
+ *  The binding version of this missed the case it exists for. Node sets `SO_REUSEADDR` on every
+ *  server it makes, and on macOS that lets a bind to `127.0.0.1` succeed while another process
+ *  holds the same port on `0.0.0.0` — which is how `next start` and most other servers bind. So the
+ *  probe reported the port free, the harness started its own server behind the leftover one, and
+ *  the guard was green in exactly the situation it was written to refuse. Verified by holding 3199
+ *  with `python3 -m http.server` and watching `smoke:web` walk straight past it into the stale
+ *  server's pages.
+ *
+ *  A connection has no such ambiguity: something either accepts on that port or nothing does. */
 function inUse(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const probe = createServer();
-    probe.once('error', (error: NodeJS.ErrnoException) => resolve(error.code === 'EADDRINUSE'));
-    probe.once('listening', () => probe.close(() => resolve(false)));
-    // The loopback address the harnesses serve and fetch on. A server bound to every interface
-    // holds this one too, so it is seen either way.
-    probe.listen(port, '127.0.0.1');
+    const probe = connect({ port, host: '127.0.0.1' });
+    const settle = (answer: boolean) => {
+      probe.destroy();
+      resolve(answer);
+    };
+    probe.once('connect', () => settle(true));
+    probe.once('error', () => settle(false));
+    // A port nobody is listening on refuses at once on loopback. A timeout here means something
+    // stranger than a leftover server, and treating that as "free" would put us back to attaching
+    // to it — so it counts as held.
+    probe.setTimeout(2_000, () => settle(true));
   });
 }

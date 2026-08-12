@@ -26,7 +26,7 @@
  *  leaves the counts `table` and `triage` assert unchanged — so no section is quietly reading state
  *  an earlier one left behind.
  */
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
