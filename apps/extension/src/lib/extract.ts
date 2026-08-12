@@ -42,6 +42,10 @@ export function toListing(property: Record<string, unknown>, url: string): Listi
     floorplans: floorplans(property.floorplans),
     imageUrls: imageUrls(property.images),
     description: str(obj(property.text)?.description),
+    // `status: { published, archived }` — archived turns true when a listing is let-agreed or taken
+    // down. Read `archived` directly; a missing status object stays null (unknown) rather than
+    // false, so we never tell the panel a flat is definitely still on when we could not check.
+    archived: bool(obj(property.status)?.archived),
   };
 }
 
@@ -172,6 +176,12 @@ function str(v: unknown): string | null {
 
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** A real boolean or null — never coerces. A missing status field must read as "unknown", not
+ *  "false", so a flat we could not check is never treated as definitely still on the market. */
+function bool(v: unknown): boolean | null {
+  return typeof v === 'boolean' ? v : null;
 }
 
 /** Rightmove does not return these in distance order, and the panel only shows the first few —
