@@ -51,6 +51,11 @@ export interface Listing {
   /** The agent's own prose. Photos cannot answer whether bills are included or whether this is a
    *  room in a house share; the description is the only place either is ever stated. */
   description: string | null;
+  /** Off the market according to the page itself: `propertyData.status.archived` is true (and
+   *  `published` false) once a listing is let-agreed or taken down. Null when the status object is
+   *  absent — unknown, not "still on" — so a missing field never auto-withholds a live flat. The
+   *  panel uses this to offer to mark the flat off the market without anyone having to notice. */
+  archived: boolean | null;
 }
 
 export type Confidence = 'high' | 'medium' | 'low';
