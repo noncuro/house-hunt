@@ -45,7 +45,6 @@ import {
   useRate,
   useRetrain,
   useSetOffMarket,
-  useSetProjectSettings,
   useShortlist,
   useSignOut,
 } from '@/lib/queries';

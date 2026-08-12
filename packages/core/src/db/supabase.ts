@@ -915,10 +915,13 @@ export interface SweepKnowledge {
  *  opener is right to open it. Reading the global table here would report it complete and the
  *  listing would silently never join the shortlist.
  *
- *  `postcode_lat` is the mapped-yet test: it is filled by `locateProperties` from the postcode,
- *  and without it a property cannot go on the shortlist map at its real position. The analysis is
- *  checked through the embedded row rather than a second query, the same way `getShortlist` does,
- *  and only `status = 'done'` counts — a claimed-but-unfinished row is not an analysis. */
+ *  "Complete" is what re-opening the listing can actually produce: its postcode read from the page,
+ *  and its photos analysed (checked through the embedded row, the same way `getShortlist` does, and
+ *  only `status = 'done'` counts — a claimed-but-unfinished row is not an analysis). Map position
+ *  (`postcode_lat`) is deliberately *not* in this test: it is filled by a separate `locateProperties`
+ *  backfill, and opening the tab again does nothing to produce it — so gating on it would leave every
+ *  opened-but-not-yet-geocoded flat permanently in the opener's worklist, which re-opening can never
+ *  clear. The map falls back to Rightmove's own pin until the backfill lands. */
 export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<string, SweepKnowledge>> {
   const known = new Map<string, SweepKnowledge>();
   if (rightmoveIds.length === 0) return known;
@@ -926,7 +929,7 @@ export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<str
 
   const { data, error } = await db()
     .from('property')
-    .select('rightmove_id, postcode, postcode_lat, property_analysis(status), project_property!inner(project_id)')
+    .select('rightmove_id, postcode, property_analysis(status), project_property!inner(project_id)')
     .eq('project_property.project_id', projectId)
     .in('rightmove_id', rightmoveIds);
   fail('checking which properties we already have', error);
@@ -939,7 +942,6 @@ export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<str
         : [];
     const missing: string[] = [];
     if (!row.postcode) missing.push('no postcode read from the listing');
-    else if (row.postcode_lat === null || row.postcode_lat === undefined) missing.push('not located on the map yet');
     if (!analyses.some((a: any) => a.status === 'done')) missing.push('photos not analysed yet');
 
     known.set(row.rightmove_id, {
