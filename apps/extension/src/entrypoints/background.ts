@@ -71,6 +71,22 @@ import { logWarn } from '@house-hunt/core';
  *  See supabase/functions/analyse/. */
 const ANALYSIS_FUNCTION = `${import.meta.env.WXT_SUPABASE_URL}/functions/v1/analyse`;
 
+/** A sweep fill-in tab is disposable: it exists so a listing loads far enough for the content
+ *  script to record it and cache its travel times, not to be read. Left open, a run of a few
+ *  hundred listings buries the browser under a few hundred Rightmove tabs — so each one is closed
+ *  a short while after it opens.
+ *
+ *  Half a minute is Chrome's alarm floor and comfortably past a listing settling: the opener paces
+ *  new tabs at ~12s for exactly that reason (see `OPEN_INTERVAL_MS` in packages/ui), so by the time
+ *  this fires the page has loaded, extracted and cached, and the analysis it kicked off runs on the
+ *  server regardless of whether the tab is still here.
+ *
+ *  An alarm rather than `setTimeout` for the same reason the session heartbeat is one: Chrome can
+ *  evict this worker between opening the tab and closing it, and a timer dies with the worker while
+ *  an alarm wakes it. A dropped timer would leak exactly the tab this is meant to reap. */
+const SWEEP_TAB_TTL_MINUTES = 0.5;
+const CLOSE_SWEEP_TAB_ALARM = 'close-sweep-tab:';
+
 
 export default defineBackground(() => {
   // Hand core the client, the refresh policy and somewhere to log, before anything reads the
@@ -107,6 +123,27 @@ export default defineBackground(() => {
       .then((data) => sendResponse({ ok: true, data } satisfies Envelope<unknown>))
       .catch((e) => sendResponse(refusal(e)));
     return true; // keep the channel open for the async reply
+  });
+
+  // Reap the sweep tabs opened above once their listing has had time to settle. Registered here so
+  // it is back in place when an alarm wakes a torn-down worker. Other alarms (the session
+  // heartbeat) share this event and are left alone — hence the name check.
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (!alarm.name.startsWith(CLOSE_SWEEP_TAB_ALARM)) return;
+    const tabId = Number(alarm.name.slice(CLOSE_SWEEP_TAB_ALARM.length));
+    if (!Number.isInteger(tabId)) return;
+    void (async () => {
+      try {
+        // Opened in the background and meant to stay there. If the user has since clicked into it to
+        // actually read the listing, leave it — closing a tab someone is reading is the opposite of
+        // the "does not steal focus" the background open promised.
+        const tab = await chrome.tabs.get(tabId);
+        if (tab.active) return;
+        await chrome.tabs.remove(tabId);
+      } catch {
+        // Already gone — the user closed it, or it never opened. Nothing to reap.
+      }
+    })();
   });
 });
 
@@ -328,7 +365,14 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       if (!/^https:\/\/www\.rightmove\.co\.uk\/properties\/\d+/.test(request.url)) {
         throw new Error(`refusing to open ${request.url} — only Rightmove listings`);
       }
-      await chrome.tabs.create({ url: request.url, active: false });
+      const tab = await chrome.tabs.create({ url: request.url, active: false });
+      // Schedule its own closing. Keyed by tab id so each tab reaps exactly itself, and only when
+      // the tab actually opened (a create with no id is nothing to close).
+      if (tab.id !== undefined) {
+        await chrome.alarms.create(`${CLOSE_SWEEP_TAB_ALARM}${tab.id}`, {
+          delayInMinutes: SWEEP_TAB_TTL_MINUTES,
+        });
+      }
       return null;
   }
 }

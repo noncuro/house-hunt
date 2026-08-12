@@ -16,7 +16,9 @@ import type { ShortlistEntry } from '@house-hunt/core/db';
 import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime } from '@house-hunt/core';
 import { FlagChip } from '@house-hunt/ui';
 import { SizeValue } from '@house-hunt/ui';
+import { ScoreBadge } from '@house-hunt/ui';
 import { useCachedTravel } from '@/lib/queries';
+import { isSurprise } from '@/lib/score';
 
 /** One row per place, one column per thing you'd compare it on.
  *
@@ -39,6 +41,7 @@ export function Compare({
   filters = true,
   columnsKey = 'compare',
   defaultSort = { key: 'price', descending: false },
+  scores = null,
 }: {
   entries: ShortlistEntry[];
   places: Place[];
@@ -63,6 +66,13 @@ export function Compare({
    *  came" — the caller has already put them in a meaningful order and would lose it. Triage does
    *  exactly that: it hands the rows over ranked by the verdict score. */
   defaultSort?: Sort | null;
+  /** The verdict score per flat, P(yes) under the current model — only ever passed by triage. The
+   *  score is deliberately absent from the compare table (see the header note, and `Score.tsx`):
+   *  compare is for seeing which trade you are making, and a blended number hides that. Triage is
+   *  the opposite question — "is this worth a second look" — where one predicted number is exactly
+   *  the aid you want, and the sort control already ranks the pile by it. Showing it as a column
+   *  there, and nowhere else, is why this is gated rather than a plain column. */
+  scores?: Map<string, number> | null;
 }) {
   const [showing, setShowing] = useState<Record<Group, boolean>>(DEFAULT_SHOWING);
   const [sort, setSort] = useState<Sort | null>(defaultSort);
@@ -111,7 +121,10 @@ export function Compare({
   // rent rather than one listed twice, and the two rows disagree about everything the model read
   // off the photos, because they carry different photos.
   const twins = useMemo(() => duplicateIds(entries), [entries]);
-  const all = useMemo(() => buildColumns(places, twins), [places, twins]);
+  // The score is a triage-only column (see the `scores` prop). Anywhere but triage it stays out of
+  // the table on purpose, so `buildColumns` is handed the map only there.
+  const scoreColumn = columnsKey === 'triage' ? scores : null;
+  const all = useMemo(() => buildColumns(places, twins, scoreColumn), [places, twins, scoreColumn]);
   // The first column is the address and never hides — a row you cannot identify is not a row.
   // Before the picker has ever been touched, `chosen` is null and the defaults decide. After, the
   // stored set is the whole answer, so a place added later does not silently appear in a table
@@ -361,7 +374,11 @@ function useColumnChoice(key: string): [Set<string> | null, (next: Set<string> |
   ];
 }
 
-function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
+function buildColumns(
+  places: Place[],
+  twins: Map<string, string[]>,
+  scores: Map<string, number> | null = null,
+): Column[] {
   const columns: Column[] = [
     {
       key: 'address',
@@ -443,6 +460,11 @@ function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
     },
   ];
 
+  // Right after the address, so it is the first thing you read across the row — this is the column
+  // you work the pile by in triage. Present only when triage passed a score map; null everywhere
+  // else keeps it out of the compare table entirely.
+  if (scores) columns.splice(1, 0, scoreColumnDef(scores));
+
   // Per place: the fastest way there, and then each mode on its own.
   //
   // The fastest is what you want while scanning, and it is the only one on by default. The single
@@ -488,6 +510,26 @@ function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
   return columns;
 }
 
+
+/** The verdict score as a table column — P(yes) under the current model, drawn with the same badge
+ *  the cards use so the two surfaces read as one number. Sorts big-first (most likely yes at the
+ *  top) and surfaces the model/rating disagreements with the ⚡ mark, exactly as `isSurprise`
+ *  defines them. A flat with no score yet (no model, or unscorable) gets a dash, never a zero —
+ *  the same rule the other columns follow. */
+function scoreColumnDef(scores: Map<string, number>): Column {
+  return {
+    key: 'score',
+    label: 'Score',
+    numeric: true,
+    bigIsBetter: true,
+    value: (e) => scores.get(e.rightmoveId) ?? null,
+    render: (e) => {
+      const s = scores.get(e.rightmoveId);
+      if (s === undefined) return dash('No score for this flat yet — rerun ratings.');
+      return <ScoreBadge score={s} surprise={isSurprise(e, s)} />;
+    },
+  };
+}
 
 /** The quickest way to a place, by the same rules every other view uses. Which mode it is matters
  *  less in a table than how long it takes — you want to know whether this flat is far. */

@@ -57,9 +57,9 @@ export function Install({ email }: { email: string }) {
             Click <strong>Load unpacked</strong> and pick the unzipped folder.
           </li>
           <li>
-            Click the extension icon. It opens the shortlist page and asks you to sign in — use{' '}
-            <strong>{email}</strong>, the address you are signed in as here. A six-digit code
-            arrives; type that in.
+            Click the extension icon. It opens the house hunt in a browser tab. Sign in there with{' '}
+            <strong>{email}</strong> — the address you are signed in as here — and your password;
+            signing in on the website signs the extension in too.
           </li>
           <li>Open any Rightmove rental listing and the panel appears.</li>
         </ol>

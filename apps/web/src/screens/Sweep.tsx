@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Opener } from '@house-hunt/ui';
 import { toSweepHub } from '@house-hunt/core';
-import { listHubSweeps, pendingSightings, type HubSweep } from '@house-hunt/core/db';
+import { listHubSweeps, locateProperties, pendingSightings, type HubSweep } from '@house-hunt/core/db';
 import { useHubs } from '@/lib/queries';
 import { helloExtension } from '@/lib/bridge';
 import type { ProjectHub } from '@house-hunt/core';
@@ -41,10 +41,19 @@ export function Sweep() {
 
   const pending = useQuery({
     queryKey: ['pending'],
-    queryFn: pendingSightings,
+    queryFn: async () => {
+      // Geocode anything newly recorded before counting. A sighting only leaves this list once it
+      // has a map position (`postcode_lat`), and opening a listing records its postcode but never
+      // geocodes it — that backfill is separate, and left to itself runs once per page load and
+      // would not revisit the rows this sweep just added. Doing it here, in the count's own read,
+      // is what lets the number actually fall as listings land. Idempotent and near-free when there
+      // is nothing new to locate; best-effort, so a geocoding hiccup still lets the recount run.
+      await locateProperties().catch(() => {});
+      return pendingSightings();
+    },
     // Every listing the opener opens changes this answer, and each one takes a while to finish
-    // extracting. Refetching on focus is how the count comes back down after a run without
-    // anyone pressing anything.
+    // extracting. Refetching on focus is how the count comes back down after a run without anyone
+    // pressing anything — and it re-runs the geocode above over whatever finished while you were away.
     refetchOnWindowFocus: true,
   });
 
@@ -212,6 +221,9 @@ function FillIn({
               what="we haven't opened yet"
               onFinished={() => {
                 setError(null);
+                // Recount. The query does the geocoding first, so listings that finished recording
+                // during the run drop out here; the rest follow as their analysis lands and the
+                // window-focus refetch re-runs this.
                 refresh();
               }}
               onError={setError}

@@ -654,6 +654,9 @@ function Triage({
           selection={{ chosen, toggle, setMany }}
           filters={false}
           columnsKey="triage"
+          // Triage's table gets the score as a column — the same number the cards and the sort
+          // control read. It is deliberately absent from the compare table; see Compare's `scores`.
+          scores={cardProps.scores}
           // Triage decides its own order — newest first, or whichever end of the score the sort
           // control asked for — and a default price sort inside the table would throw that away
           // silently, which is the one thing the "Most likely yes" control must not do. Any column
