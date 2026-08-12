@@ -40,6 +40,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      # Before install, not after: `pnpm install` runs `wxt prepare`, which reads the root
+      # .env and refuses without it. See .env.ci — it holds no secret.
+      - run: cp .env.ci .env
       - run: pnpm install --frozen-lockfile
 
       - uses: denoland/setup-deno@v2
@@ -66,6 +69,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      # Before install, not after: `pnpm install` runs `wxt prepare`, which reads the root
+      # .env and refuses without it. See .env.ci — it holds no secret.
+      - run: cp .env.ci .env
       - run: pnpm install --frozen-lockfile
 
       - uses: supabase/setup-cli@v1
@@ -96,6 +102,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      # Before install, not after: `pnpm install` runs `wxt prepare`, which reads the root
+      # .env and refuses without it. See .env.ci — it holds no secret.
+      - run: cp .env.ci .env
       - run: pnpm install --frozen-lockfile
 
       - uses: supabase/setup-cli@v1
