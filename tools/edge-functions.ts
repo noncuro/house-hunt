@@ -82,8 +82,15 @@ export async function startFunctions({
     // leaves the server behind. A group of its own is what lets `stopTree` take both.
     detached: true,
   });
+  // Kept as well as streamed, because the interesting lines are the last few before it dies and
+  // they are otherwise only visible under SMOKE_LOG=all — which nobody has set on the run that
+  // failed.
+  const lastWords: string[] = [];
   child.stderr?.on('data', (chunk: Buffer) => {
-    if (process.env.SMOKE_LOG === 'all') process.stderr.write(`[functions] ${chunk.toString()}`);
+    const text = chunk.toString();
+    if (process.env.SMOKE_LOG === 'all') process.stderr.write(`[functions] ${text}`);
+    lastWords.push(...text.split('\n').filter((line) => line.trim().length > 0));
+    if (lastWords.length > 5) lastWords.splice(0, lastWords.length - 5);
   });
 
   // Poll the thing we actually depend on — the CORS answer — rather than a readiness line. It is
@@ -128,6 +135,7 @@ export async function startFunctions({
         );
       }
       console.log(`edge functions accept ${origin}`);
+      watchForDeath(child, lastWords);
       return child;
     }
     await new Promise((r) => setTimeout(r, 1_000));
@@ -138,4 +146,33 @@ export async function startFunctions({
     `the travel function never answered Access-Control-Allow-Origin: ${origin}.\n` +
       `Check that supabase/.env says WEB_APP_ORIGIN=${origin} and that \`supabase start\` is up.`,
   );
+}
+
+/** Say it out loud when the functions container dies mid-run.
+ *
+ *  Everything downstream of the death is a 502 from Kong, which the caller reports as whatever it
+ *  happened to be asking for at the time — "inviting someone: HTTP 502" for a run that got nowhere
+ *  near a problem with invites. The one that cost an afternoon was the container being OOM-killed
+ *  because Docker had 1.87 GiB and a second project's Supabase stack was also up.
+ *
+ *  Its own exit code does not say which — `supabase` is a wrapper and reports 1 whatever the
+ *  container did — so the container's last stderr lines are what get printed. That is where
+ *  `error running container: exit 137` appears, and 137 is the kernel killing it for memory. */
+function watchForDeath(child: ChildProcess, lastWords: string[]): void {
+  child.once('exit', (code, signal) => {
+    // A harness that finished and stopped its own server is the ordinary case, and 143 is the
+    // SIGTERM it sends to do that.
+    if (code === 0 || code === 143 || signal === 'SIGTERM') return;
+    console.error(
+      `\nthe edge functions died mid-run (${signal ?? `exit ${code}`}). Everything after this ` +
+        'point fails as an HTTP 502 about whatever it was asking for.',
+    );
+    for (const line of lastWords) console.error(`  [functions] ${line}`);
+    if (lastWords.some((line) => line.includes('137'))) {
+      console.error(
+        '\nExit 137 is the kernel killing it for memory. Check `docker info | grep Memory` and\n' +
+          "`docker ps` — another project's `supabase start` left up is enough to do it.",
+      );
+    }
+  });
 }
