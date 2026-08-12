@@ -58,7 +58,17 @@ export function cors(origin: string | null): Record<string, string> {
       : 'null';
   return {
     'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Headers': 'content-type, authorization, apikey',
+    // The headers supabase-js actually sends, which is more than the three obvious ones. It adds
+    // `x-client-info` (its own version string) to every request and `x-retry-count` to retried
+    // ones, and a browser refuses the whole preflight over a single unlisted header — so the call
+    // never happens and the failure arrives as a CORS message about a header nobody wrote.
+    //
+    // That was live on the deployed website: every travel lookup was refused before it left the
+    // browser. It reads as an origin problem and is not one; the origin was allowed all along.
+    // The list is supabase-js's own (`@supabase/supabase-js/cors`), copied rather than imported
+    // because these functions run on Deno with no node_modules — so when the SDK adds a header,
+    // this is the line that has to learn about it.
+    'Access-Control-Allow-Headers': 'content-type, authorization, apikey, x-client-info, x-retry-count',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     Vary: 'Origin',
   };
