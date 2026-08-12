@@ -34,6 +34,7 @@ import {
   createInvite,
   FIXTURE_EMAIL,
   FIXTURE_NAME,
+  fixtureId,
   OTHER_NAME,
   REDEEM_EMAIL,
   REDEEM_PASSWORD,
@@ -215,11 +216,11 @@ async function checkList({ page }: Stage): Promise<void> {
     note(`the list shows ${cards} cards; the fixture has exactly 2 rated excited-or-maybe`);
   }
   // The rated flats, by id, so a wrong join that returned the right *count* still fails.
-  for (const id of ['smokefix-1', 'smokefix-4']) {
+  for (const id of [fixtureId(1), fixtureId(4)]) {
     if (!(await page.locator(`#card-${id}`).count())) note(`${id} is rated but is not on the list`);
   }
   // And the ones default-hidden really are hidden, or "shows 2" means nothing.
-  for (const id of ['smokefix-2', 'smokefix-5']) {
+  for (const id of [fixtureId(2), fixtureId(5)]) {
     if (await page.locator(`#card-${id}`).count()) {
       note(`${id} is rejected or unrated and should not be on the list by default`);
     }
@@ -227,10 +228,10 @@ async function checkList({ page }: Stage): Promise<void> {
 
   // The shortlist read is the whole point: a card that rendered with no price or no address is a
   // join that half-worked, which looks like a design choice rather than a bug.
-  const first = page.locator('#card-smokefix-1');
+  const first = page.locator(`#card-${fixtureId(1)}`);
   const firstText = await first.innerText();
   for (const expected of ['Flask Walk', '£2,600 pcm']) {
-    if (!firstText.includes(expected)) note(`the card for smokefix-1 is missing "${expected}"`);
+    if (!firstText.includes(expected)) note(`the card for ${fixtureId(1)} is missing "${expected}"`);
   }
   // Attribution: a shared rating whose author is invisible turns a disagreement into a silent
   // overwrite, which is the reason `set_by_name` is stored at all.
@@ -250,13 +251,13 @@ async function checkList({ page }: Stage): Promise<void> {
  *  clicked and only rolls back if the reply fails, so a verdict that never reached the database
  *  looks identical on screen to one that did. The database is the only witness.
  *
- *  smokefix-4, which the fixture seeds as `maybe`, so this is a *replacement* rather than a first
+ *  The fourth flat, which the fixture seeds as `maybe`, so this is a *replacement* rather than a first
  *  rating — the case with the history table behind it, and the one that carries the design's whole
  *  point: a shared opinion whose previous value is kept and whose new author is named. It stays
  *  `love`, so nothing below it moves: the count, the compare table and the triage pile are all
  *  about a flat that was already showing and is still showing, whether or not this section ran. */
 async function checkRating({ page }: Stage): Promise<void> {
-  const rated = page.locator('#card-smokefix-4');
+  const rated = page.locator(`#card-${fixtureId(4)}`);
   const NEW_NOTE = 'Smoke: raised to exciting.';
   // The note first, then the rating: the buttons pass the note themselves, precisely so that
   // leaving the field to click a rating does not race two saves. Typing it after would be testing
@@ -278,11 +279,11 @@ async function checkRating({ page }: Stage): Promise<void> {
   // And what is actually stored. Polled rather than read once — the click returns as soon as the
   // optimistic update paints, and a single read here would be a race that passes on a fast laptop.
   const stored = await settleOn(
-    () => verdictOf('smokefix-4'),
+    () => verdictOf(fixtureId(4)),
     (v) => v?.rating === 'love' && v.note === NEW_NOTE,
   );
   console.log(`verdict: ${stored?.rating ?? 'none'} — "${stored?.note ?? ''}" by ${stored?.setBy}`);
-  if (stored?.rating !== 'love') note(`the database holds "${stored?.rating ?? 'nothing'}" for smokefix-4, not love`);
+  if (stored?.rating !== 'love') note(`the database holds "${stored?.rating ?? 'nothing'}" for ${fixtureId(4)}, not love`);
   if (stored?.note !== NEW_NOTE) note(`the note was not saved with the rating (got "${stored?.note ?? ''}")`);
   // On `set_by`, not on `set_by_name`. The name column belongs to the pre-auth identity model and
   // the schema says new rows leave it null; the name a reader sees is resolved from project
@@ -297,11 +298,11 @@ async function checkRating({ page }: Stage): Promise<void> {
   // `verdict` directly, so exactly one row should exist here and it should be the `maybe` this
   // just overwrote. A silent overwrite is the failure the history table exists to prevent, and it
   // is invisible from every screen.
-  const history = await verdictHistoryOf('smokefix-4');
+  const history = await verdictHistoryOf(fixtureId(4));
   console.log(`verdict history: ${history.length} prior value(s)`);
   const archived = history[0];
   if (history.length !== 1) {
-    note(`smokefix-4 has ${history.length} history rows after one re-rating; expected exactly 1`);
+    note(`${fixtureId(4)} has ${history.length} history rows after one re-rating; expected exactly 1`);
   } else if (archived?.rating !== 'maybe') {
     note(`the archived rating is "${archived?.rating}"; the fixture set it to maybe`);
   }
@@ -379,10 +380,11 @@ async function checkTriage({ page }: Stage): Promise<void> {
   }
   const address = page.locator('.triage table tbody tr .compare-open').first();
   const href = await address.getAttribute('href');
-  // `#card-<id>`, where the id is whatever the property is keyed by — Rightmove's own number in a
-  // real hunt, and the fixture's `smokefix-n` here.
-  if (href === null || !/^#card-\S+$/.test(href)) {
-    note(`the first triage row's address points at "${href}", not at a #card-<id> deep link`);
+  // `#card-<id>`, digits — the shape the shortlist's own hash reader accepts on a cold load. Any id
+  // is fine for the click below, which never goes near that reader, so a looser pattern here would
+  // pass on a link that does nothing when it is pasted into a fresh tab.
+  if (href === null || !/^#card-\d+$/.test(href)) {
+    note(`the first triage row's address points at "${href}", not at a #card-<digits> deep link`);
   } else {
     await address.click();
     await settle(page);
@@ -392,6 +394,29 @@ async function checkTriage({ page }: Stage): Promise<void> {
     if ((await card.count()) === 0) note(`opening a triage row drew no ${href} on the shortlist`);
     else if (!(await card.isVisible())) note(`opening a triage row left ${href} in a shut pile`);
     console.log(`triage row opens ${href}`);
+
+    // And the same address arrived at cold, which is the half the click cannot reach: `Compare`
+    // prevents the anchor's default and calls `onOpen`, so everything above passes whether or not
+    // the hash means anything on load. This is the promise the link makes — send it to the other
+    // laptop, open it a week later — and a different piece of code keeps it.
+    //
+    // A new tab rather than `goto` on this one, which is what this was first and which asserted
+    // nothing: the click above had already left the URL at `/`, so navigating to `/#card-…` differs
+    // only by fragment, and a browser answers that without reloading. The state the click had just
+    // built survived, the pile was already open, and the check passed with the hash reader deleted.
+    const fresh = await page.context().newPage();
+    try {
+      await fresh.goto(`${ORIGIN}/${href}`, { waitUntil: 'domcontentloaded' });
+      await settle(fresh);
+      const cold = fresh.locator(`article${href}`);
+      // Unrated and rejected piles start shut on a fresh load, so this is a real question: the card
+      // exists only if the hash was read, and is visible only if it opened the pile it is in.
+      if ((await cold.count()) === 0) note(`loading ${href} in a new tab drew no such card`);
+      else if (!(await cold.isVisible())) note(`loading ${href} in a new tab left it in a shut pile`);
+      else console.log(`${href} opens that card from cold`);
+    } finally {
+      await fresh.close();
+    }
   }
 }
 
