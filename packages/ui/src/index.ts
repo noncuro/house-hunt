@@ -15,6 +15,7 @@ export * from './Gallery';
 export * from './Hint';
 export * from './Hub';
 export * from './Journey';
+export * from './OffMarket';
 export * from './Opener';
 export * from './Score';
 export * from './Size';

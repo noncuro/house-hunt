@@ -264,6 +264,24 @@ export const BIGGEST_ROOM_BIG_SQFT = 600;
 /** Below this, "outdoor space" is a window box, not somewhere you sit. */
 export const OUTDOOR_MINIMUM_SQFT = 20;
 
+/** What a hunt is looking for, set on the "Your Hunt" page and stored per project (see the
+ *  `project_setting` migration). Read here, and nowhere else, so there is one place that decides how
+ *  a preference changes a flat's flags. The shape lives with this logic on purpose — adding a
+ *  preference is a change here, not a migration, because the store is a jsonb blob. */
+export type AmenityWant = 'must' | 'nice';
+/** The amenities a hunt can prioritise. Each maps to one analysis field in `AMENITY` below. The two
+ *  facts that end a conversation on their own — a house share, a bed in the kitchen — are not here:
+ *  they are already hard red for every hunt, so a "must not have" toggle would say nothing new. */
+export type AmenityKey = 'outdoor' | 'dishwasher' | 'bathtub' | 'inUnitLaundry' | 'brightLight' | 'billsIncluded';
+export interface HuntPreferences {
+  /** A biggest-room bar in sq ft: a flat whose largest room clears it earns the great-room mark.
+   *  Null/absent leaves the default `BIGGEST_ROOM_BIG_SQFT`. */
+  greatRoomMinSqft?: number | null;
+  /** Per amenity, whether the hunt must have it or would merely like it. Absent means "don't mind",
+   *  which is the default behaviour these flags already had. */
+  amenities?: Partial<Record<AmenityKey, AmenityWant>>;
+}
+
 /** A station distance in the unit Rightmove actually supplied.
  *
  *  Every view printed "mi" regardless. `unit` is extracted and stored, so a listing served in
@@ -339,7 +357,7 @@ export const FLAG_ICON: Record<Severity, string> = { red: '⛔', yellow: '⚠️
 const RED = FLAG_ICON.red;
 const AMBER = FLAG_ICON.yellow;
 
-export function flagsFor({ analysis, floorplanUrl }: FlagSource): Flag[] {
+export function flagsFor({ analysis, floorplanUrl }: FlagSource, prefs?: HuntPreferences): Flag[] {
   const flags: Flag[] = [];
 
   if (!analysis) {
@@ -373,11 +391,23 @@ export function flagsFor({ analysis, floorplanUrl }: FlagSource): Flag[] {
 
   const room = analysis.biggestRoomSqft ?? null;
   const rooms = analysis.biggestRoomConfidence ?? null;
+  // A hunt can set its own bar for what counts as a great room; without one, the default stands.
+  const bigThreshold = prefs?.greatRoomMinSqft ?? BIGGEST_ROOM_BIG_SQFT;
   if (room !== null && room < BIGGEST_ROOM_SMALL_SQFT) {
     // Yellow: a small main room is a real objection, but one you can settle by standing in it.
     flags.push({ key: 'rooms', severity: 'yellow', icon: AMBER, text: claimLabel('rooms-small', rooms), confidence: rooms });
-  } else if (room !== null && room > BIGGEST_ROOM_BIG_SQFT) {
-    flags.push({ key: 'rooms', severity: 'good', icon: '⭐', text: claimLabel('rooms-big', rooms), confidence: rooms });
+  } else if (room !== null && room >= bigThreshold) {
+    // At or above the bar counts — "450 sq ft or bigger" includes exactly 450.
+    // When the bar is the hunt's own, name it a great room and say the size — that is the number
+    // the preference was set against, so it is the one worth showing.
+    const named = prefs?.greatRoomMinSqft != null;
+    flags.push({
+      key: 'rooms',
+      severity: 'good',
+      icon: '⭐',
+      text: named ? `great room · ${room} sq ft` : claimLabel('rooms-big', rooms),
+      confidence: rooms,
+    });
   }
 
   const outdoor = analysis.outdoorConfidence ?? null;
@@ -475,8 +505,85 @@ export function flagsFor({ analysis, floorplanUrl }: FlagSource): Flag[] {
     flags.push({ key: 'light', severity: 'good', icon: '☀️', text: claimLabel('light-high', lit), confidence: lit });
   }
 
+  applyAmenityWants(flags, analysis, prefs);
   return flags;
 }
+
+/** How much each amenity the hunt named actually matters to it, layered on top of the default flags.
+ *
+ *  The defaults already flag most absences — a missing dishwasher is amber, no outdoor space is red —
+ *  but they treat every hunt the same. A hunt that has said it *must* have a dishwasher wants that
+ *  amber to be a red, and a flat that is missing something the hunt merely said would be *nice* stays
+ *  a reservation rather than a dealbreaker. So this only ever raises the stakes of an absence the
+ *  hunt cares about, never lowers one the defaults already called serious, and it says which
+ *  preference it was. A present or unknown amenity is left exactly as the defaults had it. */
+function applyAmenityWants(
+  flags: Flag[],
+  analysis: NonNullable<FlagSource['analysis']>,
+  prefs: HuntPreferences | undefined,
+): void {
+  if (!prefs?.amenities) return;
+  const severityRank: Record<Severity, number> = { good: 0, yellow: 1, red: 2 };
+
+  for (const key of Object.keys(prefs.amenities) as AmenityKey[]) {
+    const want = prefs.amenities[key];
+    if (!want) continue;
+    // Persisted preferences are a jsonb blob and could carry a key from a newer or hand-edited
+    // build; an unknown one is skipped rather than dereferenced, so bad data can never crash the
+    // shortlist or the compare table.
+    const spec = AMENITY[key];
+    if (!spec) continue;
+    // Only an amenity the flat is *known* to lack is escalated — unknown is not an absence, and
+    // present is what the hunt wanted.
+    if (spec.present(analysis) !== false) continue;
+
+    const target: Severity = want === 'must' ? 'red' : 'yellow';
+    const existing = flags.find((f) => f.key === spec.flagKey);
+    if (existing) {
+      if (severityRank[target] > severityRank[existing.severity]) {
+        existing.severity = target;
+        existing.icon = FLAG_ICON[target];
+      }
+      existing.text = `${existing.text} · ${want} have`;
+    } else {
+      flags.push({
+        key: spec.flagKey,
+        severity: target,
+        icon: FLAG_ICON[target],
+        text: `no ${spec.label} · ${want} have`,
+        confidence: null,
+      });
+    }
+  }
+}
+
+/** Each preferable amenity, mapped to the analysis field that says whether a flat has it and the
+ *  flag key the defaults use for it — so a preference escalates the existing flag rather than adding
+ *  a second one about the same thing. `present` returns null for unknown, never a false. */
+const AMENITY: Record<
+  AmenityKey,
+  { flagKey: string; label: string; present: (a: NonNullable<FlagSource['analysis']>) => boolean | null }
+> = {
+  outdoor: { flagKey: 'outdoor', label: 'outdoor space', present: (a) => a.hasOutdoorSpace ?? null },
+  dishwasher: { flagKey: 'dishwasher', label: 'dishwasher', present: (a) => a.hasDishwasher ?? null },
+  bathtub: { flagKey: 'bathtub', label: 'bathtub', present: (a) => a.hasBathtub ?? null },
+  inUnitLaundry: {
+    flagKey: 'laundry',
+    label: 'in-unit laundry',
+    present: (a) => (a.laundry == null ? null : a.laundry === 'in-unit'),
+  },
+  brightLight: {
+    flagKey: 'light',
+    label: 'good natural light',
+    // Only "high" counts as having it; "medium" is the model's unsure answer, not a yes.
+    present: (a) => (a.naturalLight == null ? null : a.naturalLight === 'high'),
+  },
+  billsIncluded: {
+    flagKey: 'bills',
+    label: 'bills included',
+    present: (a) => a.utilitiesIncluded ?? null,
+  },
+};
 
 /** Only what is wrong. The compare table exists to scan seventeen rows at once, and a column that
  *  says "bathtub" on fourteen of them spends its width telling you nothing — the question a table

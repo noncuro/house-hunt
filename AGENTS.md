@@ -35,6 +35,12 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 - **No PII in the repo.** No real names, personal email addresses, or anything identifying the
   people using it — in code, docs, examples, or commit messages. Deployment-specific identity
   (admin email, project name) lives in the untracked `supabase/seed.sql`.
+- **Never `git add -A` or `git add .`. Stage explicit paths.** The working tree carries untracked
+  secrets and whole second checkouts — `.env` (a real database password), `supabase/seed.sql`, and
+  git worktrees under `.claude/`. A blanket add vendors one of those the moment a `.gitignore` rule
+  is missing; `.claude/` was untracked-but-not-ignored until a Codex review caught a worktree `.env`
+  about to be committed. Add the files you changed, by name, and read `git status` before every
+  commit.
 - **Distribution is private until the Chrome Web Store listing is approved** — load-unpacked
   only for now. Access is an invite, not a download.
 - **Select on `data-testid`, never CSS-module class names** — Rightmove's hashed classes churn.

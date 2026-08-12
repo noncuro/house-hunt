@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { keys as shellKeys, useAuth } from '@/lib/queries';
+import { keys as shellKeys, useAuth, useProjectSettings, useSetProjectSettings } from '@/lib/queries';
 import {
   authState,
   createInvite,
@@ -15,7 +15,16 @@ import {
   revokeInvite,
   setActiveProject,
 } from '@house-hunt/core/db';
-import type { AuthState, Headcount, Invite, InviteResult, ProjectSummary } from '@house-hunt/core';
+import type {
+  AmenityKey,
+  AmenityWant,
+  AuthState,
+  Headcount,
+  HuntPreferences,
+  Invite,
+  InviteResult,
+  ProjectSummary,
+} from '@house-hunt/core';
 
 /** The house hunt you are in: who else is in it, who has been asked, and which one you are looking
  *  at when you are in more than one.
@@ -56,6 +65,7 @@ export function Project({ notify }: { notify: Notify }) {
   return (
     <div className="settings">
       <ActiveProject project={activeProject} notify={notify} />
+      <HuntSettings notify={notify} />
       <Members projectId={activeProject.id} />
       {/* Keyed on the project so switching hunts starts the invite form empty. Without it the
           sentence under the field — "they are already in this hunt" — would still be on screen,
@@ -63,6 +73,167 @@ export function Project({ notify }: { notify: Notify }) {
       <Invites key={activeProject.id} project={activeProject} notify={notify} />
       <YourProjects projects={projects} activeId={activeProject.id} />
     </div>
+  );
+}
+
+/** What this hunt is looking for — a great-room bar and the must-have/nice-to-have amenities.
+ *
+ *  Shared by the whole hunt, like a verdict: anyone in the project can adjust it, and realtime keeps
+ *  it in step across laptops. It changes how flats are *flagged* on the shortlist and compare table
+ *  (a missing must-have goes red, a missing nice-to-have amber) and where the great-room mark sits —
+ *  it never filters anything out. Every control saves on change; there is no Save button, because a
+ *  preference you set and forgot to save is a preference that silently did nothing. */
+const AMENITY_OPTIONS: { key: AmenityKey; label: string }[] = [
+  { key: 'outdoor', label: 'Outdoor space' },
+  { key: 'dishwasher', label: 'Dishwasher' },
+  { key: 'bathtub', label: 'Bathtub' },
+  { key: 'inUnitLaundry', label: 'In-unit laundry' },
+  { key: 'brightLight', label: 'Good natural light' },
+  { key: 'billsIncluded', label: 'Bills included' },
+];
+
+/** Offered as the great-room bar when it is first switched on — a sensible "large reception room"
+ *  size, and the same number `BIGGEST_ROOM_SMALL_SQFT` uses for the other end of the scale. The
+ *  range is what a bar could sensibly be: below the small-room mark it stops meaning "great", and a
+ *  four-figure single room is a typo. Enforced on save, not just as input attributes, which a typed
+ *  value slips past. */
+const DEFAULT_GREAT_ROOM_SQFT = 450;
+const GREAT_ROOM_MIN_SQFT = 100;
+const GREAT_ROOM_MAX_SQFT = 2000;
+
+const WANT_CHOICES: { value: AmenityWant | null; label: string }[] = [
+  { value: null, label: "Don't mind" },
+  { value: 'nice', label: 'Nice to have' },
+  { value: 'must', label: 'Must have' },
+];
+
+function HuntSettings({ notify }: { notify: Notify }) {
+  const settings = useProjectSettings();
+  const save = useSetProjectSettings();
+
+  // A local draft is the source of truth for edits. Each control builds the next full-object write
+  // from THIS, not from the server read, so two quick changes compose onto each other rather than
+  // each rebuilding from a `settings.data` that has not refetched yet — which would drop the earlier
+  // one. Re-seeded whenever a fresh read lands (another laptop, or our own write coming back).
+  const [draft, setDraft] = useState<HuntPreferences | null>(settings.data ?? null);
+  useEffect(() => {
+    if (settings.data) setDraft(settings.data);
+  }, [settings.data]);
+
+  // Full-object writes go one at a time — the mutation stays disabled while one is in flight — so
+  // two replacements cannot land out of order and restore a stale set. The local draft still updates
+  // immediately, so the controls stay responsive; only the save waits its turn.
+  const commit = (next: HuntPreferences) => {
+    setDraft(next);
+    save.mutate(next, {
+      onError: (e) => notify(`Couldn't save that preference — ${(e as Error).message}`, 'error'),
+    });
+  };
+
+  if (settings.isError) {
+    return (
+      <section className="setting">
+        <h2>What you&rsquo;re looking for</h2>
+        <p className="error">Could not read this hunt&rsquo;s preferences.</p>
+      </section>
+    );
+  }
+  // No editing until the first read lands — otherwise a partial object would replace whatever is
+  // already stored.
+  if (!draft) {
+    return (
+      <section className="setting">
+        <h2>What you&rsquo;re looking for</h2>
+        <p className="working">Working…</p>
+      </section>
+    );
+  }
+
+  const busy = save.isPending;
+  const setAmenity = (key: AmenityKey, want: AmenityWant | null) => {
+    const amenities = { ...(draft.amenities ?? {}) };
+    // "Don't mind" removes the key rather than storing a third value — absent already means that,
+    // and one representation of "no preference" cannot disagree with itself.
+    if (want) amenities[key] = want;
+    else delete amenities[key];
+    commit({ ...draft, amenities });
+  };
+
+  const greatRoomOn = draft.greatRoomMinSqft != null;
+
+  return (
+    <section className="setting">
+      <h2>What you&rsquo;re looking for</h2>
+      <p className="dim">
+        Shared by the whole hunt. These change how flats are flagged on the shortlist and compare
+        table — a must-have you&rsquo;re missing shows red, a nice-to-have amber — and set the bar for
+        what counts as a great room. Nothing here hides a flat; it only changes the emphasis.
+      </p>
+
+      <label className="hunt-pref-greatroom">
+        <input
+          type="checkbox"
+          checked={greatRoomOn}
+          disabled={busy}
+          onChange={(e) =>
+            commit({ ...draft, greatRoomMinSqft: e.target.checked ? DEFAULT_GREAT_ROOM_SQFT : null })
+          }
+        />
+        <span>Has a great room</span>
+        {greatRoomOn && (
+          <span className="hunt-pref-greatroom-size">
+            <input
+              type="number"
+              min={GREAT_ROOM_MIN_SQFT}
+              max={GREAT_ROOM_MAX_SQFT}
+              disabled={busy}
+              // Typed into the local draft as you go, and saved once on blur — not one write per
+              // keystroke, which would also fight the disabled-while-saving guard. The value that
+              // reaches a write is clamped to the control's range on blur (`min`/`max` alone do not
+              // stop a typed 1 or 3000 from reaching `commit`).
+              value={draft.greatRoomMinSqft ?? DEFAULT_GREAT_ROOM_SQFT}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (Number.isFinite(n) && n > 0) setDraft({ ...draft, greatRoomMinSqft: Math.round(n) });
+              }}
+              onBlur={() => {
+                const clamped = Math.min(
+                  GREAT_ROOM_MAX_SQFT,
+                  Math.max(GREAT_ROOM_MIN_SQFT, draft.greatRoomMinSqft ?? DEFAULT_GREAT_ROOM_SQFT),
+                );
+                commit({ ...draft, greatRoomMinSqft: clamped });
+              }}
+            />
+            <span className="dim">sq ft or bigger</span>
+          </span>
+        )}
+      </label>
+
+      <div className="hunt-pref-amenities">
+        {AMENITY_OPTIONS.map(({ key, label }) => {
+          const want = draft.amenities?.[key] ?? null;
+          return (
+            <div className="hunt-pref-row" key={key}>
+              <span className="hunt-pref-name">{label}</span>
+              <div className="hunt-pref-choice" role="group" aria-label={label}>
+                {WANT_CHOICES.map((choice) => (
+                  <button
+                    key={choice.label}
+                    type="button"
+                    className={want === choice.value ? 'key key-on' : 'key'}
+                    aria-pressed={want === choice.value}
+                    disabled={busy}
+                    onClick={() => setAmenity(key, choice.value)}
+                  >
+                    {choice.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

@@ -10,13 +10,16 @@ import {
   resolveSize,
   worstSeverity,
   type Flag,
+  type HuntPreferences,
 } from '@house-hunt/core';
 import { DEFAULT_SHOWING, duplicateIds, GROUP_LABEL, groupOf, parseMonthlyPrice, sizeOf, type Group } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
 import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime } from '@house-hunt/core';
 import { FlagChip } from '@house-hunt/ui';
 import { SizeValue } from '@house-hunt/ui';
+import { ScoreBadge } from '@house-hunt/ui';
 import { useCachedTravel } from '@/lib/queries';
+import { isSurprise } from '@/lib/score';
 
 /** One row per place, one column per thing you'd compare it on.
  *
@@ -39,6 +42,8 @@ export function Compare({
   filters = true,
   columnsKey = 'compare',
   defaultSort = { key: 'price', descending: false },
+  scores = null,
+  prefs,
 }: {
   entries: ShortlistEntry[];
   places: Place[];
@@ -63,6 +68,16 @@ export function Compare({
    *  came" — the caller has already put them in a meaningful order and would lose it. Triage does
    *  exactly that: it hands the rows over ranked by the verdict score. */
   defaultSort?: Sort | null;
+  /** The verdict score per flat, P(yes) under the current model — only ever passed by triage. The
+   *  score is deliberately absent from the compare table (see the header note, and `Score.tsx`):
+   *  compare is for seeing which trade you are making, and a blended number hides that. Triage is
+   *  the opposite question — "is this worth a second look" — where one predicted number is exactly
+   *  the aid you want, and the sort control already ranks the pile by it. Showing it as a column
+   *  there, and nowhere else, is why this is gated rather than a plain column. */
+  scores?: Map<string, number> | null;
+  /** This hunt's preferences, so the "Against it" column reflects a must-have absence and the
+   *  great-room bar. Absent everywhere the preferences do not reach — the default flag behaviour. */
+  prefs?: HuntPreferences;
 }) {
   const [showing, setShowing] = useState<Record<Group, boolean>>(DEFAULT_SHOWING);
   const [sort, setSort] = useState<Sort | null>(defaultSort);
@@ -111,7 +126,13 @@ export function Compare({
   // rent rather than one listed twice, and the two rows disagree about everything the model read
   // off the photos, because they carry different photos.
   const twins = useMemo(() => duplicateIds(entries), [entries]);
-  const all = useMemo(() => buildColumns(places, twins), [places, twins]);
+  // The score is a triage-only column (see the `scores` prop). Anywhere but triage it stays out of
+  // the table on purpose, so `buildColumns` is handed the map only there.
+  const scoreColumn = columnsKey === 'triage' ? scores : null;
+  const all = useMemo(
+    () => buildColumns(places, twins, scoreColumn, prefs),
+    [places, twins, scoreColumn, prefs],
+  );
   // The first column is the address and never hides — a row you cannot identify is not a row.
   // Before the picker has ever been touched, `chosen` is null and the defaults decide. After, the
   // stored set is the whole answer, so a place added later does not silently appear in a table
@@ -151,6 +172,29 @@ export function Compare({
     for (const entry of entries) tally[groupOf(entry.verdicts)] += 1;
     return tally;
   }, [entries]);
+
+  // Shift-click selects the whole run between the last ticked row and this one. Shared by the row
+  // body and the checkbox itself, so the range lands the same however you click — the checkbox used
+  // to miss out entirely, because its label stops the click ever reaching the row handler where this
+  // logic used to live. Returns true when it handled a range (the caller does nothing more), false
+  // when it only moved the anchor and the caller should still toggle this one.
+  const rangeSelect = (id: string, shiftKey: boolean): boolean => {
+    if (!selection) return false;
+    const from = anchor.current;
+    if (shiftKey && from && from !== id) {
+      const order = sorted.map((e) => e.rightmoveId);
+      const a = order.indexOf(from);
+      const b = order.indexOf(id);
+      if (a !== -1 && b !== -1) {
+        // The anchor's own state decides the run's, which is what makes a second shift-click undo
+        // the first rather than re-select what is already on.
+        selection.setMany(order.slice(Math.min(a, b), Math.max(a, b) + 1), selection.chosen.has(from));
+        return true;
+      }
+    }
+    anchor.current = id;
+    return false;
+  };
 
   if (entries.length === 0) return <p className="dim">Nothing to compare yet.</p>;
 
@@ -259,20 +303,7 @@ export function Compare({
                     onOpen(entry.rightmoveId);
                     return;
                   }
-                  const from = anchor.current;
-                  if (event.shiftKey && from && from !== entry.rightmoveId) {
-                    const order = sorted.map((e) => e.rightmoveId);
-                    const a = order.indexOf(from);
-                    const b = order.indexOf(entry.rightmoveId);
-                    if (a !== -1 && b !== -1) {
-                      // The anchor's own state decides the run's, which is what makes a second
-                      // shift-click undo the first rather than re-select what is already on.
-                      const run = order.slice(Math.min(a, b), Math.max(a, b) + 1);
-                      selection.setMany(run, selection.chosen.has(from));
-                      return;
-                    }
-                  }
-                  anchor.current = entry.rightmoveId;
+                  if (rangeSelect(entry.rightmoveId, event.shiftKey)) return;
                   selection.toggle(entry.rightmoveId);
                 }}
               >
@@ -282,6 +313,14 @@ export function Compare({
                       <input
                         type="checkbox"
                         checked={selection.chosen.has(entry.rightmoveId)}
+                        onClick={(e) => {
+                          // The same range logic as the row. The label above stops the click ever
+                          // reaching the row handler, so a shift-click on the box is handled here.
+                          // A range op preventDefaults to suppress the box's own toggle and its
+                          // onChange; a plain click only records the anchor and lets onChange do the
+                          // single toggle.
+                          if (rangeSelect(entry.rightmoveId, e.shiftKey)) e.preventDefault();
+                        }}
                         onChange={() => selection.toggle(entry.rightmoveId)}
                       />
                       <span className="visually-hidden">Select {entry.displayAddress}</span>
@@ -361,7 +400,12 @@ function useColumnChoice(key: string): [Set<string> | null, (next: Set<string> |
   ];
 }
 
-function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
+function buildColumns(
+  places: Place[],
+  twins: Map<string, string[]>,
+  scores: Map<string, number> | null = null,
+  prefs?: HuntPreferences,
+): Column[] {
   const columns: Column[] = [
     {
       key: 'address',
@@ -443,6 +487,17 @@ function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
     },
   ];
 
+  // Right after the address, so it is the first thing you read across the row — this is the column
+  // you work the pile by in triage. Present only when triage passed a score map; null everywhere
+  // else keeps it out of the compare table entirely.
+  if (scores) columns.splice(1, 0, scoreColumnDef(scores));
+
+  // The analysis-derived features, each its own sortable column but every one off by default so the
+  // table does not arrive nine columns wider — turn on the ones a hunt cares about from the Columns
+  // picker. These are the neutral column form of the same fields `facts.ts` turns into flags; the
+  // value comes straight off `entry.analysis`, so there is no second copy of what a fact is.
+  columns.push(...featureColumns());
+
   // Per place: the fastest way there, and then each mode on its own.
   //
   // The fastest is what you want while scanning, and it is the only one on by default. The single
@@ -461,10 +516,10 @@ function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
       // problem. Red first, so the sort puts the ones to rule out at one end.
       key: 'flags',
       label: 'Against it',
-      value: (e) => worstSeverity(problems(e)),
+      value: (e) => worstSeverity(problems(e, prefs)),
       bigIsBetter: true,
       render: (e) => {
-        const flags = problems(e);
+        const flags = problems(e, prefs);
         if (flags.length === 0) return <span className="dim compare-clear">nothing</span>;
         // Rings without the scale here: the column repeats down every row, so the reader learns
         // the mark once and then only needs to compare how full the rings are.
@@ -488,6 +543,114 @@ function buildColumns(places: Place[], twins: Map<string, string[]>): Column[] {
   return columns;
 }
 
+
+/** The analysis features as neutral, sortable columns. All off by default (`offByDefault`), so they
+ *  live in the Columns picker and never widen the table unasked. Each reads one field off
+ *  `entry.analysis` — the same fields `flagsFor` reads — and sorts big-is-better (has it / more of it
+ *  at the top). A listing with no analysis, or a field the model left null, gets a dash, never a
+ *  false "no". */
+function featureColumns(): Column[] {
+  const has = (v: boolean | null | undefined): number | null => (v == null ? null : v ? 1 : 0);
+  return [
+    {
+      key: 'dishwasher',
+      label: 'Dishwasher',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => has(e.analysis?.hasDishwasher),
+      render: (e) => yesNo(e.analysis?.hasDishwasher),
+    },
+    {
+      key: 'bathtub',
+      label: 'Bathtub',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => has(e.analysis?.hasBathtub),
+      render: (e) => yesNo(e.analysis?.hasBathtub),
+    },
+    {
+      // Ranked in-unit > in-building > none, which is the order you would rather have it.
+      key: 'laundry',
+      label: 'Laundry',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => LAUNDRY_RANK[e.analysis?.laundry ?? 'unknown'] ?? null,
+      render: (e) => e.analysis?.laundry ?? dash(),
+    },
+    {
+      key: 'outdoor',
+      label: 'Outdoor',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => {
+        const a = e.analysis;
+        if (!a || a.hasOutdoorSpace == null) return null;
+        if (a.hasOutdoorSpace === false) return 0;
+        // A measured area sorts above a bare "yes"; a "yes" with no number still beats "no".
+        return a.outdoorSqft ?? 1;
+      },
+      render: (e) => {
+        const a = e.analysis;
+        if (!a || a.hasOutdoorSpace == null) return dash();
+        if (a.hasOutdoorSpace === false) return <span className="dim">none</span>;
+        return [a.outdoorKind ?? 'yes', a.outdoorSqft != null ? `${a.outdoorSqft} sq ft` : null]
+          .filter(Boolean)
+          .join(' · ');
+      },
+    },
+    {
+      key: 'light',
+      label: 'Light',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => LIGHT_RANK[e.analysis?.naturalLight ?? 'unknown'] ?? null,
+      render: (e) => e.analysis?.naturalLight ?? dash(),
+    },
+    {
+      // The single largest habitable room — the "great room" a hunt can set a bar for in settings.
+      key: 'biggest-room',
+      label: 'Biggest room',
+      numeric: true,
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => e.analysis?.biggestRoomSqft ?? null,
+      render: (e) => {
+        const sqft = e.analysis?.biggestRoomSqft;
+        return sqft == null ? dash() : `${sqft} sq ft`;
+      },
+    },
+  ];
+}
+
+const LAUNDRY_RANK: Record<string, number> = { 'in-unit': 2, 'in-building': 1, none: 0 };
+const LIGHT_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
+
+/** A neutral present/absent cell for a boolean fact: a tick for yes, a muted "no" for no, a dash for
+ *  unknown — the last never reads as a "no". */
+function yesNo(value: boolean | null | undefined): React.ReactNode {
+  if (value == null) return dash();
+  return value ? <span className="compare-clear">✓</span> : <span className="dim">no</span>;
+}
+
+/** The verdict score as a table column — P(yes) under the current model, drawn with the same badge
+ *  the cards use so the two surfaces read as one number. Sorts big-first (most likely yes at the
+ *  top) and surfaces the model/rating disagreements with the ⚡ mark, exactly as `isSurprise`
+ *  defines them. A flat with no score yet (no model, or unscorable) gets a dash, never a zero —
+ *  the same rule the other columns follow. */
+function scoreColumnDef(scores: Map<string, number>): Column {
+  return {
+    key: 'score',
+    label: 'Score',
+    numeric: true,
+    bigIsBetter: true,
+    value: (e) => scores.get(e.rightmoveId) ?? null,
+    render: (e) => {
+      const s = scores.get(e.rightmoveId);
+      if (s === undefined) return dash('No score for this flat yet — rerun ratings.');
+      return <ScoreBadge score={s} surprise={isSurprise(e, s)} />;
+    },
+  };
+}
 
 /** The quickest way to a place, by the same rules every other view uses. Which mode it is matters
  *  less in a table than how long it takes — you want to know whether this flat is far. */
@@ -571,8 +734,8 @@ function forPlace(entry: ShortlistEntry, placeId: string, travel: Record<string,
    is no second copy of that logic here to drift from the price feature the score is fitted on. */
 
 /** Only the problems, from the one definition in facts.ts. */
-function problems(entry: ShortlistEntry): Flag[] {
-  return problemsOnly(flagsFor({ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }));
+function problems(entry: ShortlistEntry, prefs?: HuntPreferences): Flag[] {
+  return problemsOnly(flagsFor({ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }, prefs));
 }
 
 /** A blank cell should say "we don't know", not look like a zero. */

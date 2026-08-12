@@ -382,3 +382,42 @@
 /* The look of a toast is shared — see components/toast.css. Only the stack's geometry is
    the panel's own: it floats over Rightmove's page, so it needs their z-index ceiling. */
 
+
+/* The "this looks off the market — mark it off?" prompt. Only shown for a love/maybe flat, where
+   auto-withholding the verdict from the model without asking would be presumptuous. A muted card
+   above the rating controls, not a toast: it needs an answer, and a toast times out. */
+.rm-offmarket-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #fff8e6;
+  border: 1px solid #f0d488;
+  border-radius: 8px;
+  color: #5a4a1a;
+}
+
+.rm-offmarket-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.rm-offmarket-confirm-actions button {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid #c9ba8a;
+  background: #fff;
+  color: #5a4a1a;
+}
+
+.rm-offmarket-confirm-actions button:first-child {
+  background: #5a4a1a;
+  border-color: #5a4a1a;
+  color: #fff;
+}
