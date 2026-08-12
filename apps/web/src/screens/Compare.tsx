@@ -10,6 +10,7 @@ import {
   resolveSize,
   worstSeverity,
   type Flag,
+  type HuntPreferences,
 } from '@house-hunt/core';
 import { DEFAULT_SHOWING, duplicateIds, GROUP_LABEL, groupOf, parseMonthlyPrice, sizeOf, type Group } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
@@ -42,6 +43,7 @@ export function Compare({
   columnsKey = 'compare',
   defaultSort = { key: 'price', descending: false },
   scores = null,
+  prefs,
 }: {
   entries: ShortlistEntry[];
   places: Place[];
@@ -73,6 +75,9 @@ export function Compare({
    *  the aid you want, and the sort control already ranks the pile by it. Showing it as a column
    *  there, and nowhere else, is why this is gated rather than a plain column. */
   scores?: Map<string, number> | null;
+  /** This hunt's preferences, so the "Against it" column reflects a must-have absence and the
+   *  great-room bar. Absent everywhere the preferences do not reach — the default flag behaviour. */
+  prefs?: HuntPreferences;
 }) {
   const [showing, setShowing] = useState<Record<Group, boolean>>(DEFAULT_SHOWING);
   const [sort, setSort] = useState<Sort | null>(defaultSort);
@@ -124,7 +129,10 @@ export function Compare({
   // The score is a triage-only column (see the `scores` prop). Anywhere but triage it stays out of
   // the table on purpose, so `buildColumns` is handed the map only there.
   const scoreColumn = columnsKey === 'triage' ? scores : null;
-  const all = useMemo(() => buildColumns(places, twins, scoreColumn), [places, twins, scoreColumn]);
+  const all = useMemo(
+    () => buildColumns(places, twins, scoreColumn, prefs),
+    [places, twins, scoreColumn, prefs],
+  );
   // The first column is the address and never hides — a row you cannot identify is not a row.
   // Before the picker has ever been touched, `chosen` is null and the defaults decide. After, the
   // stored set is the whole answer, so a place added later does not silently appear in a table
@@ -396,6 +404,7 @@ function buildColumns(
   places: Place[],
   twins: Map<string, string[]>,
   scores: Map<string, number> | null = null,
+  prefs?: HuntPreferences,
 ): Column[] {
   const columns: Column[] = [
     {
@@ -507,10 +516,10 @@ function buildColumns(
       // problem. Red first, so the sort puts the ones to rule out at one end.
       key: 'flags',
       label: 'Against it',
-      value: (e) => worstSeverity(problems(e)),
+      value: (e) => worstSeverity(problems(e, prefs)),
       bigIsBetter: true,
       render: (e) => {
-        const flags = problems(e);
+        const flags = problems(e, prefs);
         if (flags.length === 0) return <span className="dim compare-clear">nothing</span>;
         // Rings without the scale here: the column repeats down every row, so the reader learns
         // the mark once and then only needs to compare how full the rings are.
@@ -725,8 +734,8 @@ function forPlace(entry: ShortlistEntry, placeId: string, travel: Record<string,
    is no second copy of that logic here to drift from the price feature the score is fitted on. */
 
 /** Only the problems, from the one definition in facts.ts. */
-function problems(entry: ShortlistEntry): Flag[] {
-  return problemsOnly(flagsFor({ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }));
+function problems(entry: ShortlistEntry, prefs?: HuntPreferences): Flag[] {
+  return problemsOnly(flagsFor({ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }, prefs));
 }
 
 /** A blank cell should say "we don't know", not look like a zero. */

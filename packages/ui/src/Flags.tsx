@@ -1,6 +1,6 @@
 import './flags.css';
 import { Confidence } from './Confidence';
-import { flagsFor, problemsOnly, type Flag, type FlagSource } from '@house-hunt/core';
+import { flagsFor, problemsOnly, type Flag, type FlagSource, type HuntPreferences } from '@house-hunt/core';
 
 /** What the photos say, in one place, drawn the same way everywhere.
  *
@@ -16,8 +16,20 @@ import { flagsFor, problemsOnly, type Flag, type FlagSource } from '@house-hunt/
  *  The confidence rings ride along on any flag the model inferred, because a claim about a flat
  *  you have not seen is worth exactly as much as the evidence behind it. One ring, two or three,
  *  and no words — see Confidence.tsx for why the words had to go. */
-export function Flags({ source, only = 'all' }: { source: FlagSource; only?: 'all' | 'problems' }) {
-  const flags = only === 'problems' ? problemsOnly(flagsFor(source)) : flagsFor(source);
+export function Flags({
+  source,
+  only = 'all',
+  prefs,
+}: {
+  source: FlagSource;
+  only?: 'all' | 'problems';
+  /** This hunt's preferences, so a must-have absence flags red and a great room clears the hunt's
+   *  own bar. Omitted everywhere the preferences do not reach, which is exactly the default
+   *  behaviour. */
+  prefs?: HuntPreferences;
+}) {
+  const all = flagsFor(source, prefs);
+  const flags = only === 'problems' ? problemsOnly(all) : all;
   if (flags.length === 0) return null;
 
   return (

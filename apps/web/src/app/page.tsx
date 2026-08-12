@@ -10,7 +10,7 @@ import { Toasts, useToasts } from '@house-hunt/ui';
 import { Sweep } from '@/screens/Sweep';
 import { duplicateIds, enthusiasm, groupOf, sizeOf, type Group } from '@house-hunt/core';
 import { NoActiveProject, spendSummary, Unauthenticated, type ShortlistEntry } from '@house-hunt/core/db';
-import type { Place, Rating } from '@house-hunt/core';
+import type { HuntPreferences, Place, Rating } from '@house-hunt/core';
 import { HubFact } from '@house-hunt/ui';
 import { Hint } from '@house-hunt/ui';
 import { Flags } from '@house-hunt/ui';
@@ -41,9 +41,11 @@ import {
   useModel,
   useOffMarket,
   usePlaces,
+  useProjectSettings,
   useRate,
   useRetrain,
   useSetOffMarket,
+  useSetProjectSettings,
   useShortlist,
   useSignOut,
 } from '@/lib/queries';
@@ -151,6 +153,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   // happens below, at render, so a score is always the current model's — never stored, never stale.
   const modelQuery = useModel();
   const offMarketQuery = useOffMarket();
+  const settingsQuery = useProjectSettings();
   const retrain = useRetrain();
   const offMarketMutation = useSetOffMarket();
   const [sortMode, setSortMode] = useState<SortMode>('default');
@@ -269,7 +272,8 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       { onError: (e) => push(`Not saved — ${(e as Error).message}`) },
     );
 
-  const cardProps = { places, hubs, twins, rate, scores, offMarket, setOffMarket: setEntryOffMarket };
+  const prefs = settingsQuery.data ?? {};
+  const cardProps = { places, hubs, twins, rate, scores, offMarket, setOffMarket: setEntryOffMarket, prefs };
   const byId = useMemo(() => new Map((entries ?? []).map((e) => [e.rightmoveId, e])), [entries]);
 
   /** Rate everything ticked, in one go.
@@ -443,6 +447,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           entries={entries}
           places={places}
           onOpen={(id) => openCard(id, groupOf(byId.get(id)?.verdicts ?? []))}
+          prefs={prefs}
         />
       )}
 
@@ -658,6 +663,7 @@ function Triage({
           // Triage's table gets the score as a column — the same number the cards and the sort
           // control read. It is deliberately absent from the compare table; see Compare's `scores`.
           scores={cardProps.scores}
+          prefs={cardProps.prefs}
           // Triage decides its own order — newest first, or whichever end of the score the sort
           // control asked for — and a default price sort inside the table would throw that away
           // silently, which is the one thing the "Most likely yes" control must not do. Any column
@@ -685,6 +691,9 @@ interface CardProps {
   /** Each flat's P(yes) under the current model, or null when there is no model. A card shows its
    *  own score as a badge; the triage sort reads the same map. */
   scores: Map<string, number> | null;
+  /** This hunt's preferences, so a card's flags reflect what the hunt must have and where its
+   *  great-room bar sits. Empty until Settings is touched — the default flag behaviour. */
+  prefs: HuntPreferences;
   /** Flats withheld from training (off the market). A love you can no longer act on is still a
    *  love — this only keeps the model from learning it. */
   offMarket: Set<string>;
@@ -731,7 +740,7 @@ function Pile({
  *
  *  A shortlist of seventeen is short. Scrolling past a place you have already decided on is
  *  cheaper than clicking into every one you have not. */
-function Card({ entry, places, hubs, twins, rate, scores, offMarket, setOffMarket, selection }: { entry: ShortlistEntry } & CardProps) {
+function Card({ entry, places, hubs, twins, rate, scores, offMarket, setOffMarket, selection, prefs }: { entry: ShortlistEntry } & CardProps) {
   const group = groupOf(entry.verdicts);
   const alsoAs = twins.get(entry.rightmoveId) ?? [];
   const ticked = selection?.chosen.has(entry.rightmoveId) ?? false;
@@ -821,7 +830,7 @@ function Card({ entry, places, hubs, twins, rate, scores, offMarket, setOffMarke
 
       {/* Cards keep the good news — a bathtub IS the reason you'd look twice — but the rings
           go bare: four flags each shouting "HIGH" is four times the noise for one fact. */}
-      <Flags source={{ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }} />
+      <Flags source={{ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }} prefs={prefs} />
 
       {entry.nearestStations.length > 0 && (
         <div className="stations dim">

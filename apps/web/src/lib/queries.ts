@@ -15,8 +15,10 @@ import {
   listHubs,
   listPlaces,
   getProjectModel,
+  getProjectSettings,
   listOffMarket,
   locateProperties,
+  setProjectSettings,
   NoActiveProject,
   retrainModel,
   setOffMarket,
@@ -26,7 +28,7 @@ import {
   type RetrainResult,
   type ShortlistEntry,
 } from '@house-hunt/core/db';
-import type { AuthState, LabelMode, Rating, TravelTime, Verdict } from '@house-hunt/core';
+import type { AuthState, HuntPreferences, LabelMode, Rating, TravelTime, Verdict } from '@house-hunt/core';
 import { endSession } from './session';
 import { signOutExtension } from './bridge';
 
@@ -79,6 +81,7 @@ export const keys = {
   hubs: ['hubs'] as const,
   model: ['model'] as const,
   offMarket: ['off-market'] as const,
+  settings: ['settings'] as const,
 };
 
 export function useShortlist() {
@@ -121,6 +124,23 @@ export function useSetOffMarket() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.offMarket });
     },
+  });
+}
+
+/** This hunt's preferences — the great-room bar and the must-have/nice-to-have amenities. Read on
+ *  the shortlist so every card and the compare table flag flats against them, and edited on the Your
+ *  Hunt page. Realtime keeps it fresh across laptops. */
+export function useProjectSettings() {
+  return useQuery({ queryKey: keys.settings, queryFn: getProjectSettings });
+}
+
+/** Save the hunt's preferences. Invalidates the settings read so every flag on the page recomputes
+ *  against the new preferences at once. */
+export function useSetProjectSettings() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (preferences: HuntPreferences) => setProjectSettings(preferences),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.settings }),
   });
 }
 

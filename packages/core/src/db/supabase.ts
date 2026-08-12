@@ -36,6 +36,7 @@ import type {
   SpendSummary,
   UsageRow,
 } from '../contracts';
+import type { HuntPreferences } from '../facts';
 import { lookupPostcode, lookupPostcodes } from '../postcode';
 import { MODEL_VERSION, type LabelMode, type Model, type ModelMetrics } from '../predict';
 import type { SearchCard } from '../search-card';
@@ -518,6 +519,33 @@ export async function setOffMarket(rightmoveId: string, off: boolean, reason = '
       .eq('rightmove_id', rightmoveId);
     fail('marking on market', error);
   }
+}
+
+/** This hunt's preferences — a great-room bar and the must-have/nice-to-have amenities — read whole
+ *  and handed to `flagsFor`. Absent (no row yet) is an empty set of preferences, which is the same
+ *  as the default behaviour, so a hunt that never opened Settings sees exactly what it saw before. */
+export async function getProjectSettings(): Promise<HuntPreferences> {
+  const projectId = await activeProjectId();
+  const { data, error } = await db()
+    .from('project_setting')
+    .select('preferences')
+    .eq('project_id', projectId)
+    .maybeSingle();
+  fail('reading hunt preferences', error);
+  return ((data?.preferences as HuntPreferences | undefined) ?? {}) satisfies HuntPreferences;
+}
+
+/** Save this hunt's preferences, replacing the stored set. Member-scoped, like a verdict — anyone in
+ *  the project can adjust what the project is looking for. `updated_by` is pinned to the caller so a
+ *  change records who made it, exactly as the RLS policy requires. */
+export async function setProjectSettings(preferences: HuntPreferences): Promise<void> {
+  const session = await requireSession();
+  const projectId = await activeProjectId();
+  const { error } = await db().from('project_setting').upsert(
+    { project_id: projectId, preferences, updated_by: session.user.id, updated_at: new Date().toISOString() },
+    { onConflict: 'project_id' },
+  );
+  fail('saving hunt preferences', error);
 }
 
 // ------------------------------------------------------------------------------------------------

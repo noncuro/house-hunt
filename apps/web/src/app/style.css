@@ -1289,3 +1289,47 @@ h2 {
   filter: none;
   opacity: 1;
 }
+
+/* Hunt preferences (the "What you're looking for" section on Your Hunt). A great-room toggle with an
+   inline size, then one row per amenity with a three-way must/nice/don't-mind choice reusing the
+   .key / .key-on segmented look the rest of the app uses. */
+.hunt-pref-greatroom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 14px;
+  flex-wrap: wrap;
+}
+
+.hunt-pref-greatroom-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hunt-pref-greatroom-size input {
+  width: 5.5em;
+}
+
+.hunt-pref-amenities {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hunt-pref-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.hunt-pref-name {
+  font-weight: 500;
+}
+
+.hunt-pref-choice {
+  display: inline-flex;
+  gap: 4px;
+}
