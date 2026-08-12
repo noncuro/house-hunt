@@ -1,0 +1,122 @@
+# What can be checked without a saved Rightmove page, which is everything except the two harnesses
+# that read one. See `docs/fixtures.md` for why those are deliberately not here.
+#
+# Three jobs rather than one, because they fail for different reasons and a single red tick that
+# could mean any of them is worth less than three that each name themselves. `check` is seconds and
+# needs nothing; `database` needs a Postgres and pays about a minute for it; `browser` builds the
+# website and drives it, and is the slowest by far.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A second push to the same branch makes the first one's answer irrelevant.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned rather than floating: the local stack's behaviour is version-dependent in ways this repo
+  # has already been bitten by — the CLI maps `[auth.email] enable_signup` onto GoTrue's
+  # EXTERNAL_EMAIL_ENABLED, which is why `supabase/config.toml` says what it says. A CLI that
+  # changed that mapping would change what these checks are testing.
+  SUPABASE_CLI_VERSION: 1.145.4
+
+jobs:
+  # ----------------------------------------------------------------------------------------- #
+  # Lint, typecheck, and every pure function. No Docker, no network, no database.
+  # ----------------------------------------------------------------------------------------- #
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: denoland/setup-deno@v2
+        with:
+          # `check:functions` runs `deno check` over the Edge Functions, which are outside tsc and
+          # oxlint — for a long time nothing checked them at all.
+          deno-version: v2.x
+
+      - run: pnpm check:all
+
+  # ----------------------------------------------------------------------------------------- #
+  # The security boundary and the spend cap, asserted from outside by real clients holding real
+  # JWTs. Deliberately not in `check:all` locally (it must stay Docker-free); here there is a
+  # Docker anyway, so there is no reason to skip it.
+  # ----------------------------------------------------------------------------------------- #
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      # The functions need an environment; the template is committed precisely so this line is all
+      # it takes. Nothing in it is secret — see the file.
+      - run: cp supabase/.env.example supabase/.env
+
+      - run: supabase start
+
+      - run: pnpm check:rls
+      - run: pnpm check:spend
+
+  # ----------------------------------------------------------------------------------------- #
+  # The website in a real browser. The one harness that needs no Rightmove page at all, which is
+  # what makes it the one browser check that can live here.
+  # ----------------------------------------------------------------------------------------- #
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - run: cp supabase/.env.example supabase/.env
+      - run: supabase start
+
+      # Chromium and its libraries. `--with-deps` matters on a bare runner: without the system
+      # packages the browser launches and then dies on a missing shared object, which surfaces as a
+      # timeout rather than as anything about a missing library.
+      - run: pnpm exec playwright install --with-deps chromium
+
+      - run: pnpm smoke:web
+
+      # The screenshots are most of how you read a browser failure — "2 cards, expected 3" tells
+      # you a number, and the picture tells you which two.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-web-screenshots
+          path: .fixtures/shots/
+          if-no-files-found: warn

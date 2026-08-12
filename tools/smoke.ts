@@ -13,12 +13,14 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium, type ConsoleMessage } from 'playwright';
 import {
+  extensionLog,
   FIXTURE_EMAIL,
   plantSession,
   projectHasListing,
   seedFixture,
   smokeBuild,
 } from './fixture-session';
+import { listingFromHtml } from './read-listing';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 
 const { path: EXTENSION, allowedHosts: ALLOWED_HOSTS } = smokeBuild();
@@ -34,12 +36,27 @@ const url = `https://www.rightmove.co.uk/properties/${listingId}`;
 
 mkdirSync(SHOTS, { recursive: true });
 
+// Read the listing here, from the same extractor the content script uses, so the fixture can put
+// this postcode's journeys and station walks in the cache before the panel asks for them. Without
+// it the panel goes to the `travel` Edge Function, which no harness runs, and hangs on "Working…"
+// until the settle timeout — reported as "panel never left its loading state", which reads as a
+// broken panel rather than as a missing backend.
+const listing = listingFromHtml(fixturePath, url);
+const alsoCache =
+  listing.postcode === null
+    ? []
+    : [{ postcode: listing.postcode, stations: listing.nearestStations.map((s) => s.name) }];
+if (alsoCache.length === 0) {
+  console.warn('this listing has no postcode, so travel cannot be pre-cached — expect a slow panel');
+}
+
 // A listing the fixture project has never opened, which is exactly the case worth having here:
 // recording it exercises `record_property`, whose job is to create the `project_property` link and
 // the `property` row in one transaction. The two-step version that preceded it made every
 // genuinely new listing unrecordable and passed every test, because every test listing already
-// existed (design D15).
-const fixture = await seedFixture();
+// existed (design D15). `alsoCache` also clears any row a previous run left behind, so the "first
+// time" this claims is really the first time.
+const fixture = await seedFixture({ alsoCache });
 console.log(`fixture: signed in as ${FIXTURE_EMAIL}, opening listing ${listingId} for the first time`);
 
 const context = await chromium.launchPersistentContext('', {
@@ -163,6 +180,22 @@ try {
   console.log(`recorded into the house hunt: ${linked}`);
   if (!linked) problems.push(`opening ${listingId} did not link it to the project — record_property refused`);
   console.log(offline());
+
+  // Only on the way out, and only when something is already wrong: the reason a write was refused
+  // lives in the worker, and printing it unconditionally would bury the panel text this harness
+  // exists to show.
+  // `SMOKE_LOG=all` widens it to every line the worker recorded, which is how you tell "the write
+  // was refused" from "the write was never attempted" — the two look identical from the outside.
+  if (problems.length > 0 || process.env.SMOKE_LOG === 'all') {
+    const lines = await extensionLog(
+      worker,
+      process.env.SMOKE_LOG === 'all' ? { levels: ['info', 'warn', 'error'] } : {},
+    );
+    console.error(
+      '\n--- extension log (warnings and errors) ---\n' +
+        (lines.length > 0 ? lines.join('\n') : '(nothing — the worker recorded no complaint)'),
+    );
+  }
 } finally {
   await context.close();
 }

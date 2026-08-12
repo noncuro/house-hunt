@@ -117,12 +117,32 @@ pnpm fixture <id>              && pnpm check:extractor .fixtures/<id>.html
 pnpm fixture:search <hub>      && pnpm check:sweep .fixtures/search-<hub>.html
 ```
 
-Browser smoke (Playwright loads the built extension; screenshots in `.fixtures/shots/`):
-`pnpm smoke <fixture>` (the listing panel) and `smoke:search` (the search badges and sweep panel —
-the one harness that writes). The website's own shortlist and fill-in run have no browser smoke
-since the app moved off the extension — see `TODO.md`. Harness rules live in `tools/offline.ts` and
-the harness files; the cross-cutting one: no harness may reach Rightmove (`OFFLINE_ARGS` kills DNS
-for the domain).
+Browser smoke (Playwright; screenshots in `.fixtures/shots/`). All three sign a fixture user in
+against the local stack — `tools/fixture-session.ts` is the seed and says why a signed-in harness
+has to be a local-stack one:
+
+| Command | What it drives | Needs a saved page |
+|---|---|---|
+| `pnpm smoke <fixture>` | The listing panel, in the built extension, on a real listing | yes |
+| `pnpm smoke:search` | Search badges and the sweep panel — the one harness that writes | yes |
+| `pnpm smoke:web` | The website: shortlist, compare, map, triage | **no** |
+
+`smoke:web` serves the **production** build, not `next dev`: the app ships a CSP with no
+`unsafe-eval` and React's dev build needs `eval()`, so under `next dev` the bundle dies on load and
+renders nothing. It also serves the Edge Functions itself (`functions serve --env-file
+supabase/.env`) because the runtime `supabase start` brings up has no environment, and without
+`WEB_APP_ORIGIN` every travel call is refused by CORS and the page spins forever. Needing no
+Rightmove page is what makes it the browser check CI can run.
+
+Harness rules live in `tools/offline.ts` and the harness files; the cross-cutting one: no harness
+may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain). `SMOKE_LOG=all` widens the output —
+on `smoke` it dumps the extension's own diagnostic ring buffer, which is how you tell a write that
+was refused from one that was never attempted.
+
+**Standing a fresh machine up, and where the fixtures come from: `docs/fixtures.md`.** It also
+says why the saved Rightmove pages are deliberately *not* committed — a frozen fixture answers
+"do we still parse last month's page", green, while the live one drifts — and what CI runs
+instead (`.github/workflows/check.yml`: `check:all`, `check:rls`, `check:spend`, `smoke:web`).
 
 ## Debugging
 
