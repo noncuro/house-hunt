@@ -39,8 +39,17 @@ export const FIXTURE_PROJECT = '00000000-0000-4000-b000-0000000000f1';
 export const FIXTURE_EMAIL = 'smoke-fixture@example.test';
 export const FIXTURE_NAME = 'Smoke Fixture';
 const OTHER_EMAIL = 'smoke-fixture-two@example.test';
-const OTHER_NAME = 'The Other One';
+/** Exported so a harness can assert the members list really lists both people rather than just the
+ *  one whose session it is holding. */
+export const OTHER_NAME = 'The Other One';
 const PASSWORD = 'smoke-fixture-password-6c2d';
+
+/** The address `smoke:web` invites and then redeems — the only account in this fixture that is not
+ *  created by the service role, because being created the way a real person's is is the point of
+ *  it. Torn down with the others, so the run after this one invites a stranger again rather than
+ *  somebody who already has an account (which is a different, and separately correct, refusal). */
+export const REDEEM_EMAIL = 'smoke-fixture-invitee@example.test';
+export const REDEEM_PASSWORD = 'smoke-fixture-invitee-9d41';
 /** Every row this fixture owns is named so, so tearing down is a prefix match rather than a list
  *  that drifts out of date and leaves rows behind for the next run to trip over. */
 const PREFIX = 'smokefix-';
@@ -239,9 +248,10 @@ async function tearDown(alsoCache: ExtraCache[] = []): Promise<void> {
   await db.from('travel_time').delete().in('origin_postcode', postcodes);
   await db.from('station_walk').delete().in('postcode', postcodes);
 
+  const owned = new Set([FIXTURE_EMAIL, OTHER_EMAIL, REDEEM_EMAIL]);
   const { data } = await db.auth.admin.listUsers({ perPage: 1000 });
   for (const user of data?.users ?? []) {
-    if (user.email === FIXTURE_EMAIL || user.email === OTHER_EMAIL) await db.auth.admin.deleteUser(user.id);
+    if (user.email && owned.has(user.email)) await db.auth.admin.deleteUser(user.id);
   }
 }
 
@@ -556,6 +566,37 @@ export async function extensionLog(
       }
       return `${e.level.toUpperCase()} [${e.scope}] ${e.message}${detail}`;
     });
+}
+
+/** Invite somebody, and get the code back in the clear.
+ *
+ *  Through the `invite` Edge Function rather than by writing a row, because the code is the whole
+ *  point and the row never holds it: `create_invite` is given a *hash*, and the plaintext exists
+ *  for exactly one moment, in that function's reply. A fixture that inserted its own invite row
+ *  would have to hash a code itself, and would then be testing its own hashing rather than the
+ *  path a real invite takes.
+ *
+ *  The address is deliberately a parameter with no default. This mints a real invite against the
+ *  fixture project, and the caller is the one who knows whether it is about to redeem it. */
+export async function createInvite(
+  session: Session,
+  email: string,
+): Promise<{ status: string; code: string | null }> {
+  const response = await fetch(`${url}/functions/v1/invite`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: anonKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ email, projectId: FIXTURE_PROJECT }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`fixture: inviting ${email}: HTTP ${response.status} ${await response.text()}`);
+  }
+  const reply = (await response.json()) as { status?: string; code?: string };
+  return { status: reply.status ?? 'unknown', code: reply.code ?? null };
 }
 
 export interface FixtureHub {

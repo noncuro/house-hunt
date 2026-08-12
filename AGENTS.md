@@ -125,7 +125,11 @@ has to be a local-stack one:
 |---|---|---|
 | `pnpm smoke <fixture>` | The listing panel, in the built extension, on a real listing | yes |
 | `pnpm smoke:search` | Search badges and the sweep panel — the one harness that writes | yes |
-| `pnpm smoke:web` | The website: shortlist, compare, map, triage | **no** |
+| `pnpm smoke:web` | The website: shortlist, compare, map, triage, the other tabs, and joining | **no** |
+
+`pnpm smoke:all` runs all three cheapest-first, stops at the first failure, and prints timings;
+`pnpm smoke:all web search` runs a subset. Within one harness the rule is the opposite — every
+problem is collected and reported together.
 
 `smoke:web` serves the **production** build, not `next dev`: the app ships a CSP with no
 `unsafe-eval` and React's dev build needs `eval()`, so under `next dev` the bundle dies on load and
@@ -138,6 +142,10 @@ Harness rules live in `tools/offline.ts` and the harness files; the cross-cuttin
 may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain). `SMOKE_LOG=all` widens the output —
 on `smoke` it dumps the extension's own diagnostic ring buffer, which is how you tell a write that
 was refused from one that was never attempted.
+
+**What is and is not covered, with timings and what to build next: `docs/coverage.md`.** Read it
+before adding a check — the gaps are ranked, and the biggest is that almost every *write* is
+asserted up to the button and no further.
 
 **Standing a fresh machine up, and where the fixtures come from: `docs/fixtures.md`.** It also
 says why the saved Rightmove pages are deliberately *not* committed — a frozen fixture answers

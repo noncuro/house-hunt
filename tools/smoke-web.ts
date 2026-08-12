@@ -20,7 +20,15 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { chromium, type ConsoleMessage, type Page } from 'playwright';
-import { FIXTURE_EMAIL, FIXTURE_NAME, seedFixture } from './fixture-session';
+import {
+  createInvite,
+  FIXTURE_EMAIL,
+  FIXTURE_NAME,
+  OTHER_NAME,
+  REDEEM_EMAIL,
+  REDEEM_PASSWORD,
+  seedFixture,
+} from './fixture-session';
 import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 
@@ -51,11 +59,12 @@ console.log(
 const functions = await startFunctions();
 const server = await startWebApp();
 
-const context = await chromium.launchPersistentContext('', {
-  headless: true,
-  viewport: { width: 1280, height: 1000 },
-  args: OFFLINE_ARGS,
-});
+// A browser with two contexts rather than one persistent context, because the redeem check at the
+// bottom needs a browser that is genuinely signed out. `localStorage` is per origin and shared by
+// every page in a context, so planting the session anywhere would be visible everywhere — the two
+// halves have to be separate contexts or the second one is testing a signed-in browser.
+const browser = await chromium.launch({ headless: true, args: OFFLINE_ARGS });
+const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
 
 try {
   // Before the app's own scripts run, so the client finds a session the moment it is constructed
@@ -178,9 +187,53 @@ try {
     note(`triage's card layout shows ${triageCards}; the fixture has ${fixture.unratedCount} unrated`);
   }
 
+  // ----------------------------------------------------------------------------------------- //
+  // The remaining tabs. Shallow on purpose — each is one navigation and one landmark, which is
+  // enough to catch the failure these actually have: a screen that throws on mount, or renders its
+  // frame around a query that errored, and so appears as a heading with nothing under it. A tab
+  // that has never been opened by anything is the one that breaks silently for a month.
+  //
+  // Settings and Project also read the fixture's own rows, so the landmark is a value rather than a
+  // heading wherever there is one to name: `Work` is a place this fixture created, and the two
+  // members are the two accounts it created.
+  // ----------------------------------------------------------------------------------------- //
+  for (const [view, landmarks] of [
+    // `The in-laws` rather than `Work`: this is matched against the whole tab's text, and "Work" is
+    // inside "Working…", so it would report a screen still loading as a screen that had rendered
+    // its places.
+    ['settings', ['Places we measure against', 'The in-laws', 'Neighbourhoods we search', 'Hampstead']],
+    ['project', ['Who is in it', OTHER_NAME, 'Invite someone']],
+    ['sweep', ['Scan']],
+    ['install', ['Install the browser extension']],
+  ] as const) {
+    await openView(page, view);
+    // Case-insensitively, because `innerText` returns text as *rendered* and these headings are
+    // uppercased in CSS. Matching the source's capitalisation reported every one of them missing
+    // from a screen that was drawing them perfectly well.
+    const text = (await page.locator('.wrap').innerText()).toLowerCase();
+    const missing = landmarks.filter((l) => !text.includes(l.toLowerCase()));
+    console.log(`${view}: ${missing.length === 0 ? 'ok' : `missing ${missing.join(', ')}`}`);
+    for (const l of missing) note(`the ${view} tab never rendered "${l}"`);
+    await page.screenshot({ path: resolve(SHOTS, `web-${view}.png`), fullPage: true });
+  }
+
   console.log(offline());
+
+  // ----------------------------------------------------------------------------------------- //
+  // Joining. The nearest thing this product has to signing up, and until now the only path into it
+  // that nothing exercised: an invite is minted, the code is typed in with a chosen password, and
+  // the account that comes out is the caller's own.
+  //
+  // Worth having as a browser check rather than as a call to the function, because it is four
+  // things in a row that each look fine alone — `create_invite` mints and hashes, `redeem_code`
+  // checks the code against the address, the `password` function makes the account (it is the only
+  // unauthenticated endpoint in the system), and `consume_invites()` turns the invite into a
+  // membership at exactly one moment. A break anywhere in that chain leaves an invited person
+  // holding an account in no project, which is a state the shortlist has a screen for and nobody
+  // would otherwise notice.
+  await checkJoining();
 } finally {
-  await context.close();
+  await browser.close();
   server.kill('SIGTERM');
   functions.kill('SIGTERM');
 }
@@ -192,6 +245,73 @@ if (problems.length > 0) {
 console.log('\nok');
 
 // --------------------------------------------------------------------------------------------- //
+
+/** Invite somebody, redeem the code in a signed-out browser, and end up in the house hunt. */
+async function checkJoining(): Promise<void> {
+  const invite = await createInvite(fixture.session, REDEEM_EMAIL);
+  if (invite.status !== 'invited' || !invite.code) {
+    note(`inviting ${REDEEM_EMAIL} answered "${invite.status}" with no code — nothing to redeem`);
+    return;
+  }
+  console.log(`invited ${REDEEM_EMAIL}, code ${invite.code}`);
+
+  // Its own context: no planted session, so this is the screen a person actually arrives on.
+  const fresh = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const offline = await keepOffline(fresh, {
+    allow: [ORIGIN, supabaseUrl, 'https://tile.openstreetmap.org/'],
+  });
+  const page = await fresh.newPage();
+  page.on('pageerror', (e) => note(`pageerror (joining): ${e.message}`));
+
+  try {
+    await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
+    await page.locator('.signin').waitFor({ timeout: 60_000 });
+
+    // Signing in is the default door; redeeming is the other one. If this button is ever renamed
+    // the check should fail rather than quietly fill the sign-in form with a code it has nowhere
+    // to put — hence matching the words a person reads.
+    await page.getByRole('button', { name: 'I have an invite code' }).click();
+
+    await page.locator('.signin input[type="email"]').fill(REDEEM_EMAIL);
+    await page.locator('.signin input[type="password"]').fill(REDEEM_PASSWORD);
+    await page.locator('.signin input[placeholder="ABCD-EFGH-JKMN"]').fill(invite.code);
+    await page.locator('.signin button.primary').click();
+
+    // Wait for the sign-in screen to *go*, which is the only signal that means what it says.
+    // Redeeming deliberately does not mint a session — the screen signs in straight afterwards with
+    // the password just chosen — so this is two round trips through two Edge Functions, and neither
+    // the spinner class `settle()` watches nor a success notice ever appears. Waiting on anything
+    // else reads the button mid-flight, still saying "Checking…", and calls it a failure.
+    await page
+      .locator('.signin')
+      .waitFor({ state: 'detached', timeout: 60_000 })
+      .catch(() => {});
+    await settle(page);
+
+    if (await page.locator('.signin').count()) {
+      const said = (await page.locator('.notice').allInnerTexts().catch(() => [])).join(' | ');
+      note(`redeeming an invite left the sign-in screen up — ${said || 'with nothing said'}`);
+      await page.screenshot({ path: resolve(SHOTS, 'web-join-failed.png'), fullPage: true });
+      return;
+    }
+
+    // Signed in — but a redeemed invite that did not become a *membership* leaves an account in no
+    // project, which renders as its own screen and is exactly what `consume_invites()` exists to
+    // prevent. That is the half worth asserting.
+    if (await page.locator('[data-testid="no-project"]').count()) {
+      note('the invitee signed in but is in no house hunt — consume_invites did not run');
+    }
+    const text = await page.locator('.wrap').innerText();
+    if (!text.includes('Smoke fixture hunt')) {
+      note('the invitee is signed in but not in the project they were invited to');
+    }
+    console.log('joining: invited, redeemed, signed in, and in the house hunt');
+    await page.screenshot({ path: resolve(SHOTS, 'web-joined.png'), fullPage: true });
+    console.log(offline());
+  } finally {
+    await fresh.close();
+  }
+}
 
 /** Serve the Edge Functions with an environment, and wait until they will talk to us.
  *

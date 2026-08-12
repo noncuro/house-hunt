@@ -35,6 +35,7 @@
     "smoke": "tsx tools/smoke.ts",
     "smoke:search": "tsx tools/smoke-search.ts",
     "smoke:web": "tsx tools/smoke-web.ts",
+    "smoke:all": "tsx tools/smoke-all.ts",
     "build:smoke": "tsx tools/build-smoke.ts",
     "find:locations": "tsx tools/find-locations.ts",
     "fixture": "tsx tools/fixture-listing.ts",
