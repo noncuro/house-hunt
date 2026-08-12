@@ -104,6 +104,11 @@ enable_manual_linking = false
 [auth.email]
 # TRUE, and it has to be on this CLI, which is the opposite of what it looks like.
 #
+# First, the thing that makes this safe at all: **this file configures the local stack and nothing
+# else.** There is no `supabase config push` in this CLI (1.145.4) — the command does not exist —
+# so nothing here can reach the hosted project, which is configured in the dashboard. Every line in
+# this file is a statement about a container on somebody's laptop or on a CI runner.
+#
 # In the hosted project the email provider genuinely has its own signup switch and it must be off.
 # The CLI does not have that switch: version 1.145.4 maps this single field onto GoTrue's
 # `EXTERNAL_EMAIL_ENABLED`, which governs email *login*, not email signup. Setting it false turns
