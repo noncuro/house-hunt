@@ -23,6 +23,7 @@ import {
 import { listingFromHtml } from './read-listing';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 import { startFunctions } from './edge-functions';
+import { stopTree } from './servers';
 import { localCredentials } from './supabase-local';
 
 const { path: EXTENSION, allowedHosts: ALLOWED_HOSTS } = smokeBuild();
@@ -76,6 +77,16 @@ console.log(`fixture: signed in as ${FIXTURE_EMAIL}, opening listing ${listingId
 // Before the browser: the panel asks for travel the moment it renders, and a function that comes
 // up late is a panel that has already given up.
 const functions = await startFunctions({ supabaseUrl: localCredentials().url });
+
+// The function server runs in a process group of its own so that stopping it stops the server
+// under the `supabase` wrapper too, which means Ctrl-C no longer reaches it through the terminal.
+// Passed on here, or giving up on a run is the way to leave one behind.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    stopTree(functions);
+    process.exit(130);
+  });
+}
 
 const context = await chromium.launchPersistentContext('', {
   // Extensions need a real browser context; the headless shell cannot load them.
@@ -221,7 +232,7 @@ try {
   try {
     await context.close();
   } finally {
-    functions.kill('SIGTERM');
+    stopTree(functions);
   }
 }
 

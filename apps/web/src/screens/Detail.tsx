@@ -95,6 +95,19 @@ export function Detail({
           <p className="dim">No postcode on this listing.</p>
         ) : places.length === 0 ? (
           <p className="dim">Add places in Settings.</p>
+        ) : travelQuery.isError ? (
+          // A refusal is not a wait. `travel` is `data ?? null`, and `data` stays undefined when the
+          // query fails, so every failure used to render as "Working…" — a spinner that never
+          // stops, which reads as a slow network rather than as something that already gave up and
+          // is never coming back.
+          //
+          // That was not hypothetical. The Edge Functions did not allow the `x-client-info` header
+          // supabase-js puts on every request, so the browser refused each travel call at the
+          // preflight, and every card on the deployed site sat on "Working…" indefinitely. The
+          // header is fixed, and this is the half that would have said so on day one.
+          <p className="error">
+            Could not work out travel times — {travelQuery.error instanceof Error ? travelQuery.error.message : 'the request failed'}.
+          </p>
         ) : travel === null ? (
           <p className="dim working">Working…</p>
         ) : (

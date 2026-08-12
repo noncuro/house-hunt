@@ -49,6 +49,12 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   `packages/core/src/facts.ts`. Never re-implement a fact in a view.
 - **Only `background.ts` constructs a Supabase client** (extension side). One session holder is
   what keeps an MV3 session alive; `pnpm check:one-client` enforces it.
+- **Rightmove's own mark may be used on the buttons that go to Rightmove**, and nowhere else. It
+  labels an outbound link with the thing it opens, which is what a trademark is for, and it is the
+  owner's decision on the owner's product. What stays forbidden is unchanged and is a different
+  question: **listing photos and floorplans are never re-hosted.** Those are shown from Rightmove's
+  own CDN URLs, which is why `.fixtures/` is gitignored and why every harness answers image
+  requests from memory rather than saving them.
 
 ## Architecture map
 
@@ -131,6 +137,14 @@ has to be a local-stack one:
 `pnpm smoke:all web search` runs a subset. Within one harness the rule is the opposite — every
 problem is collected and reported together.
 
+`smoke:web` takes names too, one level down: `pnpm smoke:web list rating` runs those sections and
+`pnpm smoke:web joining` runs that one, in the order the file declares them (`session`, `list`,
+`rating`, `table`, `map`, `triage`, `tabs`, `refusals`, `joining`). The setup is not optional — the
+fixture, the Edge Functions and a production build of the website happen either way — so a subset
+saves the browser work and a few seconds of a forty-second run, which is the difference worth having
+while you iterate on one assertion. A name that matches no section stops the run and prints the
+list, as `smoke:all` does with harnesses.
+
 `smoke:web` serves the **production** build, not `next dev`: the app ships a CSP with no
 `unsafe-eval` and React's dev build needs `eval()`, so under `next dev` the bundle dies on load and
 renders nothing. Needing no Rightmove page is what makes it the browser check CI can run.
@@ -142,6 +156,16 @@ spins forever. `smoke` did not, and passed anyway whenever a server left over fr
 happened to be answering — a green tick that turns red on a clean machine with a message about a
 spinner. Its readiness probe is origin-matched for the same reason: Kong answers the CORS preflight
 204 by itself with nothing behind it, so "did anything reply" stays green with no backend at all.
+
+**A harness owns the servers it starts, and refuses the ones it did not** (`tools/servers.ts`).
+Both are spawned in a process group of their own and stopped as a group: `pnpm exec next start` is
+two processes, and signalling the wrapper alone left the website holding 3199 after the harness had
+exited, which the next run then asserted against — green, about a build from another branch, and
+visible only as a page stuck on "Working…" or a connection refused halfway through. The group means
+Ctrl-C no longer reaches them through the terminal, so both harnesses pass the interrupt on. Before
+starting, `smoke:web` checks that 3199 is free and stops with the port and a `lsof` line if it is
+not, and `startFunctions` says so when another `supabase functions serve` is already running rather
+than letting the two take turns holding the container.
 
 Harness rules live in `tools/offline.ts` and the harness files; the cross-cutting one: no harness
 may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain). `SMOKE_LOG=all` widens the output —
