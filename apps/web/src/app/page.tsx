@@ -335,7 +335,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         </div>
         <div className="views">
           <button className={view === 'list' ? 'view view-on' : 'view'} onClick={() => setView('list')}>
-            List
+            Shortlist
           </button>
           <button className={view === 'table' ? 'view view-on' : 'view'} onClick={() => setView('table')}>
             Compare
@@ -362,7 +362,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
             title="Who is in this house hunt, and who has been asked"
             onClick={() => setView('project')}
           >
-            House hunt
+            Your Hunt
           </button>
           <button
             className={view === 'install' ? 'view view-on' : 'view'}

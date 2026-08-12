@@ -483,6 +483,12 @@ function buildColumns(
   // else keeps it out of the compare table entirely.
   if (scores) columns.splice(1, 0, scoreColumnDef(scores));
 
+  // The analysis-derived features, each its own sortable column but every one off by default so the
+  // table does not arrive nine columns wider — turn on the ones a hunt cares about from the Columns
+  // picker. These are the neutral column form of the same fields `facts.ts` turns into flags; the
+  // value comes straight off `entry.analysis`, so there is no second copy of what a fact is.
+  columns.push(...featureColumns());
+
   // Per place: the fastest way there, and then each mode on its own.
   //
   // The fastest is what you want while scanning, and it is the only one on by default. The single
@@ -528,6 +534,94 @@ function buildColumns(
   return columns;
 }
 
+
+/** The analysis features as neutral, sortable columns. All off by default (`offByDefault`), so they
+ *  live in the Columns picker and never widen the table unasked. Each reads one field off
+ *  `entry.analysis` — the same fields `flagsFor` reads — and sorts big-is-better (has it / more of it
+ *  at the top). A listing with no analysis, or a field the model left null, gets a dash, never a
+ *  false "no". */
+function featureColumns(): Column[] {
+  const has = (v: boolean | null | undefined): number | null => (v == null ? null : v ? 1 : 0);
+  return [
+    {
+      key: 'dishwasher',
+      label: 'Dishwasher',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => has(e.analysis?.hasDishwasher),
+      render: (e) => yesNo(e.analysis?.hasDishwasher),
+    },
+    {
+      key: 'bathtub',
+      label: 'Bathtub',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => has(e.analysis?.hasBathtub),
+      render: (e) => yesNo(e.analysis?.hasBathtub),
+    },
+    {
+      // Ranked in-unit > in-building > none, which is the order you would rather have it.
+      key: 'laundry',
+      label: 'Laundry',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => LAUNDRY_RANK[e.analysis?.laundry ?? 'unknown'] ?? null,
+      render: (e) => e.analysis?.laundry ?? dash(),
+    },
+    {
+      key: 'outdoor',
+      label: 'Outdoor',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => {
+        const a = e.analysis;
+        if (!a || a.hasOutdoorSpace == null) return null;
+        if (a.hasOutdoorSpace === false) return 0;
+        // A measured area sorts above a bare "yes"; a "yes" with no number still beats "no".
+        return a.outdoorSqft ?? 1;
+      },
+      render: (e) => {
+        const a = e.analysis;
+        if (!a || a.hasOutdoorSpace == null) return dash();
+        if (a.hasOutdoorSpace === false) return <span className="dim">none</span>;
+        return [a.outdoorKind ?? 'yes', a.outdoorSqft != null ? `${a.outdoorSqft} sq ft` : null]
+          .filter(Boolean)
+          .join(' · ');
+      },
+    },
+    {
+      key: 'light',
+      label: 'Light',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => LIGHT_RANK[e.analysis?.naturalLight ?? 'unknown'] ?? null,
+      render: (e) => e.analysis?.naturalLight ?? dash(),
+    },
+    {
+      // The single largest habitable room — the "great room" a hunt can set a bar for in settings.
+      key: 'biggest-room',
+      label: 'Biggest room',
+      numeric: true,
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => e.analysis?.biggestRoomSqft ?? null,
+      render: (e) => {
+        const sqft = e.analysis?.biggestRoomSqft;
+        return sqft == null ? dash() : `${sqft} sq ft`;
+      },
+    },
+  ];
+}
+
+const LAUNDRY_RANK: Record<string, number> = { 'in-unit': 2, 'in-building': 1, none: 0 };
+const LIGHT_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
+
+/** A neutral present/absent cell for a boolean fact: a tick for yes, a muted "no" for no, a dash for
+ *  unknown — the last never reads as a "no". */
+function yesNo(value: boolean | null | undefined): React.ReactNode {
+  if (value == null) return dash();
+  return value ? <span className="compare-clear">✓</span> : <span className="dim">no</span>;
+}
 
 /** The verdict score as a table column — P(yes) under the current model, drawn with the same badge
  *  the cards use so the two surfaces read as one number. Sorts big-first (most likely yes at the
