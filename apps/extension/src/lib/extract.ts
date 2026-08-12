@@ -10,6 +10,7 @@ const SQM_TO_SQFT = 10.7639;
 export function toListing(property: Record<string, unknown>, url: string): Listing {
   const id = property.id;
   if (id === undefined || id === null || String(id).length === 0) {
+    if (isWithdrawn(property)) throw new ListingWithdrawn();
     throw new Error('listing has no id');
   }
 
@@ -154,6 +155,29 @@ function floorplans(v: unknown): Floorplan[] {
     const url = str(f?.url);
     return url === null ? [] : [{ url, caption: str(f?.caption) }];
   });
+}
+
+/** The listing is gone, rather than unreadable. Its own class because the two need different
+ *  sentences and different consequences: a page we cannot parse is our problem and sends you to
+ *  `decode_page_model.py`, while a flat the agent has taken down is a fact about the flat. */
+export class ListingWithdrawn extends Error {
+  constructor() {
+    super('this listing has been removed from Rightmove');
+  }
+}
+
+/** Rightmove answers a withdrawn listing with HTTP 404 and a full page that says "This property has
+ *  been removed by the agent". `window.__PAGE_MODEL` is still there — which is why this is not
+ *  caught upstream — but hollowed out: `propertyData` keeps `customer` and `propertyUrls` and
+ *  nothing else, with `id`, `status`, `address` and `text` all null.
+ *
+ *  Deliberately narrow. Reading a renamed `id` as "withdrawn" would tell you a flat you are looking
+ *  at is gone, and quietly stop the sweep from ever opening it again — the fail-loudly rule pointed
+ *  the wrong way. A rename leaves the other twenty fields in place, so requiring all four to be
+ *  absent *and* the withdrawn page's own consolation link to be present separates them. */
+function isWithdrawn(property: Record<string, unknown>): boolean {
+  const gutted = ['status', 'address', 'text', 'prices'].every((key) => obj(property[key]) === null);
+  return gutted && str(obj(property.propertyUrls)?.similarPropertiesUrl) !== null;
 }
 
 /** Read + decode the page global. MAIN world only — an isolated content script sees a

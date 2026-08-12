@@ -83,6 +83,9 @@ export type Request =
   | { type: 'invite:resend'; inviteId: string }
   // --- listings and opinions ----------------------------------------------------------------
   | { type: 'listing:seen'; listing: Listing }
+  /** This listing's page is gone, so drop the sightings that would keep sending a fill-in run back
+   *  to it. Sent by the panel, which is the only thing that ever sees a withdrawn page. */
+  | { type: 'listing:withdrawn'; rightmoveId: string }
   | { type: 'verdict:set'; rightmoveId: string; rating: Rating; note: string }
   | { type: 'verdicts:get'; rightmoveIds: string[] }
   /** Off the market: withheld from the verdict-score model's training, the verdict itself untouched
@@ -170,6 +173,7 @@ export interface ResponseMap {
   'invite:resend': InviteResult;
 
   'listing:seen': null;
+  'listing:withdrawn': null;
   'verdict:set': null;
   /** At most one verdict per property now: the project shares one rating (design D6). `person` is
    *  the display name of whoever set it — the author, not the owner of a private opinion — and it
@@ -275,6 +279,9 @@ export const PAGE_REQUEST = 'rightmove-extension/request';
 
 export type PageMessage =
   | { source: typeof PAGE_MESSAGE; ok: true; listing: Listing }
-  | { source: typeof PAGE_MESSAGE; ok: false; error: string };
+  // `withdrawn` rather than a recognisable `error` string: this crosses a postMessage boundary, and
+  // matching on wording is how the panel would come to show "Rightmove changed the page" the first
+  // time somebody rephrased the sentence.
+  | { source: typeof PAGE_MESSAGE; ok: false; error: string; withdrawn?: true };
 
 export type PageRequest = { source: typeof PAGE_REQUEST };

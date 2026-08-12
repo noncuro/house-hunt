@@ -19,6 +19,14 @@
  *  us went looking for, and putting our verdict on it implies it came out of our search. */
 const ADVERT = '[data-testid="RDL-property-card"]';
 
+/** The listing id in a Rightmove property URL, or null if there is not one.
+ *
+ *  Shared with the panel, which needs it on the one page where the id is *only* in the address: a
+ *  withdrawn listing still has its URL and nothing else. */
+export function listingIdFromUrl(url: string): string | null {
+  return /\/properties\/(\d+)/.exec(url)?.[1] ?? null;
+}
+
 /** Map property id -> the ONE element representing that card.
  *
  *  A card contains several links to the same listing (image, title, price), so keying by anchor
@@ -30,7 +38,7 @@ export function findCards(root: Document = document): Map<string, HTMLElement> {
   const mapClose = root.querySelector('[data-testid="map-card-close-button"]');
 
   for (const anchor of root.querySelectorAll<HTMLAnchorElement>('a[href*="/properties/"]')) {
-    const id = /\/properties\/(\d+)/.exec(anchor.getAttribute('href') ?? '')?.[1];
+    const id = listingIdFromUrl(anchor.getAttribute('href') ?? '');
     if (!id || cards.has(id)) continue;
     if (anchor.closest(ADVERT)) continue;
 

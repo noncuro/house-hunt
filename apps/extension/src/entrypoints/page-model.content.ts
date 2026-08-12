@@ -1,4 +1,4 @@
-import { extractFromPage } from '@/lib/extract';
+import { extractFromPage, ListingWithdrawn } from '@/lib/extract';
 import { describe, PAGE_MESSAGE, PAGE_REQUEST, type PageMessage } from '@/lib/messages';
 
 /** MAIN world. This is the only script that can see window.__PAGE_MODEL — an isolated content
@@ -26,8 +26,12 @@ export default defineContentScript({
         result = { source: PAGE_MESSAGE, ok: true, listing: await waitForPageModel() };
       } catch (e) {
         // Fail loudly: the panel says "couldn't read this listing" rather than rendering blanks
-        // that look like "this property has no nearby stations".
-        result = { source: PAGE_MESSAGE, ok: false, error: describe(e) };
+        // that look like "this property has no nearby stations". A withdrawn listing is loud in a
+        // different key — it is an answer about the flat, not a failure of ours.
+        result =
+          e instanceof ListingWithdrawn
+            ? { source: PAGE_MESSAGE, ok: false, error: e.message, withdrawn: true }
+            : { source: PAGE_MESSAGE, ok: false, error: describe(e) };
       }
       post(result);
     })();
