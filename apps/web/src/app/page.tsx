@@ -551,6 +551,16 @@ function Triage({
   // past everything the card knows to reach the next decision. Cards stay one click away for the
   // pile where the photos are what you want.
   const [layout, setLayout] = useState<'table' | 'cards'>('table');
+  // A row's full card, opened in place. Clicking the address here used to leave the pile for the
+  // list view scrolled to the card; the whole of what a flat is fits under its own row, so the
+  // photos, travel times and verdict come to the pile rather than the pile going to them.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggleExpand = (id: string) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   const chosen = new Set(selected);
   // Ticking a flat that has since been rated elsewhere would rate it again on the next click,
   // so the selection is read against what is actually in the pile now.
@@ -667,6 +677,13 @@ function Triage({
           entries={shown}
           places={cardProps.places}
           onOpen={onOpen}
+          expand={{
+            isOpen: (id) => expanded.has(id),
+            toggle: toggleExpand,
+            // The same card the list draws, from the same renderer. No tick box inside it — the row
+            // it sits under already carries one, and two would ask the same question twice.
+            render: (entry) => <Card entry={entry} {...cardProps} />,
+          }}
           selection={{ chosen, toggle, setMany }}
           filters={false}
           columnsKey="triage"

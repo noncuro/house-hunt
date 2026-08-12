@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Hint } from '@house-hunt/ui';
 import { formatDuration, MODE_ICON, readTravel, Routes } from '@house-hunt/ui';
 import {
@@ -45,6 +45,7 @@ export function Compare({
   defaultSort = { key: 'price', descending: false },
   scores = null,
   prefs,
+  expand,
 }: {
   entries: ShortlistEntry[];
   places: Place[];
@@ -82,6 +83,15 @@ export function Compare({
   /** This hunt's preferences, so the "Against it" column reflects a must-have absence and the
    *  great-room bar. Absent everywhere the preferences do not reach — the default flag behaviour. */
   prefs?: HuntPreferences;
+  /** Triage opens a row's full card in place rather than jumping to the list. When set, clicking the
+   *  address toggles the inline card instead of navigating, and an expanded row renders that card
+   *  full-width beneath its own row — the whole of what the flat is, without leaving the pile you
+   *  are working. `onOpen` is still what the address does everywhere this is absent. */
+  expand?: {
+    isOpen: (rightmoveId: string) => boolean;
+    toggle: (rightmoveId: string) => void;
+    render: (entry: ShortlistEntry) => React.ReactNode;
+  };
 }) {
   const [showing, setShowing] = useState<Record<Group, boolean>>(DEFAULT_SHOWING);
   const [sort, setSort] = useState<Sort | null>(defaultSort);
@@ -133,9 +143,12 @@ export function Compare({
   // The score is a triage-only column (see the `scores` prop). Anywhere but triage it stays out of
   // the table on purpose, so `buildColumns` is handed the map only there.
   const scoreColumn = columnsKey === 'triage' ? scores : null;
+  // Where the address goes: to the list card (`onOpen`) normally, or — in triage — to the card
+  // that opens inline beneath the row, so working the pile never leaves it.
+  const openRow = expand ? expand.toggle : onOpen;
   const all = useMemo(
-    () => buildColumns(places, twins, onOpen, scoreColumn, prefs),
-    [places, twins, onOpen, scoreColumn, prefs],
+    () => buildColumns(places, twins, openRow, scoreColumn, prefs),
+    [places, twins, openRow, scoreColumn, prefs],
   );
   // The first column is the address and never hides — a row you cannot identify is not a row.
   // Before the picker has ever been touched, `chosen` is null and the defaults decide. After, the
@@ -297,14 +310,14 @@ export function Compare({
           </thead>
           <tbody>
             {sorted.map((entry) => (
+              <Fragment key={entry.rightmoveId}>
               <tr
-                key={entry.rightmoveId}
                 className={`compare-${groupOf(entry.verdicts)}${
                   selection?.chosen.has(entry.rightmoveId) ? ' compare-ticked' : ''
-                }`}
+                }${expand?.isOpen(entry.rightmoveId) ? ' compare-expanded' : ''}`}
                 onClick={(event) => {
                   if (!selection) {
-                    onOpen(entry.rightmoveId);
+                    openRow(entry.rightmoveId);
                     return;
                   }
                   if (rangeSelect(entry.rightmoveId, event.shiftKey)) return;
@@ -337,6 +350,14 @@ export function Compare({
                   </td>
                 ))}
               </tr>
+              {expand?.isOpen(entry.rightmoveId) && (
+                <tr className="compare-expanded-row">
+                  {/* One cell across the whole row, holding the flat's own card — the same
+                      renderer the list uses, so the two never disagree about what a place is. */}
+                  <td colSpan={columns.length + (selection ? 1 : 0)}>{expand.render(entry)}</td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>

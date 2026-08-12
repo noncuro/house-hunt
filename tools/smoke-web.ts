@@ -367,8 +367,8 @@ async function checkTriage({ page }: Stage): Promise<void> {
 
   // Back to the table for the click the pile is actually worked by. The address used to be the
   // Rightmove link, which made the most obvious thing to click in triage the one that left the
-  // site; it now opens this app's own card for the flat, and Rightmove is the second, named link
-  // beside it. Counting rows says nothing about where they point, so both are read here.
+  // site; it now opens the flat's own card in place, beneath its row, so working the pile never
+  // leaves it. Counting rows says nothing about where they point, so both are read here.
   //
   // Reopened rather than toggled back with the layout button, which is one button in two states
   // and would leave this depending on how many times it had been pressed above. A fresh triage
@@ -380,25 +380,34 @@ async function checkTriage({ page }: Stage): Promise<void> {
   }
   const address = page.locator('.triage table tbody tr .compare-open').first();
   const href = await address.getAttribute('href');
-  // `#card-<id>`, digits — the shape the shortlist's own hash reader accepts on a cold load. Any id
-  // is fine for the click below, which never goes near that reader, so a looser pattern here would
-  // pass on a link that does nothing when it is pasted into a fresh tab.
+  // `#card-<id>`, digits — the shape the shortlist's own hash reader accepts on a cold load. The
+  // click below expands in place rather than following it, but the href still has to be the deep
+  // link, so a looser pattern here would pass on a link that does nothing pasted into a fresh tab.
   if (href === null || !/^#card-\d+$/.test(href)) {
     note(`the first triage row's address points at "${href}", not at a #card-<digits> deep link`);
   } else {
+    const card = page.locator(`.triage .compare-expanded-row article${href}`);
+    if ((await card.count()) > 0) note(`a triage card was already open at ${href} before any click`);
     await address.click();
     await settle(page);
-    // On the shortlist, in whichever pile the flat is in — unrated starts collapsed, so a card
-    // that exists but is not visible means the jump opened the wrong one.
-    const card = page.locator(`article${href}`);
-    if ((await card.count()) === 0) note(`opening a triage row drew no ${href} on the shortlist`);
-    else if (!(await card.isVisible())) note(`opening a triage row left ${href} in a shut pile`);
-    console.log(`triage row opens ${href}`);
+    // In place, under its own row — still on the triage view, not jumped to the shortlist.
+    if (!(await page.locator('.triage table').first().isVisible())) {
+      note(`opening a triage row left the triage table`);
+    }
+    if ((await card.count()) === 0) note(`clicking a triage row opened no ${href} card in place`);
+    else if (!(await card.isVisible())) note(`the ${href} card opened in place but is not visible`);
+    console.log(`triage row expands ${href} in place`);
 
-    // And the same address arrived at cold, which is the half the click cannot reach: `Compare`
-    // prevents the anchor's default and calls `onOpen`, so everything above passes whether or not
-    // the hash means anything on load. This is the promise the link makes — send it to the other
-    // laptop, open it a week later — and a different piece of code keeps it.
+    // Clicking the same address again shuts it — the pile you are working is not left holding open
+    // cards you have already read past.
+    await address.click();
+    await settle(page);
+    if ((await card.count()) > 0) note(`clicking a triage row's address twice left ${href} open`);
+
+    // And the same address arrived at cold, which is the half the click cannot reach: the click
+    // expands in place and never goes near the hash reader, so everything above passes whether or
+    // not the hash means anything on load. This is the promise the link makes — send it to the
+    // other laptop, open it a week later — and a different piece of code keeps it.
     //
     // A new tab rather than `goto` on this one, which is what this was first and which asserted
     // nothing: the click above had already left the URL at `/`, so navigating to `/#card-…` differs
