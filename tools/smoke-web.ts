@@ -19,7 +19,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { chromium, type ConsoleMessage, type Page } from 'playwright';
+import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
 import {
   createInvite,
   FIXTURE_EMAIL,
@@ -59,17 +59,24 @@ console.log(
     `${fixture.hubCount} hubs, signed in as ${FIXTURE_EMAIL}`,
 );
 
-const functions = await startFunctions({ supabaseUrl, origin: ORIGIN });
-const server = await startWebApp();
-
-// A browser with two contexts rather than one persistent context, because the redeem check at the
-// bottom needs a browser that is genuinely signed out. `localStorage` is per origin and shared by
-// every page in a context, so planting the session anywhere would be visible everywhere — the two
-// halves have to be separate contexts or the second one is testing a signed-in browser.
-const browser = await chromium.launch({ headless: true, args: OFFLINE_ARGS });
-const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+// Declared out here and started inside the try, so the `finally` covers every one of them. Started
+// above it, a website that failed to build left the function server running — and a stray server is
+// worse than an obvious crash, because the next run's readiness probe passes against it.
+let functions: ChildProcess | undefined;
+let server: ChildProcess | undefined;
+let browser: Browser | undefined;
 
 try {
+  functions = await startFunctions({ supabaseUrl, origin: ORIGIN });
+  server = await startWebApp();
+
+  // A browser with two contexts rather than one persistent context, because the redeem check at the
+  // bottom needs a browser that is genuinely signed out. `localStorage` is per origin and shared by
+  // every page in a context, so planting the session anywhere would be visible everywhere — the two
+  // halves have to be separate contexts or the second one is testing a signed-in browser.
+  browser = await chromium.launch({ headless: true, args: OFFLINE_ARGS });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+
   // Before the app's own scripts run, so the client finds a session the moment it is constructed
   // rather than mounting signed-out and repainting.
   await context.addInitScript(
@@ -300,11 +307,13 @@ try {
   // membership at exactly one moment. A break anywhere in that chain leaves an invited person
   // holding an account in no project, which is a state the shortlist has a screen for and nobody
   // would otherwise notice.
-  await checkJoining();
+  await checkJoining(browser);
 } finally {
-  await browser.close();
-  server.kill('SIGTERM');
-  functions.kill('SIGTERM');
+  // Each guarded and each independent: whichever started gets stopped, whatever happened to the
+  // ones after it.
+  await browser?.close().catch(() => {});
+  server?.kill('SIGTERM');
+  functions?.kill('SIGTERM');
 }
 
 if (problems.length > 0) {
@@ -316,7 +325,7 @@ console.log('\nok');
 // --------------------------------------------------------------------------------------------- //
 
 /** Invite somebody, redeem the code in a signed-out browser, and end up in the house hunt. */
-async function checkJoining(): Promise<void> {
+async function checkJoining(browser: Browser): Promise<void> {
   const invite = await createInvite(fixture.session, REDEEM_EMAIL);
   if (invite.status !== 'invited' || !invite.code) {
     note(`inviting ${REDEEM_EMAIL} answered "${invite.status}" with no code — nothing to redeem`);

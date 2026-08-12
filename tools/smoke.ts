@@ -53,7 +53,13 @@ const listing = listingFromHtml(fixturePath, url);
 const alsoCache =
   listing.postcode === null
     ? []
-    : [{ postcode: listing.postcode, stations: listing.nearestStations.map((s) => s.name) }];
+    : [
+        {
+          rightmoveId: listingId,
+          postcode: listing.postcode,
+          stations: listing.nearestStations.map((s) => s.name),
+        },
+      ];
 if (alsoCache.length === 0) {
   console.warn('this listing has no postcode, so travel cannot be pre-cached — expect a slow panel');
 }
@@ -209,8 +215,14 @@ try {
     );
   }
 } finally {
-  await context.close();
-  functions.kill('SIGTERM');
+  // Nested, so a browser that fails to close still stops the function server. Left running, it
+  // holds the port and the *next* run's readiness probe passes against a stale server — which is
+  // the exact failure mode this harness was just fixed for, arriving by a different door.
+  try {
+    await context.close();
+  } finally {
+    functions.kill('SIGTERM');
+  }
 }
 
 if (problems.length > 0) {

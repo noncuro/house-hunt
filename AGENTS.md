@@ -124,7 +124,7 @@ has to be a local-stack one:
 | Command | What it drives | Needs a saved page |
 |---|---|---|
 | `pnpm smoke <fixture>` | The listing panel, in the built extension, on a real listing | yes |
-| `pnpm smoke:search` | Search badges and the sweep panel — the one harness that writes | yes |
+| `pnpm smoke:search` | Search badges and the sweep panel; records real sightings, never completes a sweep | yes |
 | `pnpm smoke:web` | The website: shortlist, compare, map, triage, the other tabs, and joining | **no** |
 
 `pnpm smoke:all` runs all three cheapest-first, stops at the first failure, and prints timings;

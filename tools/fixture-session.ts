@@ -232,18 +232,15 @@ async function tearDown(alsoCache: ExtraCache[] = []): Promise<void> {
   // The listing the smoke harness opens is a real one and so carries no `smokefix-` prefix. Left
   // behind, the second run finds the row already there and `record_property` takes its
   // on-conflict-update path — so the assertion that opening a new listing creates the row would
-  // pass without that path ever running again. Deleted by postcode because that is what the
-  // caller knows; `property_analysis` goes first for the foreign key.
-  if (alsoCache.length > 0) {
-    const { data: stale } = await db
-      .from('property')
-      .select('rightmove_id')
-      .in('postcode', alsoCache.map((c) => c.postcode));
-    const ids = (stale ?? []).map((row) => row.rightmove_id as string);
-    if (ids.length > 0) {
-      await db.from('property_analysis').delete().in('rightmove_id', ids);
-      await db.from('property').delete().in('rightmove_id', ids);
-    }
+  // pass without that path ever running again.
+  //
+  // Deleted by id and not by postcode, which is what this did first: a real postcode holds real
+  // listings, and matching on it would take out the flat next door because somebody else's project
+  // happened to have opened it. `property_analysis` goes first for the foreign key.
+  const alsoIds = alsoCache.map((c) => c.rightmoveId);
+  if (alsoIds.length > 0) {
+    await db.from('property_analysis').delete().in('rightmove_id', alsoIds);
+    await db.from('property').delete().in('rightmove_id', alsoIds);
   }
   await db.from('travel_time').delete().in('origin_postcode', postcodes);
   await db.from('station_walk').delete().in('postcode', postcodes);
@@ -286,6 +283,8 @@ export interface FixtureData {
  *  `stations` is by name because that is the key `station_walk` is on and the name is what the
  *  panel asks with — it comes straight out of the listing blob's `nearestStations`. */
 export interface ExtraCache {
+  /** The listing itself, so tearing down removes this row and only this row. */
+  rightmoveId: string;
   postcode: string;
   stations: string[];
 }

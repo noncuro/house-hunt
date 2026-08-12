@@ -29,12 +29,20 @@ const HARNESSES = [
 ] as const;
 
 const wanted = process.argv.slice(2);
-const chosen = wanted.length === 0 ? HARNESSES : HARNESSES.filter((h) => wanted.includes(h.name));
 
-if (chosen.length === 0) {
-  console.error(`usage: pnpm smoke:all [${HARNESSES.map((h) => h.name).join('|')}]`);
+// Every name has to be one we have, not merely one of them. `pnpm smoke:all web typo` used to run
+// `web`, say nothing about `typo`, and exit 0 — which is the silent skip this repo treats as worse
+// than a failure, in its most convincing costume: a green run that answered a question nobody asked.
+const unknown = wanted.filter((name) => !HARNESSES.some((h) => h.name === name));
+if (unknown.length > 0) {
+  console.error(
+    `no harness called ${unknown.map((n) => `"${n}"`).join(', ')}.\n` +
+      `usage: pnpm smoke:all [${HARNESSES.map((h) => h.name).join('|')}]`,
+  );
   process.exit(1);
 }
+
+const chosen = wanted.length === 0 ? HARNESSES : HARNESSES.filter((h) => wanted.includes(h.name));
 
 /** The saved listing page, whichever one this machine has. Named by id, so it cannot be a constant;
  *  and `search-*.html` is the other fixture, which belongs to a different harness. */

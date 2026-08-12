@@ -11,8 +11,14 @@ Timings are a warm run on a laptop, measured with `pnpm smoke:all`, and exclude 
 |---|---|---|
 | `pnpm check:all` | 8s | Every pure function. No database, no browser. |
 | `pnpm smoke:search` | 2.2s | The extension on a saved search page. |
-| `pnpm smoke` | 5.7s | The extension's panel on a saved listing page. |
+| `pnpm smoke` | 6s, or ~35s cold | The extension's panel on a saved listing page. |
 | `pnpm smoke:web` | ~32s | The website, end to end, including joining and the refusals. |
+| `pnpm check:rls` | ~25s | 180 assertions on the security boundary. |
+| `pnpm check:spend` | ~15s | 53 assertions on the cap arithmetic. |
+
+The spread on `smoke` is the Edge Function runtime: whichever harness starts it first waits about
+half a minute for Deno to come up, and the ones after it do not. Nothing is wrong when a single run
+of it takes thirty seconds.
 
 `supabase start` is the only thing you have to have running. Both browser harnesses that need the
 Edge Functions now serve them themselves (`tools/edge-functions.ts`) and stop them again. `pnpm
@@ -20,8 +26,6 @@ smoke` did not, for a while, and passed anyway — because a `supabase functions
 from something else was answering. That is the worst shape a green tick can have: it goes red the
 first time somebody runs it on a clean machine, and it says "panel never left its loading state",
 which is a sentence about a spinner for what is really a process nobody started.
-| `pnpm check:rls` | ~25s | 180 assertions on the security boundary. |
-| `pnpm check:spend` | ~15s | 53 assertions on the cap arithmetic. |
 
 `pnpm smoke:all` runs the three browser harnesses cheapest-first and **stops at the first failure**
 — there is no point building the website to discover the extension never loaded. It takes names to
@@ -38,8 +42,9 @@ tell you), and `record_property` actually writing the link — read back from th
 inferred from a panel that looked right.
 
 **Search and sweeping** (`smoke:search`) — every card found and badged, the recorded count matching
-what is on the page, the stale-page detection, the hide toggle, and the per-hub sweep state. The
-one harness that writes.
+what is on the page, the stale-page detection, the hide toggle, and the per-hub sweep state. Its
+sighting rows are genuine sightings of genuine listings, which is why it never *completes* a sweep
+— that would narrow what the next real sweep looks at.
 
 **The website** (`smoke:web`) — the shortlist's embedded read (the three-table join most likely to
 be quietly wrong), the default showing rules, verdict attribution, the compare table, the map

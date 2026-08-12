@@ -13,6 +13,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read the repository and nothing else. Every job here checks out, runs checks and uploads an
+# artifact; none of them writes to the repository, comments on anything, or publishes. Without this
+# the token inherits whatever the repository default happens to be, which is a wider grant than any
+# of this needs and one that changes under you when somebody edits a settings page.
+permissions:
+  contents: read
+
 concurrency:
   # A second push to the same branch makes the first one's answer irrelevant.
   group: ${{ github.workflow }}-${{ github.ref }}
