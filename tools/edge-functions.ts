@@ -27,6 +27,11 @@ import { resolve } from 'node:path';
  *  probed for the wrong origin would wait ninety seconds and then blame the environment file. */
 export const WEB_APP_ORIGIN = 'http://127.0.0.1:3199';
 
+/** What supabase-js puts on its requests, from its own `@supabase/supabase-js/cors` module. Copied
+ *  rather than imported because the functions run on Deno and this runs on Node, and because the
+ *  point is to notice when the two lists drift apart. */
+const SDK_HEADERS = ['content-type', 'authorization', 'apikey', 'x-client-info', 'x-retry-count'];
+
 export interface FunctionsOptions {
   /** Where the local stack answers, from `localCredentials()`. */
   supabaseUrl: string;
@@ -72,13 +77,36 @@ export async function startFunctions({
       // functions at all, so "did anything reply" is not a readiness signal — it is a green light
       // that stays green with no backend behind it. The allow-origin header comes from the
       // function's own code and from `WEB_APP_ORIGIN`, so it cannot be produced by the gateway.
-      headers: { Origin: origin, 'Access-Control-Request-Method': 'POST' },
+      headers: {
+        Origin: origin,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': SDK_HEADERS.join(', '),
+      },
       signal: AbortSignal.timeout(3_000),
     })
-      .then((r) => r.headers.get('access-control-allow-origin'))
+      .then((r) => ({
+        origin: r.headers.get('access-control-allow-origin'),
+        headers: r.headers.get('access-control-allow-headers'),
+      }))
       .catch(() => null);
 
-    if (allowed === origin) {
+    if (allowed?.origin === origin) {
+      // The origin was never the whole question. A browser refuses the entire preflight over one
+      // unlisted *header*, and supabase-js sends `x-client-info` on every single request — so a
+      // function that allows the right origin and forgets that header refuses every call, and says
+      // so in a sentence about CORS that sends you looking at origins. That shipped to production
+      // and broke every travel lookup on the deployed site, while this probe went green.
+      const permitted = (allowed.headers ?? '').toLowerCase();
+      const missing = SDK_HEADERS.filter((h) => !permitted.includes(h));
+      if (missing.length > 0) {
+        child.kill('SIGTERM');
+        throw new Error(
+          `the functions allow ${origin} but not the headers supabase-js sends: ` +
+            `${missing.join(', ')} missing from "${allowed.headers}".\n` +
+            'Every call from a browser will be refused at the preflight. See `cors()` in ' +
+            'supabase/functions/_shared/http.ts.',
+        );
+      }
       console.log(`edge functions accept ${origin}`);
       return child;
     }
