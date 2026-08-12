@@ -27,6 +27,11 @@ from something else was answering. That is the worst shape a green tick can have
 first time somebody runs it on a clean machine, and it says "panel never left its loading state",
 which is a sentence about a spinner for what is really a process nobody started.
 
+The same thing arrives by the other door when a harness leaves a server behind, and `smoke:web` did:
+`next start` under `pnpm` survived the kill and kept 3199, so the run after it quietly asserted
+against the previous build. The servers are stopped as a process group now, and `smoke:web` refuses
+to start at all when something already holds the port — see `tools/servers.ts`.
+
 `pnpm smoke:all` runs the three browser harnesses cheapest-first and **stops at the first failure**
 — there is no point building the website to discover the extension never loaded. It takes names to
 run a subset (`pnpm smoke:all web search`) and prints per-harness timings either way. Within a

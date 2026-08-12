@@ -151,6 +151,16 @@ happened to be answering — a green tick that turns red on a clean machine with
 spinner. Its readiness probe is origin-matched for the same reason: Kong answers the CORS preflight
 204 by itself with nothing behind it, so "did anything reply" stays green with no backend at all.
 
+**A harness owns the servers it starts, and refuses the ones it did not** (`tools/servers.ts`).
+Both are spawned in a process group of their own and stopped as a group: `pnpm exec next start` is
+two processes, and signalling the wrapper alone left the website holding 3199 after the harness had
+exited, which the next run then asserted against — green, about a build from another branch, and
+visible only as a page stuck on "Working…" or a connection refused halfway through. The group means
+Ctrl-C no longer reaches them through the terminal, so both harnesses pass the interrupt on. Before
+starting, `smoke:web` checks that 3199 is free and stops with the port and a `lsof` line if it is
+not, and `startFunctions` says so when another `supabase functions serve` is already running rather
+than letting the two take turns holding the container.
+
 Harness rules live in `tools/offline.ts` and the harness files; the cross-cutting one: no harness
 may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain). `SMOKE_LOG=all` widens the output —
 on `smoke` it dumps the extension's own diagnostic ring buffer, which is how you tell a write that

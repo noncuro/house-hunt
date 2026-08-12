@@ -17,9 +17,10 @@
  *  to be running from something else — which is the worst kind of green, since it goes red the
  *  first time somebody runs the harness on a clean machine and the message is about a panel.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stopTree } from './servers';
 
 /** What `supabase/.env.example` sets WEB_APP_ORIGIN to, and the port `smoke:web` serves on.
  *
@@ -52,10 +53,29 @@ export async function startFunctions({
     );
   }
 
+  // Two copies fight over the same edge-runtime container and one of them loses: the second `serve`
+  // takes it, the first sees it go and exits 1, and whichever harness owned that one reports
+  // "supabase functions serve exited (1)" — a sentence about its own child for what is really
+  // somebody else's run. Said plainly here instead. Best effort, since a machine without `pgrep`
+  // says nothing either way; the assertion that actually protects the run is the origin-matched
+  // probe below.
+  const others = spawnSync('pgrep', ['-f', 'supabase functions serve'], { encoding: 'utf8' });
+  const running = (others.stdout ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+  if (running.length > 0) {
+    throw new Error(
+      `a \`supabase functions serve\` is already running (pid ${running.join(', ')}).\n` +
+        'Two of them take turns holding the edge-runtime container, so this run would fail in a\n' +
+        'way that reads as a broken function. Stop the other one and try again.',
+    );
+  }
+
   console.log('serving the edge functions');
   const child = spawn('supabase', ['functions', 'serve', '--env-file', 'supabase/.env'], {
     cwd: root,
     stdio: ['ignore', 'ignore', 'pipe'],
+    // `supabase` is a wrapper around the process that actually serves, so a signal to it alone
+    // leaves the server behind. A group of its own is what lets `stopTree` take both.
+    detached: true,
   });
   child.stderr?.on('data', (chunk: Buffer) => {
     if (process.env.SMOKE_LOG === 'all') process.stderr.write(`[functions] ${chunk.toString()}`);
@@ -85,7 +105,7 @@ export async function startFunctions({
     await new Promise((r) => setTimeout(r, 1_000));
   }
 
-  child.kill('SIGTERM');
+  stopTree(child);
   throw new Error(
     `the travel function never answered Access-Control-Allow-Origin: ${origin}.\n` +
       `Check that supabase/.env says WEB_APP_ORIGIN=${origin} and that \`supabase start\` is up.`,

@@ -44,6 +44,7 @@ import {
 import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 import { startFunctions } from './edge-functions';
+import { demandFreePort, stopTree } from './servers';
 
 /** Must match `storageKey` in `apps/web/src/lib/client.ts`. Asserted below rather than trusted:
  *  a session written under the wrong key renders a perfectly good sign-in form, and every
@@ -122,6 +123,18 @@ let functions: ChildProcess | undefined;
 let server: ChildProcess | undefined;
 let browser: Browser | undefined;
 
+// Ctrl-C used to reach both servers through the terminal's process group. They are started in
+// groups of their own now, so that no longer happens and the harness has to pass the interrupt on
+// itself — otherwise the most ordinary way to end a run, giving up on it, is the one way that
+// leaves a website holding the port for the next one.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    stopTree(server);
+    stopTree(functions);
+    process.exit(130);
+  });
+}
+
 try {
   functions = await startFunctions({ supabaseUrl, origin: ORIGIN });
   server = await startWebApp();
@@ -169,8 +182,8 @@ try {
   // Each guarded and each independent: whichever started gets stopped, whatever happened to the
   // ones after it.
   await browser?.close().catch(() => {});
-  server?.kill('SIGTERM');
-  functions?.kill('SIGTERM');
+  stopTree(server);
+  stopTree(functions);
 }
 
 if (problems.length > 0) {
@@ -599,6 +612,10 @@ async function settleOn<T>(
  *  extension reads `WXT_*` — so, like `build:smoke`, it cannot be arranged at runtime and is passed
  *  in here. Nothing about the repo's `.env` is read or changed. */
 async function startWebApp(): Promise<ChildProcess> {
+  // Before the build rather than after it, so a port somebody else holds costs a second instead of
+  // a minute — and so nothing is built for a server that is not going to be started.
+  await demandFreePort(PORT, 'the website under test');
+
   const cwd = resolve(import.meta.dirname, '..');
   const env = {
     ...process.env,
@@ -623,6 +640,10 @@ async function startWebApp(): Promise<ChildProcess> {
     cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    // In a process group of its own, so `stopTree` can take the `next start` underneath pnpm with
+    // it. Signalling pnpm alone leaves the server holding the port, and the run after this one
+    // then asserts against it — see `tools/servers.ts`.
+    detached: true,
   });
 
   child.stderr?.on('data', (chunk: Buffer) => {
@@ -647,6 +668,8 @@ async function startWebApp(): Promise<ChildProcess> {
     }
     await new Promise((r) => setTimeout(r, 1_000));
   }
-  child.kill('SIGTERM');
+  // The caller never got a handle on this one, so its `finally` cannot stop it and this is the only
+  // place that can.
+  stopTree(child);
   throw new Error(`the website did not come up on ${ORIGIN} within 120s`);
 }
