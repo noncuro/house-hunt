@@ -407,13 +407,17 @@ async function checkTriage({ page }: Stage): Promise<void> {
     const fresh = await page.context().newPage();
     try {
       await fresh.goto(`${ORIGIN}/${href}`, { waitUntil: 'domcontentloaded' });
+      // The shell, then the reads, then the card, in that order — the same order `openView` uses,
+      // and the order is the point. Going straight to the card passed here and failed on CI, and
+      // going straight to `settle` would have the same hole: it asks whether anything says
+      // "Working…", and on a tab that has not mounted yet nothing does. `waitForApp` also means a
+      // website that renders nothing at all says so, instead of reaching us as a missing card.
+      await waitForApp(fresh);
+      await settle(fresh);
       const cold = fresh.locator(`article${href}`);
-      // Waited for rather than settled and read, which is what this did first and which passed here
-      // and failed on CI: `settle` asks whether anything says "Working…", and on a tab that has not
-      // mounted yet nothing does — so it returned at once and the card was read before the app had
-      // drawn. Unrated and rejected piles start shut on a fresh load, so waiting for *visible* is
-      // the whole assertion: the card exists only if the hash was read, and is visible only if that
-      // opened the pile it is in.
+      // Unrated and rejected piles start shut on a fresh load, so waiting for *visible* is the whole
+      // assertion: the card exists only if the hash was read, and is visible only if that opened the
+      // pile it is in.
       const arrived = await cold
         .waitFor({ state: 'visible', timeout: 20_000 })
         .then(() => true)

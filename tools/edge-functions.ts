@@ -88,10 +88,24 @@ export async function startFunctions({
   // this exists to replace.
   watchForDeath(child);
 
+  // A machine with no `supabase` on its PATH never runs the command at all, and a `ChildProcess`
+  // with nobody listening for `error` takes the whole harness down with an unhandled event —
+  // ninety seconds of polling followed by a stack trace, for the one failure with a one-line fix.
+  let spawnFailure: Error | null = null;
+  child.once('error', (error) => {
+    spawnFailure = error;
+  });
+
   // Poll the thing we actually depend on — the CORS answer — rather than a readiness line. It is
   // the only signal that distinguishes "serving" from "serving, and will talk to us".
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
+    if (spawnFailure !== null) {
+      throw new Error(
+        `could not run \`supabase functions serve\`: ${(spawnFailure as Error).message}\n` +
+          'Install the Supabase CLI, or put it on PATH.',
+      );
+    }
     if (child.exitCode !== null) throw new Error(`supabase functions serve exited (${child.exitCode})`);
     const allowed = await fetch(`${supabaseUrl}/functions/v1/travel`, {
       method: 'OPTIONS',
@@ -201,7 +215,9 @@ function watchForDeath(child: ChildProcess): void {
     if (pending.trim().length > 0) remember([pending]);
     // A harness that finished and stopped its own server is the ordinary case. Asked rather than
     // inferred from the signal, because a tidy shutdown and a kill are both just a signal here.
-    if (announced || wasAskedToStop(child)) return;
+    // `pid` is undefined when the command never ran at all — the caller throws a sentence naming the
+    // binary for that, and "died mid-run (exit -2)" above it is noise about a run that never began.
+    if (announced || child.pid === undefined || wasAskedToStop(child)) return;
     report(`the edge functions died mid-run (${signal ?? `exit ${code}`})`, lastWords, null);
   });
 }

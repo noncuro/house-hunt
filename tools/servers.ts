@@ -46,6 +46,10 @@ export function stopTree(child: ChildProcess | undefined, signal: NodeJS.Signals
     // server it runs. A plain `child.kill()` would reach only the wrapper.
     process.kill(-child.pid, signal);
   } catch (error) {
+    // We did not stop it, so the claim is withdrawn: a watcher that kept it would treat the death
+    // this process had already died of as the one we asked for, and swallow the reason. ESRCH is
+    // exactly that case — the server crashed on its own, which is news rather than tidy-up.
+    asked.delete(child);
     if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
       console.error(`could not stop the process group of pid ${child.pid}: ${String(error)}`);
     }
