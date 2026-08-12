@@ -6,6 +6,7 @@ import { Hint } from '@house-hunt/ui';
 import { formatDuration, MapsButton, MODE_ICON, readTravel, Routes, TransitBasis } from '@house-hunt/ui';
 import { Stations } from '@house-hunt/ui';
 import { RatingButtons, VerdictLine } from '@house-hunt/ui';
+import { RightmoveLink } from '@/components/RightmoveLink';
 import { useTravel } from '@/lib/queries';
 import {
   TRAVEL_MODES,
@@ -171,9 +172,7 @@ export function Detail({
       {entry.analysis?.summary && <p className="summary dim">{entry.analysis.summary}</p>}
 
       <div className="detail-links">
-        <a href={entry.url} target="_blank" rel="noopener">
-          Open on Rightmove ↗
-        </a>
+        <RightmoveLink url={entry.url} />
       </div>
     </div>
   );
