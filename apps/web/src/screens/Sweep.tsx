@@ -169,6 +169,9 @@ function FillIn({
   // The opener throws when a tab fails to open, and `Opener` stops the run on it; without somewhere
   // to show the reason the run would just stop with nothing on screen.
   const [error, setError] = useState<string | null>(null);
+  /** Separate from `error`, because it is not one. The fill-in run succeeded and only the map
+   *  positions did not land, so this says so quietly rather than colouring a finished run red. */
+  const [mapNote, setMapNote] = useState<string | null>(null);
   const client = useQueryClient();
 
   // A fill-in run opens each listing in a background tab, which is `chrome.tabs.create` over the
@@ -182,8 +185,26 @@ function FillIn({
   if (failed) return <p className="error">Could not read what still needs opening.</p>;
   if (!pending) return null;
 
+  // Both notices are about the run that just finished, so they have to outlive the list that run was
+  // working through. `onFinished` recounts before it geocodes, and a run that opened the last pending
+  // listing empties the list on that recount — so a notice rendered only beside the list would be set
+  // and then immediately hidden by the early return below, which is the case it most needs to cover.
+  const notices = (
+    <>
+      {error && <p className="error">{error}</p>}
+      {/* Under the error and dimmer than it: the run worked, only the pins are missing, and
+          the page-load backfill places them next time. */}
+      {mapNote && <p className="dim">{mapNote}. They will be placed next time this page loads.</p>}
+    </>
+  );
+
   if (pending.length === 0) {
-    return <p className="dim">Everything scanned has been opened and filled in.</p>;
+    return (
+      <>
+        <p className="dim">Everything scanned has been opened and filled in.</p>
+        {notices}
+      </>
+    );
   }
 
   // Grouped only to say where the work is. The run itself goes newest-sighting-first across all
@@ -214,6 +235,7 @@ function FillIn({
               what="we haven't opened yet"
               onFinished={async () => {
                 setError(null);
+                setMapNote(null);
                 // Recount first, so the pending number updates the moment the run ends rather than
                 // waiting on the geocode below — the count is "opened and analysed", not "mapped",
                 // so a slow postcode lookup must not hold it up. Listings whose analysis landed
@@ -225,7 +247,16 @@ function FillIn({
                 // revisit these rows while this tab stays mounted — so do it here, or their pins
                 // would not appear until a hard reload. Best-effort: a geocoding hiccup must not
                 // stop the repaint below.
-                await locateProperties().catch(() => {});
+                //
+                // Best-effort, but not silent. An empty catch discarded the reason entirely: the
+                // pins simply would not appear, and nothing on screen or in the console connected
+                // that to a lookup that failed. It stays out of `error` because the run itself
+                // succeeded — colouring a finished sweep red for a missing pin says the wrong thing.
+                await locateProperties().catch((e: unknown) => {
+                  const why = e instanceof Error ? e.message : String(e);
+                  console.warn('[sweep] filling in map positions failed', e);
+                  setMapNote(`Map pins for this run could not be placed — ${why}`);
+                });
                 // Repaint the shortlist and map regardless of the geocode's outcome: the run opened
                 // (and usually geocoded) listings, and even a geocode that threw after writing some
                 // coordinates has left the shortlist holding stale null/fuzzed positions. Same
@@ -234,7 +265,7 @@ function FillIn({
               }}
               onError={setError}
             />
-            {error && <p className="error">{error}</p>}
+            {notices}
             <p className="dim sweep-fill-note">
               Each listing opens in a background tab through the extension, so the run does not steal
               focus. It runs while this tab is open; stopping loses nothing — the ones already opened
