@@ -49,6 +49,12 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   `packages/core/src/facts.ts`. Never re-implement a fact in a view.
 - **Only `background.ts` constructs a Supabase client** (extension side). One session holder is
   what keeps an MV3 session alive; `pnpm check:one-client` enforces it.
+- **Rightmove's own mark may be used on the buttons that go to Rightmove**, and nowhere else. It
+  labels an outbound link with the thing it opens, which is what a trademark is for, and it is the
+  owner's decision on the owner's product. What stays forbidden is unchanged and is a different
+  question: **listing photos and floorplans are never re-hosted.** Those are shown from Rightmove's
+  own CDN URLs, which is why `.fixtures/` is gitignored and why every harness answers image
+  requests from memory rather than saving them.
 
 ## Architecture map
 
