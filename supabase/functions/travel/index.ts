@@ -50,6 +50,33 @@ requireEnv({
  *  key degrades rather than breaks — which is what you want on the day somebody rotates it. */
 const TFL_APP_KEY = Deno.env.get('TFL_APP_KEY') ?? undefined;
 
+/** A ceiling on concurrent TfL calls, with the rest queued behind them.
+ *
+ *  A single journeys request fans out to places×modes legs, and the grids on the website mount a
+ *  card — each its own request — for the whole pile at once. Without a bound the function fires
+ *  dozens of TfL calls in the same instant, which is both a herd on TfL and the fastest way to spend
+ *  our own hourly cap in a burst. This is the one choke point every caller passes through — the
+ *  extension, the website, every tab — so the queue lives here rather than in a client, where it
+ *  would only pace that one client. It paces the calls; it does not lower the hourly total.
+ *
+ *  Module-level on purpose: a warm instance serves many invocations back to back, so the queue
+ *  spans them and the bound is on this instance's outbound TfL concurrency rather than on any single
+ *  request's fan-out. */
+const MAX_TFL_CONCURRENCY = 6;
+let activeTfl = 0;
+const tflQueue: Array<() => void> = [];
+
+function withTflSlot<T>(run: () => Promise<T>): Promise<T> {
+  const slot = activeTfl < MAX_TFL_CONCURRENCY ? Promise.resolve() : new Promise<void>((resolve) => tflQueue.push(resolve));
+  return slot.then(() => {
+    activeTfl++;
+    return run().finally(() => {
+      activeTfl--;
+      tflQueue.shift()?.();
+    });
+  });
+}
+
 /** What a caller may ask for in one call. Batched rather than one request per leg: a listing with
  *  five saved places and three modes is fifteen journeys, and fifteen round trips through a
  *  function cold-start is the difference between a panel that fills in and one you watch fill in. */
@@ -207,8 +234,9 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
         try {
           // No `now` argument: `journeyTime` pins transit to the next weekday 09:00 itself, and
           // this is the only place that calls it, so the basis is a property of the system rather
-          // than of whoever asked (design D4).
-          const journey = await journeyTime(origin, to, mode, TFL_APP_KEY);
+          // than of whoever asked (design D4). Through the queue so one request's fifteen legs, and
+          // a grid's worth of requests at once, do not all hit TfL in the same instant.
+          const journey = await withTflSlot(() => journeyTime(origin, to, mode, TFL_APP_KEY));
           // A failed cache write must not turn a good answer into a permanent "no route", which is
           // what happened when this sat inside the catch. It must still be *loud*: a write that
           // silently fails means every lookup costs a fresh TfL call forever, and the only visible
@@ -323,7 +351,7 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
           station = p.lat === null || p.lon === null ? null : { lat: p.lat, lon: p.lon, lines: p.lines ?? [] };
         } else {
           made++;
-          station = await resolveStation(name, TFL_APP_KEY);
+          station = await withTflSlot(() => resolveStation(name, TFL_APP_KEY));
           await rpc('cache_station_point', {
             p_name: name,
             p_lat: station?.lat ?? null,
@@ -340,7 +368,10 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
         }
 
         made++;
-        const seconds = await walkTo(postcode, station, TFL_APP_KEY);
+        // A `let` loses its post-guard non-null narrowing inside a closure, so capture the
+        // resolved station in a const before handing it to the queue.
+        const at = station;
+        const seconds = await withTflSlot(() => walkTo(postcode, at, TFL_APP_KEY));
         await rpc('cache_station_walk', { p_postcode: postcode, p_station_name: name, p_seconds: seconds });
         out[name] = { seconds, lines: station.lines };
       } catch (e) {
