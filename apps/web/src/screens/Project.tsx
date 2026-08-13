@@ -330,7 +330,10 @@ function Members({ projectId }: { projectId: string }) {
         <div className="place" key={m.userId}>
           <span>
             {m.displayName}
-            {m.isYou && <span className="dim"> (you)</span>} <span className="dim">{m.email}</span>
+            {m.isYou && <span className="dim"> (you)</span>}{' '}
+            {/* Somebody who has never set a name is listed under their address, and the address
+                then appeared twice on the row — the same fact, said twice, reads as two people. */}
+            {m.displayName !== m.email && <span className="dim">{m.email}</span>}
           </span>
           <span className="dim">{m.role === 'owner' ? 'owner' : 'member'}</span>
         </div>
@@ -350,6 +353,7 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
   const client = useQueryClient();
   const [email, setEmail] = useState('');
   const [result, setResult] = useState<InviteResult | null>(null);
+  const [showSettled, setShowSettled] = useState(false);
 
   const headcount = useQuery({
     queryKey: keys.headcount(project.id),
@@ -401,6 +405,15 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
   const count = headcount.data ?? null;
   const full = count !== null && count.members + count.pending >= count.maxMembers;
 
+  // "Outstanding" is the same thing the headcount means by pending, and it is `inviteIsLive` that
+  // says so: `project_headcount` counts `status = 'pending' and expires_at > now()`, so an invite
+  // that lapsed holds no place and belongs with the joined and the revoked. One clock reading for
+  // the whole partition, so a row cannot fall between the two filters.
+  const all = invites.data ?? [];
+  const now = Date.now();
+  const outstanding = all.filter((invite) => inviteIsLive(invite, now));
+  const settled = all.filter((invite) => !inviteIsLive(invite, now));
+
   return (
     <section className="setting">
       <h2>Invite someone</h2>
@@ -431,7 +444,10 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
 
       {invites.isPending && <p className="working">Working…</p>}
       {invites.isError && <p className="error">{(invites.error as Error).message}</p>}
-      {(invites.data ?? []).map((invite) => (
+      {/* Outstanding first and alone. Every invite ever sent stays in this list, and a project a
+          few months old shows the two people still to arrive underneath a dozen who already did —
+          the rows that need doing something about, buried in the rows that do not. */}
+      {outstanding.map((invite) => (
         <div className="place" key={invite.id}>
           <span>
             {invite.email} <span className="dim">{inviteState(invite)}</span>
@@ -464,6 +480,23 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
         </div>
       ))}
       {invites.data?.length === 0 && <p className="dim">Nobody has been asked in yet.</p>}
+      {settled.length > 0 && (
+        <>
+          <button className="key" onClick={() => setShowSettled(!showSettled)}>
+            {showSettled
+              ? 'Hide finished invites'
+              : `Show ${settled.length} finished ${settled.length === 1 ? 'invite' : 'invites'}`}
+          </button>
+          {showSettled &&
+            settled.map((invite) => (
+              <div className="place" key={invite.id}>
+                <span>
+                  {invite.email} <span className="dim">{inviteState(invite)}</span>
+                </span>
+              </div>
+            ))}
+        </>
+      )}
     </section>
   );
 }
@@ -677,8 +710,8 @@ function ProjectRows({ projects, activeId }: { projects: ProjectSummary[]; activ
  *  Nothing ages a pending invite out: a row fourteen days past its `expires_at` still reads
  *  `pending` in the database. Showing that word would say the invite is waiting for someone when
  *  it confers nothing, so expiry is derived from the date here and at every other reading. */
-function inviteIsLive(invite: Invite): boolean {
-  return invite.status === 'pending' && !invite.expired && Date.parse(invite.expiresAt) > Date.now();
+function inviteIsLive(invite: Invite, now = Date.now()): boolean {
+  return invite.status === 'pending' && !invite.expired && Date.parse(invite.expiresAt) > now;
 }
 
 function inviteState(invite: Invite): string {

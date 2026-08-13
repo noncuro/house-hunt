@@ -23,6 +23,7 @@ import { scoreEntries, sortForTriage, isSurprise, SORT_LABEL, type SortMode } fr
 import type { StoredModel } from '@house-hunt/core/db';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
 import { ExtensionNotice } from '@/screens/Extension';
+import { Tick, useRangePick, type Selection } from '@/components/Tick';
 import { Install } from '@/screens/Install';
 import { Compare } from '@/screens/Compare';
 import { Detail } from '@/screens/Detail';
@@ -129,7 +130,11 @@ function useUrlView(): [View, (next: View) => void] {
     if (next === 'list') params.delete('v');
     else params.set('v', next);
     const qs = params.toString();
-    window.history.pushState(null, '', qs ? `?${qs}` : window.location.pathname);
+    // The hash comes along. It is the deep link to a flat, and rewriting the URL without it
+    // meant that opening `#card-123` and then touching anything left an address bar that no
+    // longer pointed at the flat on screen.
+    const hash = window.location.hash;
+    window.history.pushState(null, '', `${qs ? `?${qs}` : window.location.pathname}${hash}`);
   };
   return [view, setView];
 }
@@ -197,8 +202,17 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     if (group === 'maybe') setShowMaybes(true);
     if (group === 'unrated') setShowUnrated(true);
     if (group === 'rejected') setShowRejected(true);
-    // Let the list render before scrolling to the card that was pointed at.
-    requestAnimationFrame(() => document.getElementById(`card-${id}`)?.scrollIntoView({ block: 'center' }));
+    // Wait for the card, rather than for one frame. Revealing the unrated pile renders two hundred
+    // cards, which does not fit in the frame after the state change — so the single rAF scrolled
+    // to nothing at all and left you at the top of a page with the flat you asked for thirteen
+    // thousand pixels below. Give up after a second: by then the id is not in this shortlist.
+    const deadline = performance.now() + 1000;
+    const tryScroll = () => {
+      const card = document.getElementById(`card-${id}`);
+      if (card) card.scrollIntoView({ block: 'center' });
+      else if (performance.now() < deadline) requestAnimationFrame(tryScroll);
+    };
+    requestAnimationFrame(tryScroll);
   }
 
   const setPlaces = (next: Place[]) => client.setQueryData(keys.places, next);
@@ -321,8 +335,11 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
 
   return (
     // The compare table is wide on purpose — a column per saved place — and reading it through
-    // a 980px letterbox defeats it. That view alone gets the whole window.
-    <div className={view === 'table' ? 'wrap wrap-wide' : 'wrap'}>
+    // a 980px letterbox defeats it. Triage draws the same table, with a tick column and a score
+    // column on top of it, so it needs the window every bit as much: in the letterbox the "against
+    // it" column was clipped mid-word on every row and the card that opens under a row was wider
+    // than the box it opens in.
+    <div className={view === 'table' || view === 'triage' ? 'wrap wrap-wide' : 'wrap'}>
       <header className="top">
         <div>
           <h1>Shortlist</h1>
@@ -510,6 +527,11 @@ function Toggle({ label, open, onToggle }: { label: string; open: boolean; onTog
   );
 }
 
+/** Above this many, a bulk verdict asks first. Five is "I ticked these deliberately" — the batch
+ *  you can still see all of on screen — and anything more came from "Select all", where the
+ *  distance between the button that selects and the button that writes is one inch. */
+const CONFIRM_BULK_ABOVE = 5;
+
 /** The pile nobody has an opinion on, and the one screen built for changing that.
  *
  *  Every other view here is for comparing places you already care about, which is why they all
@@ -551,6 +573,8 @@ function Triage({
   // past everything the card knows to reach the next decision. Cards stay one click away for the
   // pile where the photos are what you want.
   const [layout, setLayout] = useState<'table' | 'cards'>('table');
+  // The rating waiting on a "yes, all of them" — see the bar below.
+  const [confirming, setConfirming] = useState<Rating | null>(null);
   // A row's full card, opened in place. Clicking the address here used to leave the pile for the
   // list view scrolled to the card; the whole of what a flat is fits under its own row, so the
   // photos, travel times and verdict come to the pile rather than the pile going to them.
@@ -637,37 +661,69 @@ function Triage({
   return (
     <div className="triage">
       <div className="triage-bar">
-        <button className="key triage-all" onClick={() => setSelected(allChosen ? [] : all)}>
-          {allChosen ? 'Clear' : `Select all ${entries.length}`}
-        </button>
-        <span className="dim">
-          {selected.length === 0 ? 'Nothing selected' : `${selected.length} selected`}
-        </span>
-        {/* The same three ratings, in the same words and the same order as everywhere else — from
-            `components/ratings.ts` rather than a table of its own, which is how rating in bulk
-            and rating one place came to call the same verdict two things. Not `RatingButtons`:
-            these are wider, sit in the triage bar's own layout, and have no current value to
-            show, since a selection of thirty flats has no one rating between them. */}
-        <div className="triage-rate">
-          {RATINGS.map((r) => (
+        {/* A verdict on a batch this size is worth one more click. "Select all 219" sits an inch
+            from three buttons that write a verdict for everybody in the hunt to see, each of them
+            219 writes with nothing that puts them back. Below the threshold this never appears —
+            ticking four flats and rating them is the gesture the pile exists for. */}
+        {confirming && selected.length > 0 ? (
+          <>
+            <span className="triage-confirm">
+              Mark all {selected.length} “{ratingOf(confirming).label}”?
+            </span>
             <button
-              key={r.value}
-              className={`rate rate-${r.value}`}
-              disabled={selected.length === 0}
-              title={
-                selected.length === 0
-                  ? 'Tick at least one place first — nothing is selected.'
-                  : `Mark all ${selected.length} selected “${r.label}”, with no note.`
-              }
-              onClick={() => onRate(r.value)}
+              className={`rate rate-${confirming}`}
+              onClick={() => {
+                onRate(confirming);
+                setConfirming(null);
+              }}
             >
-              {r.emoji} {r.label}
+              Yes, mark {selected.length}
             </button>
-          ))}
-        </div>
-        <button className="key triage-layout" onClick={() => setLayout(layout === 'table' ? 'cards' : 'table')}>
-          {layout === 'table' ? 'Show cards' : 'Show table'}
-        </button>
+            <button className="key" onClick={() => setConfirming(null)}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="key triage-all" onClick={() => setSelected(allChosen ? [] : all)}>
+              {allChosen ? 'Clear' : `Select all ${entries.length}`}
+            </button>
+            <span className="dim">
+              {selected.length === 0 ? 'Nothing selected' : `${selected.length} selected`}
+            </span>
+            {/* The same three ratings, in the same words and the same order as everywhere else —
+                from `components/ratings.ts` rather than a table of its own, which is how rating in
+                bulk and rating one place came to call the same verdict two things. Not
+                `RatingButtons`: these are wider, sit in the triage bar's own layout, and have no
+                current value to show, since a selection of thirty flats has no one rating between
+                them. */}
+            <div className="triage-rate">
+              {RATINGS.map((r) => (
+                <button
+                  key={r.value}
+                  className={`rate rate-${r.value}`}
+                  disabled={selected.length === 0}
+                  title={
+                    selected.length === 0
+                      ? 'Tick at least one place first — nothing is selected.'
+                      : `Mark all ${selected.length} selected “${r.label}”, with no note.`
+                  }
+                  onClick={() =>
+                    selected.length > CONFIRM_BULK_ABOVE ? setConfirming(r.value) : onRate(r.value)
+                  }
+                >
+                  {r.emoji} {r.label}
+                </button>
+              ))}
+            </div>
+            <button
+              className="key triage-layout"
+              onClick={() => setLayout(layout === 'table' ? 'cards' : 'table')}
+            >
+              {layout === 'table' ? 'Show cards' : 'Show table'}
+            </button>
+          </>
+        )}
       </div>
 
       {scoreBar}
@@ -727,11 +783,7 @@ interface CardProps {
   setOffMarket: (entry: ShortlistEntry, off: boolean) => void;
   /** Present only in triage: cards grow a tick box and join a batch. Absent everywhere else,
    *  because a card you are reading to decide on is not a card you are selecting. */
-  selection?: {
-    chosen: Set<string>;
-    toggle: (rightmoveId: string) => void;
-    setMany: (rightmoveIds: string[], on: boolean) => void;
-  };
+  selection?: Selection;
 }
 
 function Pile({
@@ -740,6 +792,12 @@ function Pile({
   empty,
   ...cardProps
 }: { title?: string; entries: ShortlistEntry[]; empty: string } & CardProps) {
+  // Cards get the same shift-pick the table has. They were the one layout of triage where a run
+  // could only be ticked one at a time, and `setMany` was handed down and never called.
+  const pick = useRangePick(
+    useMemo(() => entries.map((e) => e.rightmoveId), [entries]),
+    cardProps.selection,
+  );
   return (
     <section>
       {title && <h2>{title}</h2>}
@@ -748,7 +806,12 @@ function Pile({
       ) : (
         <div className="cards">
           {entries.map((entry) => (
-            <Card key={entry.rightmoveId} entry={entry} {...cardProps} />
+            <Card
+              key={entry.rightmoveId}
+              entry={entry}
+              onPick={(shiftKey) => pick(entry.rightmoveId, shiftKey)}
+              {...cardProps}
+            />
           ))}
         </div>
       )}
@@ -767,7 +830,21 @@ function Pile({
  *
  *  A shortlist of seventeen is short. Scrolling past a place you have already decided on is
  *  cheaper than clicking into every one you have not. */
-function Card({ entry, places, hubs, twins, rate, scores, offMarket, setOffMarket, selection, prefs }: { entry: ShortlistEntry } & CardProps) {
+function Card({
+  entry,
+  places,
+  hubs,
+  twins,
+  rate,
+  scores,
+  offMarket,
+  setOffMarket,
+  selection,
+  prefs,
+  onPick,
+}: { entry: ShortlistEntry; /** Tick this one, with the shift key's answer. From the pile, which
+     *  is the only thing that knows what order the cards are in. */
+  onPick?: (shiftKey: boolean) => void } & CardProps) {
   const group = groupOf(entry.verdicts);
   const alsoAs = twins.get(entry.rightmoveId) ?? [];
   const ticked = selection?.chosen.has(entry.rightmoveId) ?? false;
@@ -784,15 +861,8 @@ function Card({ entry, places, hubs, twins, rate, scores, offMarket, setOffMarke
       id={`card-${entry.rightmoveId}`}
     >
       <div className="card-head">
-        {selection && (
-          <label className="tick">
-            <input
-              type="checkbox"
-              checked={ticked}
-              onChange={() => selection.toggle(entry.rightmoveId)}
-            />
-            <span className="visually-hidden">Select {entry.displayAddress}</span>
-          </label>
+        {selection && onPick && (
+          <Tick checked={ticked} label={entry.displayAddress} onPick={onPick} />
         )}
         {/* The address, and only the address. It was a link to Rightmove, which made the most
             obvious thing to click on a card the one thing that took you off the site; the card
@@ -810,13 +880,17 @@ function Card({ entry, places, hubs, twins, rate, scores, offMarket, setOffMarke
           a place is, the shortlist stopped being a view of the same data. */}
       <div className="facts">
         {entry.price && <span className="price">{entry.price}</span>}
+        {/* "3 weeks ago" is the useful form and Rightmove's own sentence is the fact behind it, so
+            the sentence is a hint rather than a `title` — reachable by keyboard, and on a schedule
+            we control. */}
         {entry.listingUpdate && (
-          <span
+          <Hint
+            underline={false}
             className={/reduc/i.test(entry.listingUpdate) ? 'since reduced' : 'since dim'}
-            title={entry.listingUpdate}
+            text={entry.listingUpdate}
           >
             {relativeUpdate(entry.listingUpdate)}
-          </span>
+          </Hint>
         )}
         {entry.bedrooms !== null && <span>🛏 {entry.bedrooms} bed</span>}
         {entry.bathrooms !== null && <span>🚿 {entry.bathrooms} bath</span>}

@@ -14,7 +14,7 @@ import {
 } from '@house-hunt/core/db';
 import { SWEEP_WINDOWS } from '@house-hunt/core';
 import type { LocationResult, Place, ProjectHub } from '@house-hunt/core';
-import { TRANSIT_BASIS_NOTE } from '@house-hunt/ui';
+import { Hint, TRANSIT_BASIS_NOTE } from '@house-hunt/ui';
 
 /** Every write on this page reports its own failure through `notify` rather than throwing.
  *
@@ -268,7 +268,12 @@ function Neighbourhoods({ notify }: { notify: (text: string, kind?: 'error' | 'i
                 ? 'no coordinates — cannot place a listing against it'
                 : `${hub.lat.toFixed(4)}, ${hub.lon.toFixed(4)}`}
               {' · '}
-              {hub.locationIdentifier ?? 'not searchable yet'}
+              {/* `STATION^4187` is Rightmove's own name for the area, and it is shown rather than
+                  hidden because it is what a sweep searches and the thing to check when a sweep
+                  brings back the wrong neighbourhood. Unexplained it looks like a fault. */}
+              <Hint text="Rightmove's own id for this area, from Resolve. It is what a sweep searches — if the results look like the wrong neighbourhood, this is the thing to re-resolve.">
+                {hub.locationIdentifier ?? 'not searchable yet'}
+              </Hint>
               {hub.maxDaysSinceAdded !== null && ` · always looks back ${hub.maxDaysSinceAdded} days`}
             </span>
             {located[hub.id] && <LocationNote result={located[hub.id]!} hub={hub} />}

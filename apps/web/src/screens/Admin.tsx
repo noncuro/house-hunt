@@ -796,6 +796,8 @@ function Charges({
   projects: AdminProject[];
 }) {
   const [when, setWhen] = useState<'this' | 'last' | 'both'>('this');
+  const [kind, setKind] = useState<string | null>(null);
+  const [limit, setLimit] = useState(PAGE);
 
   const userName = new Map(users.map((u) => [u.id, u.displayName || u.email]));
   const projectName = new Map(projects.map((p) => [p.id, p.name]));
@@ -807,6 +809,7 @@ function Charges({
     .filter((row) => {
       if (focus?.kind === 'user' && row.userId !== focus.id) return false;
       if (focus?.kind === 'project' && row.projectId !== focus.id) return false;
+      if (kind !== null && row.kind !== kind) return false;
       const at = Date.parse(row.occurredAt);
       if (when === 'this') return at >= months.currentStart;
       if (when === 'last') return at < months.currentStart;
@@ -815,6 +818,10 @@ function Charges({
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
 
   const total = rows.reduce((sum, row) => sum + row.costUsd, 0);
+  // Offered only when there is a choice to make. One kind of charge is the usual state, and a
+  // filter with a single button in it is a control that cannot change anything.
+  const kinds = [...new Set((query.data ?? []).map((row) => row.kind))].sort();
+  const shown = rows.slice(0, limit);
 
   return (
     <>
@@ -835,6 +842,17 @@ function Charges({
             {label}
           </button>
         ))}
+        {kinds.length > 1 &&
+          kinds.map((name) => (
+            <button
+              key={name}
+              className={kind === name ? 'key key-on' : 'key'}
+              aria-pressed={kind === name}
+              onClick={() => setKind(kind === name ? null : name)}
+            >
+              {name}
+            </button>
+          ))}
         {focus && (
           <button className="key key-on" onClick={() => setFocus(null)} title="Show every charge again">
             {focus.kind === 'user' ? 'by' : 'in'} {focus.label} ✕
@@ -867,9 +885,14 @@ function Charges({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {shown.map((row) => (
                 <tr key={row.id}>
-                  <td className="dim">{ago(row.occurredAt)}</td>
+                  {/* A hundred charges in an afternoon all read "today", which is no order at all
+                      when the question is which run cost that. The clock time says it; the hover
+                      carries the date for a row the relative wording rounds. */}
+                  <td className="dim" title={new Date(row.occurredAt).toLocaleString()}>
+                    {ago(row.occurredAt)} {clock(row.occurredAt)}
+                  </td>
                   <td>{named(row.userId, userName)}</td>
                   <td>{named(row.projectId, projectName)}</td>
                   <td>
@@ -907,8 +930,27 @@ function Charges({
           </table>
         </div>
       )}
+
+      {/* A month of a project in use is several hundred rows, and all of them at once is a page you
+          scroll past rather than read. The total above counts every row, not the ones on screen —
+          a figure that grew as you pressed this would be worse than no figure. */}
+      {rows.length > shown.length && (
+        <button className="key" onClick={() => setLimit(limit + PAGE)}>
+          Show {Math.min(PAGE, rows.length - shown.length)} more of {rows.length}
+        </button>
+      )}
     </>
   );
+}
+
+/** How many charges a page of them is. */
+const PAGE = 100;
+
+/** The time of day, in the reader's own timezone — the part `ago` throws away. */
+function clock(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  return at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
 /** Who or which project a charge belongs to, and the two different ways that can be missing.

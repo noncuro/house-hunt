@@ -1,5 +1,9 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import { helloExtension, type ExtensionState } from '@/lib/bridge';
+import { EXPECTED_EXTENSION_VERSION, extensionBehind } from '@/lib/extension-version';
+
 /** Getting the Rightmove half onto this laptop.
  *
  *  This is the download surface, not `ExtensionNotice` — the two answer different questions and must
@@ -19,10 +23,26 @@
  *  whenever the extension changes. The steps are lifted from SETUP.md's "Installing it" so the page
  *  and the printed instructions cannot drift. */
 export function Install({ email }: { email: string }) {
+  const [state, setState] = useState<ExtensionState | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void helloExtension().then((next) => {
+      if (live) setState(next);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
   return (
     <div className="settings">
       <section className="setting">
         <h2>Install the browser extension</h2>
+        {/* Six numbered steps for something already done reads as "this did not work". The page
+            still offers the download either way — the zip is how a second laptop gets it, and how
+            an out-of-date copy is replaced. */}
+        <Installed state={state} />
         <p className="dim">
           The extension is the Rightmove half of this: it draws the panel on every listing — travel
           times, nearest stations, the shared rating — and badges search results. Everything on this
@@ -75,5 +95,41 @@ export function Install({ email }: { email: string }) {
         </p>
       </section>
     </div>
+  );
+}
+
+/** What this browser already has, once the handshake has answered.
+ *
+ *  Nothing while the question is outstanding, and nothing when the answer is "no extension here" —
+ *  that is what the whole page is already for, and saying it twice is noise. */
+function Installed({ state }: { state: ExtensionState | null }) {
+  if (!state || state.status === 'absent') return null;
+
+  if (state.status === 'broken') {
+    return (
+      <p className="notice notice-bad">
+        An extension is installed here but did not answer — {state.message}. Reloading it on{' '}
+        <code>chrome://extensions</code> usually fixes that; re-installing from the zip below always
+        does.
+      </p>
+    );
+  }
+
+  const version = state.version;
+  if (extensionBehind(version)) {
+    return (
+      <p className="notice notice-warn">
+        Installed here{version ? ` (v${version})` : ''}, but this site ships v
+        {EXPECTED_EXTENSION_VERSION}. Download the zip below and follow <strong>Updating it</strong>{' '}
+        rather than the install steps — your session and settings survive it.
+      </p>
+    );
+  }
+
+  return (
+    <p className="notice notice-good">
+      Already installed in this browser (v{version}) and up to date. The steps below are for another
+      laptop.
+    </p>
   );
 }
