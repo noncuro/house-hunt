@@ -484,10 +484,12 @@ async function checkTriage({ page }: Stage): Promise<void> {
   // and would leave this depending on how many times it had been pressed above. A fresh triage
   // page is the table by default, which is the layout this asserts about.
   await openView(page, 'triage');
-  const rowExit = await page.locator('.triage table tbody tr .rightmove-link').first().getAttribute('href');
-  if (!rowExit?.startsWith('https://www.rightmove.co.uk/')) {
-    note(`the first triage row's Rightmove link points at "${rowExit}"`);
-  }
+  // The row carries the address and nothing else. The way out to Rightmove used to sit in it, one
+  // line under the address, which put the only link that leaves inside the control whose whole job
+  // is to open the thing beside it; it lives at the foot of the card now, asserted below once a card
+  // is actually open.
+  const rowExits = await page.locator('.triage table tbody tr .rightmove-link').count();
+  if (rowExits > 0) note(`${rowExits} triage rows still carry a Rightmove link`);
   const address = page.locator('.triage table tbody tr .compare-open').first();
   const href = await address.getAttribute('href');
   // `#card-<id>`, digits — the shape the shortlist's own hash reader accepts on a cold load. The
@@ -507,6 +509,13 @@ async function checkTriage({ page }: Stage): Promise<void> {
     if ((await card.count()) === 0) note(`clicking a triage row opened no ${href} card in place`);
     else if (!(await card.isVisible())) note(`the ${href} card opened in place but is not visible`);
     console.log(`triage row expands ${href} in place`);
+
+    // And the way out is in the card, where it moved to. A pile you can work without leaving still
+    // has to let you leave deliberately.
+    const cardExit = await card.locator('.rightmove-link').first().getAttribute('href');
+    if (!cardExit?.startsWith('https://www.rightmove.co.uk/')) {
+      note(`the opened triage card's Rightmove link points at "${cardExit}"`);
+    }
 
     // Clicking the same address again shuts it — the pile you are working is not left holding open
     // cards you have already read past.
