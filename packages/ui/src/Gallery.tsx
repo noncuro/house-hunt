@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import './gallery.css';
+
+/** How far a finger has to travel before it counts as a swipe rather than a tap that wandered.
+ *  Below this the photo springs back, which is the feedback that says "that was not a swipe". */
+const SWIPE_MIN_PX = 45;
 
 /** Photos in place, rather than a new tab per click.
  *
@@ -29,6 +33,47 @@ export function Gallery({
   container?: Element | DocumentFragment | null;
 }) {
   const [at, setAt] = useState(startAt);
+  /** How far the finger has moved since it went down, or null when nothing is being dragged. The
+   *  photo follows it, which is the only thing that tells you a swipe is a gesture this gallery
+   *  understands before you have finished making it. */
+  const [drag, setDrag] = useState<number | null>(null);
+  const from = useRef<{ x: number; y: number; id: number } | null>(null);
+
+  const step = (by: number) => setAt((i) => (i + by + images.length) % images.length);
+
+  // Only worth swiping through more than one photo, and `step` would be a no-op anyway.
+  const swipeable = images.length > 1;
+
+  /** Pointer events rather than touch events: one set of handlers covers a finger, a stylus and a
+   *  mouse dragged across the photo, and the panel's gallery opens inside a shadow root where the
+   *  fewer listeners the better. The pointer is captured so a finger that leaves the image mid-swipe
+   *  still ends the gesture here rather than dropping it half-done. */
+  function onPointerDown(event: React.PointerEvent) {
+    if (!swipeable || !event.isPrimary) return;
+    from.current = { x: event.clientX, y: event.clientY, id: event.pointerId };
+    (event.currentTarget as Element).setPointerCapture(event.pointerId);
+  }
+
+  function onPointerMove(event: React.PointerEvent) {
+    const start = from.current;
+    if (!start || event.pointerId !== start.id) return;
+    const dx = event.clientX - start.x;
+    // A gesture that is mostly vertical is not a swipe through the photos — on a phone it is
+    // somebody trying to scroll or dismiss, and grabbing it would make the gallery feel stuck.
+    if (Math.abs(dx) < Math.abs(event.clientY - start.y)) return;
+    setDrag(dx);
+  }
+
+  function onPointerEnd(event: React.PointerEvent) {
+    const start = from.current;
+    if (!start || event.pointerId !== start.id) return;
+    from.current = null;
+    const dx = drag ?? 0;
+    setDrag(null);
+    // Left means forward, the way every photo gallery on a phone works: the next photo comes in
+    // from the right as the current one leaves.
+    if (Math.abs(dx) >= SWIPE_MIN_PX) step(dx < 0 ? 1 : -1);
+  }
 
   useEffect(() => {
     // Arrow keys are how anyone actually flicks through photos; Escape is how they leave.
@@ -66,22 +111,45 @@ export function Gallery({
         aria-label="Previous photo"
         onClick={(e) => {
           e.stopPropagation();
-          setAt((i) => (i - 1 + images.length) % images.length);
+          step(-1);
         }}
       >
         ‹
       </button>
 
       {/* Stop propagation on the image itself so clicking the photo doesn't dismiss it — only
-          clicking the backdrop around it does. */}
-      <img className="lightbox-image" src={images[at]} alt="" onClick={(e) => e.stopPropagation()} />
+          clicking the backdrop around it does. That is also what makes the swipe below safe: a
+          drag ends in a click on whatever it started on, and a swipe across the photo must not be
+          read as a tap on the backdrop asking to leave. */}
+      <img
+        className={drag === null ? 'lightbox-image' : 'lightbox-image lightbox-dragging'}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerEnd}
+        // A gesture the browser takes over — a back-swipe from the screen edge, a phone call — ends
+        // as a cancel and never as an up. Without this the drag would stick and the photo would sit
+        // held mid-swipe.
+        onPointerCancel={onPointerEnd}
+        // Follows the finger, and springs back when the swipe falls short — the drag is the only
+        // thing that says the gesture is understood before it is finished. Damped rather than
+        // one-to-one so the photo cannot be dragged clean off the screen and left there.
+        style={drag === null ? undefined : { transform: `translateX(${drag * 0.6}px)` }}
+        src={images[at]}
+        alt=""
+        // The browser's own image drag starts about thirty pixels into a mouse swipe and takes the
+        // pointer stream with it — no more moves, no `pointerup`, and the photo left sitting where
+        // the finger stopped. Nothing here wants a draggable image; the CSS above stops the
+        // long-press menu, and this stops the drag.
+        draggable={false}
+        onClick={(e) => e.stopPropagation()}
+      />
 
       <button
         className="lightbox-step lightbox-next"
         aria-label="Next photo"
         onClick={(e) => {
           e.stopPropagation();
-          setAt((i) => (i + 1) % images.length);
+          step(1);
         }}
       >
         ›
