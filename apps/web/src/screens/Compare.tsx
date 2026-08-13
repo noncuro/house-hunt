@@ -19,6 +19,7 @@ import { FlagChip } from '@house-hunt/ui';
 import { SizeValue } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
 import { RightmoveLink } from '@/components/RightmoveLink';
+import { Tick, useRangePick, type Selection } from '@/components/Tick';
 import { useCachedTravel } from '@/lib/queries';
 import { isSurprise } from '@/lib/score';
 
@@ -34,6 +35,16 @@ import { isSurprise } from '@/lib/score';
  *  what mattered last week, and a "match score" hides which trade you're actually making. */
 
 type Sort = { key: string; descending: boolean };
+
+/** How the table was left, per table — compare and triage keep their own. Sorting by rent, opening
+ *  a flat and coming back to a table sorted by price again is the table undoing the question you
+ *  asked it. Module-level rather than lifted into the page, for the same reason as the map's
+ *  viewport: nothing above has an opinion about it, and it is deliberately not persisted — a fresh
+ *  visit starts at the caller's `defaultSort`.
+ *
+ *  Which piles are shown rides along: it is the same gesture ("show me the rejected ones too")
+ *  thrown away by the same trip. */
+const kept = new Map<string, { sort: Sort | null; showing: Record<Group, boolean> }>();
 
 export function Compare({
   entries,
@@ -60,13 +71,7 @@ export function Compare({
   /** Triage borrows this table and adds a tick column. A pile of tick boxes down the left of a
    *  stack of cards is a shape that argues with itself — you tick things you are comparing, and
    *  comparing is what the table is for. Rows toggle rather than jumping to a card when it is on. */
-  selection?: {
-    chosen: Set<string>;
-    toggle: (rightmoveId: string) => void;
-    /** Set a whole run at once. Shift-click needs this: toggling one at a time would read the
-     *  same stale selection for every id in the range and keep only the last. */
-    setMany: (rightmoveIds: string[], on: boolean) => void;
-  };
+  selection?: Selection;
   /** Triage is already one pile, so the include-unrated switches would only ever empty it. */
   filters?: boolean;
   /** What the table sorts by before anyone clicks a header. `null` means "leave the rows as they
@@ -93,20 +98,24 @@ export function Compare({
     render: (entry: ShortlistEntry) => React.ReactNode;
   };
 }) {
-  const [showing, setShowing] = useState<Record<Group, boolean>>(DEFAULT_SHOWING);
-  const [sort, setSort] = useState<Sort | null>(defaultSort);
+  const [showing, setShowing] = useState<Record<Group, boolean>>(
+    () => kept.get(columnsKey)?.showing ?? DEFAULT_SHOWING,
+  );
+  const [sort, setSort] = useState<Sort | null>(() =>
+    kept.has(columnsKey) ? kept.get(columnsKey)!.sort : defaultSort,
+  );
   const [chosen, setChosen] = useColumnChoice(columnsKey);
   const [picking, setPicking] = useState(false);
+
+  useEffect(() => {
+    kept.set(columnsKey, { sort, showing });
+  }, [columnsKey, sort, showing]);
 
   // The table is wider than the page whenever there is more than a place or two saved, and a
   // plain `overflow-x: auto` gives no sign of it: the audit found 191px — the whole "Listed"
   // column — sitting off the right edge looking like nothing at all. `more` drives a fade at that
   // edge, and it is measured rather than assumed, so a table that happens to fit shows no fade
   // claiming otherwise.
-  // Where the last tick landed, so shift-click has an anchor. Held as an id rather than a row
-  // number, because sorting reorders the rows under it and a remembered index would then select
-  // a range nobody pointed at.
-  const anchor = useRef<string | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const [more, setMore] = useState(false);
   const measure = useCallback(() => {
@@ -123,6 +132,26 @@ export function Compare({
     watch.observe(box);
     return () => watch.disconnect();
   }, [measure]);
+
+  // The column picker is a popover, and a popover that only closes by pressing the button that
+  // opened it is a trap — it sits over the first rows of the table it configures, which is exactly
+  // what you want to look at while changing them.
+  const picker = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!picking) return;
+    const onDown = (event: MouseEvent) => {
+      if (!picker.current?.contains(event.target as Node)) setPicking(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPicking(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [picking]);
 
   // Only the places one of you has said something about, unless you ask for more. The table is
   // for weighing up flats against each other, and a row nobody has an opinion on is not yet in
@@ -190,28 +219,12 @@ export function Compare({
     return tally;
   }, [entries]);
 
-  // Shift-click selects the whole run between the last ticked row and this one. Shared by the row
-  // body and the checkbox itself, so the range lands the same however you click — the checkbox used
-  // to miss out entirely, because its label stops the click ever reaching the row handler where this
-  // logic used to live. Returns true when it handled a range (the caller does nothing more), false
-  // when it only moved the anchor and the caller should still toggle this one.
-  const rangeSelect = (id: string, shiftKey: boolean): boolean => {
-    if (!selection) return false;
-    const from = anchor.current;
-    if (shiftKey && from && from !== id) {
-      const order = sorted.map((e) => e.rightmoveId);
-      const a = order.indexOf(from);
-      const b = order.indexOf(id);
-      if (a !== -1 && b !== -1) {
-        // The anchor's own state decides the run's, which is what makes a second shift-click undo
-        // the first rather than re-select what is already on.
-        selection.setMany(order.slice(Math.min(a, b), Math.max(a, b) + 1), selection.chosen.has(from));
-        return true;
-      }
-    }
-    anchor.current = id;
-    return false;
-  };
+  // One picker for the row and for the box in it, over the order actually on screen, so the two
+  // cannot disagree about what a shift-click means.
+  const pick = useRangePick(
+    useMemo(() => sorted.map((e) => e.rightmoveId), [sorted]),
+    selection,
+  );
 
   if (entries.length === 0) return <p className="dim">Nothing to compare yet.</p>;
 
@@ -237,7 +250,7 @@ export function Compare({
       </div>
       )}
 
-      <div className="columns-pick">
+      <div className="columns-pick" ref={picker}>
         <button className="key" aria-expanded={picking} onClick={() => setPicking(!picking)}>
           Columns <span className="dim">{columns.length} of {all.length}</span>
         </button>
@@ -263,7 +276,14 @@ export function Compare({
                   .map((column) => (
                     <label key={column.key}>
                       <input type="checkbox" checked={on(column.key)} onChange={() => flip(column.key)} />
-                      {column.place!.mode ? MODE_ICON[column.place!.mode] : 'fastest'}
+                      {/* The icon is the label on screen and says nothing out loud, so the mode's
+                          name goes with it — "🚲" is not a choice anybody can act on. */}
+                      <span aria-hidden="true">
+                        {column.place!.mode ? MODE_ICON[column.place!.mode] : 'fastest'}
+                      </span>
+                      <span className="visually-hidden">
+                        {place.label} {column.place!.mode ?? 'fastest'}
+                      </span>
                     </label>
                   ))}
               </div>
@@ -284,6 +304,7 @@ export function Compare({
               {columns.map((column) => (
                 <th
                   key={column.key}
+                  scope="col"
                   className={column.numeric ? 'num' : undefined}
                   aria-sort={
                     sort?.key === column.key ? (sort.descending ? 'descending' : 'ascending') : 'none'
@@ -320,28 +341,21 @@ export function Compare({
                     openRow(entry.rightmoveId);
                     return;
                   }
-                  if (rangeSelect(entry.rightmoveId, event.shiftKey)) return;
-                  selection.toggle(entry.rightmoveId);
+                  // Shift-clicking a row is also the browser's "extend the text selection", which
+                  // leaves several hundred characters of the table highlighted behind every range
+                  // you pick. The rows are unselectable in CSS; this clears anything the gesture
+                  // managed to start before that took effect.
+                  if (event.shiftKey) window.getSelection()?.removeAllRanges();
+                  pick(entry.rightmoveId, event.shiftKey);
                 }}
               >
                 {selection && (
                   <td className="tick-col">
-                    <label className="tick" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selection.chosen.has(entry.rightmoveId)}
-                        onClick={(e) => {
-                          // The same range logic as the row. The label above stops the click ever
-                          // reaching the row handler, so a shift-click on the box is handled here.
-                          // A range op preventDefaults to suppress the box's own toggle and its
-                          // onChange; a plain click only records the anchor and lets onChange do the
-                          // single toggle.
-                          if (rangeSelect(entry.rightmoveId, e.shiftKey)) e.preventDefault();
-                        }}
-                        onChange={() => selection.toggle(entry.rightmoveId)}
-                      />
-                      <span className="visually-hidden">Select {entry.displayAddress}</span>
-                    </label>
+                    <Tick
+                      checked={selection.chosen.has(entry.rightmoveId)}
+                      label={entry.displayAddress}
+                      onPick={(shiftKey) => pick(entry.rightmoveId, shiftKey)}
+                    />
                   </td>
                 )}
                 {columns.map((column) => (
@@ -450,8 +464,12 @@ function buildColumns(
               className="compare-open"
               href={`#card-${e.rightmoveId}`}
               onClick={(ev) => {
-                ev.preventDefault();
                 ev.stopPropagation();
+                // A cmd-click means "open it in a tab", and swallowing it made a liar of the href
+                // above: the link existed to be openable in a second tab and was the one thing on
+                // the page that could not be. Only a plain click is ours to handle.
+                if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
+                ev.preventDefault();
                 onOpen(e.rightmoveId);
               }}
             >

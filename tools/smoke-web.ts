@@ -348,8 +348,33 @@ async function checkTriage({ page }: Stage): Promise<void> {
   // keep away from a real house hunt, and worth not relying on that alone.
   const rate = page.locator('.triage-rate button').first();
   if (await rate.isEnabled()) note('the bulk-rate buttons are live with nothing selected');
-  await page.locator('.triage table tbody tr input[type="checkbox"]').first().check();
+  const ticks = page.locator('.triage table tbody tr .tick');
+  await ticks.first().click();
   if (!(await rate.isEnabled())) note('the bulk-rate buttons stayed dead after ticking a row');
+
+  // Shift-picking a run, from the box rather than the row: the box was the half that was broken,
+  // and it was broken while the row beside it worked, so a check that only drives one of the two
+  // says nothing about the other. Four rows, and the box's own `aria-checked` as well as the
+  // count — a row that is in the selection while drawing itself unticked is the failure this had.
+  if ((await ticks.count()) >= 4) {
+    await ticks.nth(3).click({ modifiers: ['Shift'] });
+    const selected = await page.locator('.triage-bar .dim').first().textContent();
+    if (selected?.trim() !== '4 selected') {
+      note(`shift-ticking the fourth row read "${selected?.trim()}", not "4 selected"`);
+    }
+    for (const i of [0, 1, 2, 3]) {
+      if ((await ticks.nth(i).getAttribute('aria-checked')) !== 'true') {
+        note(`row ${i + 1} of the shift-picked run draws itself unticked`);
+      }
+    }
+    // Put the pile back the way it was found. Nothing below writes, but a harness that leaves four
+    // flats selected leaves the next assertion reading a state this one invented.
+    for (const i of [0, 1, 2, 3]) await ticks.nth(i).click();
+    const cleared = await page.locator('.triage-bar .dim').first().textContent();
+    if (cleared?.trim() !== 'Nothing selected') {
+      note(`unticking the run left "${cleared?.trim()}"`);
+    }
+  }
 
   await page.locator('.triage-layout').click();
   // Scoped to the pile: `article.card` is the shortlist's card too, and an unscoped count here
