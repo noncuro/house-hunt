@@ -1,3 +1,4 @@
+import { Hint } from './Hint';
 import './score.css';
 
 /** The verdict score, drawn as a pill: the model's probability this project says yes to a flat.
@@ -50,10 +51,15 @@ export function ScoreBadge({
 }) {
   const band = scoreBand(score);
   const pct = Math.round(score * 100);
+  // The Hint rather than a native `title`: a percentage with no stated provenance is the one number
+  // here somebody could read as a grade, and `title` says so only after a pause, only on a mouse,
+  // and not at all in the panel's shadow root. Underline off — the pill already reads as an object
+  // in its own right, and a dotted line under a coloured badge is noise.
   return (
-    <span
+    <Hint
+      underline={false}
       className={`score score-${band}${surprise ? ' score-surprise' : ''}`}
-      title={
+      text={
         surprise
           ? `The model would guess ${WORD[band]} (${pct}%) — worth a second look, it disagrees with the rating.`
           : `The model's guess from your past verdicts: ${WORD[band]} (${pct}%).`
@@ -62,6 +68,6 @@ export function ScoreBadge({
       {surprise && <span className="score-surprise-mark" aria-hidden="true">⚡</span>}
       <span className="score-pct">{pct}%</span>
       {showWord && <span className="score-word">{WORD[band]}</span>}
-    </span>
+    </Hint>
   );
 }

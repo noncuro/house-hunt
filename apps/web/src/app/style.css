@@ -206,18 +206,22 @@ h2 {
 
 .top {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
 }
 
+/* Wraps to a second row rather than being clipped. `overflow: hidden` is what rounds the ends of
+   the strip, and with the switch held at its full width it was also what hid Admin and Install
+   entirely on a narrow window — a tab you cannot see is a tab you cannot reach. */
 .views {
   display: flex;
+  flex-wrap: wrap;
   gap: 0;
   border: 1px solid #dfe6ec;
   border-radius: 8px;
   overflow: hidden;
-  flex-shrink: 0;
 }
 
 .view {
@@ -599,13 +603,22 @@ h2 {
   font-size: 12px;
 }
 
+/* A hub's line carries a window select and two buttons as well as its name, and on a narrow window
+   those were pushed off the right-hand edge — the Remove × among them. It wraps under the name
+   instead, which keeps every control on the row reachable. */
 .place {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 4px 12px;
   padding: 5px 0;
   border-bottom: 1px solid #eef2f5;
   font-size: 13px;
+}
+
+.place > span:first-child {
+  flex: 1 1 220px;
 }
 
 .remove {
@@ -888,8 +901,11 @@ h2 {
 
 /* --- sweep ------------------------------------------------------------------------------- */
 
+/* The same 16px every other view leaves under the tab strip. Without it this one alone began
+   hard against the switch. */
 .sweep {
   max-width: 720px;
+  margin-top: 16px;
 }
 
 .sweep-hubs {
@@ -999,6 +1015,12 @@ h2 {
   margin-left: auto;
 }
 
+/* The question the bar asks before writing a verdict for everybody, in the bar's own row. */
+.triage-confirm {
+  font-weight: 600;
+  color: #12263a;
+}
+
 /* Wider than the per-card buttons, which share a row three ways; these carry the count of what
    they are about to change and have room to say the whole verdict. */
 .triage-rate .rate {
@@ -1012,20 +1034,45 @@ h2 {
   cursor: default;
 }
 
+/* A button rather than a checkbox, so it has to draw its own box — see Tick.tsx for why the
+   native input had to go. */
 .tick {
   display: flex;
   align-items: center;
   /* Against the address, not the whole card: a card-wide hit area would swallow the link and
      every button on it. */
   padding: 2px 6px 2px 0;
+  background: none;
+  border: none;
   cursor: pointer;
 }
 
-.tick input {
+.tick-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 16px;
   height: 16px;
-  cursor: pointer;
-  accent-color: #12263a;
+  font-size: 12px;
+  line-height: 1;
+  color: #fff;
+  background: #fff;
+  border: 1px solid #9fb0bf;
+  border-radius: 3px;
+}
+
+.tick-on .tick-box {
+  background: #12263a;
+  border-color: #12263a;
+}
+
+.tick:focus-visible {
+  outline: none;
+}
+
+.tick:focus-visible .tick-box {
+  outline: 2px solid #2b6cb0;
+  outline-offset: 2px;
 }
 
 /* Ticked has to read from across the card — the bar says "9 selected" and the only way to check
@@ -1056,9 +1103,12 @@ h2 {
   background: #eef4fb;
 }
 
-/* The rows toggle on click here, so the whole row has to look like a target. */
+/* The rows toggle on click here, so the whole row has to look like a target. `user-select` because
+   shift-click is a range of ticks — the browser reads the same gesture as a range of text and paints
+   half the table blue underneath the selection you actually asked for. */
 .triage .compare tbody tr {
   cursor: pointer;
+  user-select: none;
 }
 
 /* The row whose card is open in place, and the card's own row beneath it. The header keeps the
@@ -1177,6 +1227,13 @@ h2 {
   border-radius: 6px;
   background: #ffffff;
   border: 1px solid #bfe6d4;
+}
+
+/* Room kept for the extension check, whether or not it has anything to say — see Extension.tsx.
+   One banner's worth of height: a longer one still moves the page, but by the difference rather
+   than by the whole thing, and the usual answer is silence. */
+.notice-slot {
+  min-height: 33px;
 }
 
 /* Each refusal wants a different action out of the reader, so each gets its own colour: red for
