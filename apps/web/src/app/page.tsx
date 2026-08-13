@@ -8,9 +8,22 @@ import {
 } from '@house-hunt/core';
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { Sweep } from '@/screens/Sweep';
-import { duplicateIds, enthusiasm, groupOf, sizeOf, type Group } from '@house-hunt/core';
+import {
+  duplicateIds,
+  enthusiasm,
+  groupOf,
+  sizeOf,
+  FILTER_LABEL,
+  funnelCounts,
+  GROUP_LABEL,
+  matchesStage,
+  STAGE_FILTERS,
+  type FunnelCounts,
+  type Group,
+  type StageFilter,
+} from '@house-hunt/core';
 import { NoActiveProject, spendSummary, Unauthenticated, type ShortlistEntry } from '@house-hunt/core/db';
-import type { HuntPreferences, Place, Rating } from '@house-hunt/core';
+import type { ArchiveReason, HuntPreferences, Place, Rating, Stage } from '@house-hunt/core';
 import { HubFact } from '@house-hunt/ui';
 import { Hint } from '@house-hunt/ui';
 import { Flags } from '@house-hunt/ui';
@@ -46,6 +59,7 @@ import {
   useRate,
   useRetrain,
   useSetOffMarket,
+  useSetStage,
   useShortlist,
   useSignOut,
 } from '@/lib/queries';
@@ -160,6 +174,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   const settingsQuery = useProjectSettings();
   const retrain = useRetrain();
   const offMarketMutation = useSetOffMarket();
+  const stageMutation = useSetStage();
   const [sortMode, setSortMode] = useState<SortMode>('default');
 
   // The neighbourhoods every card places its flat against (design D11). Same hook the Sweep view
@@ -172,7 +187,17 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   // that quietly refuses to analyse (design D9).
   const spendQuery = useQuery({ queryKey: ['spend'], queryFn: spendSummary });
 
-  const entries = shortlist.data ?? null;
+  const all = shortlist.data ?? null;
+  // The funnel is a filter over the whole shortlist rather than a view of its own: "the two we have
+  // viewed" is the same list of cards, the same table and the same map, narrowed. Triage is
+  // deliberately outside it — that pile is everything nobody has judged yet, which is by definition
+  // everything not in the funnel.
+  const [stageFilter, setStageFilter] = useState<StageFilter>('all');
+  const funnel = useMemo(() => funnelCounts(all ?? []), [all]);
+  const entries = useMemo(
+    () => (all === null ? null : all.filter((e) => matchesStage(e.stage, stageFilter))),
+    [all, stageFilter],
+  );
   const places = placesQuery.data ?? [];
   // Three states, and the difference matters: still reading, read and failed, read. `HubFact`
   // renders each as itself rather than letting a failure read as "nothing near this flat".
@@ -242,7 +267,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
 
   // Over every entry, not per pile: a relisted flat is routinely rejected under one id and
   // unrated under the other, which lands the two halves in piles that never see each other.
-  const twins = useMemo(() => duplicateIds(entries ?? []), [entries]);
+  const twins = useMemo(() => duplicateIds(all ?? []), [all]);
 
   /** `…/#card-88023648` opens on that flat — the thing a `chrome-extension://` address could never
    *  do, and the reason for most of this change. You can send one of these to the other laptop, or
@@ -253,15 +278,18 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
    *  scrolling away and toggling a pile does not yank you back. */
   const jumped = useRef<string | null>(null);
   useEffect(() => {
-    if (!entries) return;
+    if (!all) return;
     const id = /^#card-(\d+)$/.exec(window.location.hash)?.[1];
     if (!id || jumped.current === id) return;
-    const entry = entries.find((e) => e.rightmoveId === id);
+    const entry = all.find((e) => e.rightmoveId === id);
     if (!entry) return;
     jumped.current = id;
+    // A link to a flat has to land on it. Somebody who left the shortlist filtered to "viewed" and
+    // then opened a link to a flat that is not would otherwise be scrolled to nothing at all.
+    if (!matchesStage(entry.stage, stageFilter)) setStageFilter('all');
     openCard(id, groupOf(entry.verdicts));
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries]);
+  }, [all]);
   // Every entry's P(yes) under the current model, computed once and shared by the cards, the
   // triage sort and the mismatch marker. Null while there is no model (never trained, or too few
   // verdicts) — the UI then simply shows no scores rather than an error.
@@ -272,11 +300,11 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   // without it is a confident number about the wrong flat. No score is the honest state.
   const model = modelQuery.data?.model ?? null;
   const scores = useMemo(
-    () => (model && entries && Array.isArray(hubs) ? scoreEntries(model, entries, hubs) : null),
+    () => (model && all && Array.isArray(hubs) ? scoreEntries(model, all, hubs) : null),
     // hubsQuery.data rather than the derived `hubs` array, which is a fresh reference every render;
     // isError alongside it so a failed refetch clears the scores instead of leaving stale ones up.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-    [model, entries, hubsQuery.data, hubsQuery.isError],
+    [model, all, hubsQuery.data, hubsQuery.isError],
   );
   const offMarket = offMarketQuery.data ?? new Set<string>();
   const setEntryOffMarket = (entry: ShortlistEntry, off: boolean) =>
@@ -285,9 +313,28 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       { onError: (e) => push(`Not saved — ${(e as Error).message}`) },
     );
 
+  /** Move a place along the funnel. The verdict is not touched and must not be: losing a flat you
+   *  loved is a fact about the flat's availability, not about your taste, and the score is fitted on
+   *  the second. */
+  const setEntryStage = (entry: ShortlistEntry, stage: Stage, archiveReason: ArchiveReason | null) =>
+    stageMutation.mutate(
+      { rightmoveId: entry.rightmoveId, stage, archiveReason },
+      { onError: (e) => push(`Not saved — ${(e as Error).message}`) },
+    );
+
   const prefs = settingsQuery.data ?? {};
-  const cardProps = { places, hubs, twins, rate, scores, offMarket, setOffMarket: setEntryOffMarket, prefs };
-  const byId = useMemo(() => new Map((entries ?? []).map((e) => [e.rightmoveId, e])), [entries]);
+  const cardProps = {
+    places,
+    hubs,
+    twins,
+    rate,
+    scores,
+    offMarket,
+    setOffMarket: setEntryOffMarket,
+    setStage: setEntryStage,
+    prefs,
+  };
+  const byId = useMemo(() => new Map((all ?? []).map((e) => [e.rightmoveId, e])), [all]);
 
   /** The one jump from anywhere pointing at a flat — a map pin, a compare row, a triage row — so
    *  the three cannot disagree about which pile the card is waiting in. */
@@ -325,7 +372,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       </div>
     );
   }
-  if (!entries) {
+  if (!all || !entries) {
     return (
       <div className="wrap">
         <p className="dim working">Loading…</p>
@@ -344,8 +391,13 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         <div>
           <h1>Shortlist</h1>
           <p className="dim">
-            {entries.length} {entries.length === 1 ? 'place' : 'places'} opened in{' '}
+            {all.length} {all.length === 1 ? 'place' : 'places'} opened in{' '}
             <strong>{project.name}</strong>, shared with everyone in it.
+            {/* The count above is the whole hunt, so a filter has to say what is actually on
+                screen — otherwise a shortlist showing two flats claims to be showing forty. */}
+            {stageFilter !== 'all' && (
+              <span> Showing the {entries.length} at “{FILTER_LABEL[stageFilter].toLowerCase()}”.</span>
+            )}
             {shortlist.isFetching && <span className="working"> · refreshing</span>}
           </p>
           {/* Who you are, because a verdict is now signed. Sign out sits with it rather than in
@@ -429,6 +481,13 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           case, because signing in on this page hands the credentials across at that moment. */}
       <ExtensionNotice email={user.email} />
 
+      {/* The funnel, over the three views that show places rather than manage them. Triage is
+          excluded on purpose: it is the pile nobody has judged, which is exactly the pile that has
+          not entered the funnel. */}
+      {(view === 'list' || view === 'table' || view === 'map') && (
+        <Funnel counts={funnel} filter={stageFilter} setFilter={setStageFilter} />
+      )}
+
       {view === 'settings' && (
         <Settings
           places={places}
@@ -482,21 +541,21 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
 
       <div hidden={view !== 'list' && view !== 'map'}>
       <Pile
-        title="Excited about"
+        title={GROUP_LABEL.excited}
         entries={grouped.excited}
-        empty="Nothing yet — mark a place “Exciting” in the panel and it lands here."
+        empty="Nothing yet — mark a place “Love it” in the panel and it lands here."
         {...cardProps}
       />
 
       <Toggle
-        label={`Maybes (${grouped.maybe.length})`}
+        label={`${GROUP_LABEL.maybe} (${grouped.maybe.length})`}
         open={showMaybes}
         onToggle={() => setShowMaybes((v) => !v)}
       />
-      {showMaybes && <Pile entries={grouped.maybe} empty="No maybes." {...cardProps} />}
+      {showMaybes && <Pile entries={grouped.maybe} empty="Nothing liked." {...cardProps} />}
 
       <Toggle
-        label={`Not yet rated (${grouped.unrated.length})`}
+        label={`${GROUP_LABEL.unrated} (${grouped.unrated.length})`}
         open={showUnrated}
         onToggle={() => setShowUnrated((v) => !v)}
       />
@@ -507,7 +566,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       {/* A count, not a list. Seeing them again is the thing rejecting was meant to prevent —
           but the number is worth knowing, and it's one click if you want to check. */}
       <Toggle
-        label={`Rejected (${grouped.rejected.length})`}
+        label={`${GROUP_LABEL.rejected} (${grouped.rejected.length})`}
         open={showRejected}
         onToggle={() => setShowRejected((v) => !v)}
       />
@@ -515,6 +574,41 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       </div>
 
       <Toasts toasts={toasts} dismiss={dismiss} />
+    </div>
+  );
+}
+
+/** The funnel as a row of counts you can filter on: shortlisted, reached out, viewing booked,
+ *  viewed, offer in, archived — and the pile that is in none of them.
+ *
+ *  A step with nothing in it is still drawn, dimmed. A funnel that hid its empty steps would read
+ *  as a hunt with no "viewed" step rather than one with nothing viewed yet, and the shape of what
+ *  is left to do is the whole reason to look at it. */
+function Funnel({
+  counts,
+  filter,
+  setFilter,
+}: {
+  counts: FunnelCounts;
+  filter: StageFilter;
+  setFilter: (next: StageFilter) => void;
+}) {
+  return (
+    <div className="funnel" data-testid="funnel">
+      {STAGE_FILTERS.map((step) => (
+        <button
+          key={step}
+          className={filter === step ? 'key key-on' : 'key'}
+          aria-pressed={filter === step}
+          disabled={counts[step] === 0 && filter !== step}
+          data-testid={`funnel-${step}`}
+          // Clicking the step you are already on goes back to everything, so the filter can always
+          // be undone with the button that set it.
+          onClick={() => setFilter(filter === step ? 'all' : step)}
+        >
+          {FILTER_LABEL[step]} <span className="dim">{counts[step]}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -781,6 +875,9 @@ interface CardProps {
    *  love — this only keeps the model from learning it. */
   offMarket: Set<string>;
   setOffMarket: (entry: ShortlistEntry, off: boolean) => void;
+  /** Move a place along the funnel. Never touches its rating — the two are separate facts, which is
+   *  the point of the funnel existing at all (`packages/core/src/stage.ts`). */
+  setStage: (entry: ShortlistEntry, stage: Stage, archiveReason: ArchiveReason | null) => void;
   /** Present only in triage: cards grow a tick box and join a batch. Absent everywhere else,
    *  because a card you are reading to decide on is not a card you are selecting. */
   selection?: Selection;
@@ -839,6 +936,7 @@ function Card({
   scores,
   offMarket,
   setOffMarket,
+  setStage,
   selection,
   prefs,
   onPick,
@@ -949,7 +1047,12 @@ function Card({
           per person — its own emoji, its own wording, no author and no date — which is exactly the
           drift `components/Verdict.tsx` was written to end. A project now holds one rating
           (design D6), and one renderer states it. */}
-      <Detail entry={entry} places={places} onRate={(value, note) => rate(entry, value, note)} />
+      <Detail
+        entry={entry}
+        places={places}
+        onRate={(value, note) => rate(entry, value, note)}
+        onSetStage={(stage, reason) => setStage(entry, stage, reason)}
+      />
 
       {/* Off the market, but still a place you liked — kept in the shortlist with its verdict,
           withheld only from training. The same control, and the same rules for when it shows, as

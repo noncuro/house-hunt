@@ -20,6 +20,7 @@ export * from './Opener';
 export * from './Score';
 export * from './Size';
 export * from './Spend';
+export * from './Stage';
 export * from './Stations';
 export * from './Toast';
 export * from './Verdict';

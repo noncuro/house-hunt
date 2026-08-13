@@ -6,12 +6,15 @@ import { Hint } from '@house-hunt/ui';
 import { formatDuration, MapsButton, MODE_ICON, readTravel, Routes, TransitBasis } from '@house-hunt/ui';
 import { Stations } from '@house-hunt/ui';
 import { RatingButtons, VerdictLine } from '@house-hunt/ui';
+import { StageLine, StagePicker } from '@house-hunt/ui';
 import { RightmoveLink } from '@/components/RightmoveLink';
 import { useTravel } from '@/lib/queries';
 import {
   TRAVEL_MODES,
+  type ArchiveReason,
   type Place,
   type Rating,
+  type Stage,
   type TravelTime,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
@@ -26,10 +29,12 @@ export function Detail({
   entry,
   places,
   onRate,
+  onSetStage,
 }: {
   entry: ShortlistEntry;
   places: Place[];
   onRate: (rating: Rating, note: string) => void;
+  onSetStage: (stage: Stage, archiveReason: ArchiveReason | null) => void;
 }) {
   const [galleryAt, setGalleryAt] = useState<number | null>(null);
 
@@ -40,6 +45,10 @@ export function Detail({
     : entry.imageUrls;
   // At most one verdict per property now — the project shares one rating (design D6).
   const verdict = entry.verdicts[0] ?? null;
+  // The funnel opens when somebody likes the place: liking it is what puts it there (`enter_funnel`
+  // in the migration), so before that there is no position to move and the control would only
+  // invite you to skip the judgement.
+  const funnelled = entry.stage !== null || verdict?.rating === 'love' || verdict?.rating === 'maybe';
   const [note, setNote] = useState(verdict?.note ?? '');
 
   // Re-seed when the card is pointed at a different listing. Deliberately not depending on the
@@ -76,6 +85,17 @@ export function Detail({
           }}
         />
       </div>
+
+      {/* Under the verdict and separate from it, which is the whole design: what you think of a
+          place and how far it has got are two facts, and an offer that fell through must not undo a
+          love. Offered only once there is something in the funnel to move — a place nobody has
+          liked yet has not entered it. */}
+      {funnelled && (
+        <div className="detail-stage">
+          <StageLine stage={entry.stage} />
+          <StagePicker stage={entry.stage} onSet={onSetStage} />
+        </div>
+      )}
 
       <Photos entry={entry} images={gallery} onOpen={setGalleryAt} />
       {galleryAt !== null && (

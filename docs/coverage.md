@@ -40,7 +40,7 @@ because three findings from one run beat three runs.
 
 `smoke:web` takes names of its own, for the same reason and with the same rule about a name that
 matches nothing: `pnpm smoke:web list rating`, or `pnpm smoke:web joining`. The sections are
-`session`, `list`, `rating`, `table`, `map`, `triage`, `tabs`, `refusals` and `joining`, and they
+`session`, `list`, `rating`, `funnel`, `table`, `map`, `triage`, `tabs`, `refusals` and `joining`, and they
 always run in that order. What a subset cannot skip is the setup — the fixture, the Edge Functions
 and a production build of the website — so the saving is the browser work: six seconds for the list
 and the rating against forty for all of it, and nearly all of those six are the setup. Every
@@ -93,6 +93,13 @@ the joining check below it fails.
 **The boundary** (`check:rls`, `check:spend`) — asserted from outside by real clients holding real
 JWTs, including that `signUp()` is refused outright, which every `to authenticated` policy is
 predicated on.
+
+**The funnel** (`smoke:web`) — a place moved along it and then archived with a reason, both read
+back out of Postgres, plus the assertion the whole separation rests on: the verdict is read before
+the archive and compared with itself afterwards. A stage that overwrote a rating would look like a
+tidy screen and would put a training label on a flat nobody chose, which is invisible from every
+view. `check:stage` pins the other half — the funnel's *order*, which is not the alphabet's:
+sorted by name, "archived" leads and a viewing follows the visit it was booked for.
 
 ## Not covered
 

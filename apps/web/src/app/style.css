@@ -250,6 +250,21 @@ h2 {
   margin-top: 16px;
 }
 
+/* The funnel bar, over every view that shows places. Same pills as the map's legend — it is the
+   same gesture, narrowing what is on screen — with a rule of its own for the steps nothing has
+   reached yet: drawn, so the shape of the funnel is legible, but plainly not worth clicking. */
+.funnel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.funnel .key:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .key {
   display: inline-flex;
   align-items: center;
@@ -471,6 +486,17 @@ h2 {
 .detail-verdict .note-edit {
   flex: 1 1 220px;
   margin-top: 0;
+}
+
+/* The funnel on a card: where this place has got to, and the steps that move it. Under the verdict
+   and full width, because it is a second question about the same flat rather than a detail of the
+   first — see packages/core/src/stage.ts. */
+.detail-stage {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
 }
 
 /* --- photos ---------------------------------------------------------------------------- */

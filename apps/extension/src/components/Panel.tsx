@@ -4,6 +4,7 @@ import { Hint } from '@house-hunt/ui';
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { CappedNotice, SpendWarning } from '@house-hunt/ui';
 import { VerdictLine, RatingButtons } from '@house-hunt/ui';
+import { StageLine, StagePicker } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
 import { OffMarketRow } from '@house-hunt/ui';
 import { scoreListing } from '@/lib/score';
@@ -33,10 +34,13 @@ import type { Point } from '@house-hunt/core';
 import {
   TRAVEL_MODES,
   type Analysis,
+  type ArchiveReason,
   type Listing,
   type Model,
   type Place,
+  type PropertyStage,
   type Rating,
+  type Stage,
   type TravelTime,
   type Verdict,
 } from '@house-hunt/core';
@@ -80,6 +84,10 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   const [error, setError] = useState<string | null>(null);
   /** The rating we've shown but haven't confirmed. Null means everything on screen is saved. */
   const [pending, setPending] = useState<Rating | null>(null);
+  /** Where this place has got to for the project, and the step clicked but not yet acknowledged.
+   *  Read beside the verdict and kept apart from it — see `packages/core/src/stage.ts`. */
+  const [stage, setStage] = useState<PropertyStage | null>(null);
+  const [stagePending, setStagePending] = useState<Stage | null>(null);
   const { toasts, push, dismiss } = useToasts();
   /** Counts verdict saves so an older one that lands late cannot overwrite a newer choice. */
   const saves = useRef(0);
@@ -133,16 +141,24 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
     setOffMarketBusy(false);
     setConfirmOffMarket(false);
 
+    // A new listing starts outside the funnel until its own read lands, for the same reason the
+    // analysis is cleared above: the previous flat's viewing is not this one's.
+    setStage(null);
+    setStagePending(null);
+
     void (async () => {
-      const [existing, placeList, spending, hubList, storedModel, offState] = await Promise.all([
+      const [existing, placeList, spending, hubList, storedModel, offState, stageState] = await Promise.all([
         send({ type: 'verdicts:get', rightmoveIds: [listing.rightmoveId] }),
         send({ type: 'places:list' }),
         send({ type: 'spend:summary' }),
         send({ type: 'hubs:list' }),
         send({ type: 'model:get' }),
         send({ type: 'off-market:get', rightmoveId: listing.rightmoveId }),
+        send({ type: 'stage:get', rightmoveId: listing.rightmoveId }),
       ]);
       if (!live) return;
+
+      if (stageState.ok) setStage(stageState.data);
 
       // A failed read leaves this false — "on the market" is the safe default, since it only ever
       // withholds a flat from training and the toggle re-reads on the next open anyway.
@@ -181,7 +197,7 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
 
       // Surface the first failure of the five. Swallowing these is what made a broken
       // background look like an empty database.
-      const failure = [placeList, existing, spending, hubList, storedModel].find((r) => !r.ok);
+      const failure = [placeList, existing, spending, hubList, storedModel, stageState].find((r) => !r.ok);
       if (failure && !failure.ok) setError(failure.error);
 
       // Recording the listing is what gives this project a `project_property` link, and the
@@ -316,11 +332,46 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
 
     // Re-read rather than trusting our own optimistic row: this is also how the other laptop's
     // verdict arrives, and how the attribution becomes the database's answer rather than ours.
-    const fresh = await send({ type: 'verdicts:get', rightmoveIds: [listing.rightmoveId] });
+    //
+    // The funnel comes back with it, because liking a place is what enters it — the `enter_funnel`
+    // trigger writes the `shortlisted` row inside the same statement, and reading it here is how the
+    // steps appear the moment you press "Like it" rather than on the next page load.
+    const [fresh, freshStage] = await Promise.all([
+      send({ type: 'verdicts:get', rightmoveIds: [listing.rightmoveId] }),
+      send({ type: 'stage:get', rightmoveId: listing.rightmoveId }),
+    ]);
     if (!newest()) return;
     if (fresh.ok) setVerdict(fresh.data[0] ?? null);
+    if (freshStage.ok) setStage(freshStage.data);
     setPending(null);
     setError(null);
+  }
+
+  /** Move this place along the funnel. Deliberately not optimistic in the way a rating is: this is
+   *  a handful of clicks over a flat's life rather than the gesture you make thirty times working a
+   *  pile, and what it records — who moved it, and when — is worth showing as the database has it.
+   *  The step reads as pressed while the write is in flight, and a failure says so. */
+  async function moveStage(next: Stage, archiveReason: ArchiveReason | null) {
+    const id = listing.rightmoveId;
+    setStagePending(next);
+    const result = await send({
+      type: 'stage:set',
+      rightmoveId: id,
+      stage: next,
+      archiveReason,
+      note: '',
+    });
+    // A late reply must not touch the flat now on screen, whose own load has already set its state.
+    if (listingIdRef.current !== id) return;
+    if (!result.ok) {
+      setStagePending(null);
+      push(`Not saved — ${result.error}`);
+      return;
+    }
+    const fresh = await send({ type: 'stage:get', rightmoveId: id });
+    if (listingIdRef.current !== id) return;
+    if (fresh.ok) setStage(fresh.data);
+    setStagePending(null);
   }
 
   /** Off the market, or back on. Optimistic like the rating, and rolled back with a toast on
@@ -358,6 +409,8 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   // both of you, which is why the attribution above the buttons is not optional.
   const rejected = verdict?.rating === 'no';
   const mood = verdict?.rating ?? null;
+  // In the funnel, or one click from being: liking a place is what enters it (`enter_funnel`).
+  const funnelled = stage !== null || mood === 'love' || mood === 'maybe';
 
   // The model's guess for this listing, computed here in the panel against weights already fetched
   // — pure arithmetic, well under a second, no round trip. Null until the model and the hub fix are
@@ -555,6 +608,20 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
         {/* Whose opinion this is, above the buttons that would replace it. */}
         <VerdictLine verdict={verdict} />
         <RatingButtons value={verdict?.rating} pending={pending} onRate={(r) => void rate(r)} />
+        {/* The funnel, under the rating and separate from it. It appears the moment a place is
+            liked — that is what puts it there — and never before: a place nobody has judged has
+            nothing to move along, and offering the steps first would invite skipping the judgement
+            the whole shortlist is ordered by. */}
+        {funnelled && (
+          <>
+            <StageLine stage={stage} />
+            <StagePicker
+              stage={stage}
+              pending={stagePending}
+              onSet={(next, reason) => void moveStage(next, reason)}
+            />
+          </>
+        )}
         <NoteEditor
           note={note}
           author={verdict?.person ?? null}

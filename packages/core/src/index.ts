@@ -15,6 +15,7 @@ export * from './bridge';
 export * from './facts';
 export * from './hubs';
 export * from './shortlist';
+export * from './stage';
 export * from './sweep';
 export * from './predict';
 

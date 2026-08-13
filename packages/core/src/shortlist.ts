@@ -35,9 +35,11 @@ export const DEFAULT_SHOWING: Record<Group, boolean> = {
   rejected: false,
 };
 
+// The pile names follow the rating words in `packages/ui/src/ratings.ts`: a card that says "Love
+// it" under a heading that says "Excited about" is two names for one judgement.
 export const GROUP_LABEL: Record<Group, string> = {
-  excited: 'Excited about',
-  maybe: 'Maybes',
+  excited: 'Loved',
+  maybe: 'Liked',
   rejected: 'Rejected',
   unrated: 'Not yet rated',
 };

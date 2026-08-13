@@ -39,9 +39,14 @@ import {
   REDEEM_EMAIL,
   REDEEM_PASSWORD,
   seedFixture,
+  stageOf,
   verdictHistoryOf,
   verdictOf,
 } from './fixture-session';
+// Deep import rather than the package barrel: the barrel is React components, and this is a Node
+// script that only wants the words a rating is drawn with. Reading them from the same table the
+// buttons do is what stops this harness asserting on a label the app stopped using.
+import { ratingOf } from '../packages/ui/src/ratings';
 import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 import { startFunctions } from './edge-functions';
@@ -86,6 +91,7 @@ const SECTIONS = [
   { name: 'session', run: checkSession },
   { name: 'list', run: checkList },
   { name: 'rating', run: checkRating },
+  { name: 'funnel', run: checkFunnel },
   { name: 'table', run: checkTable },
   { name: 'map', run: checkMap },
   { name: 'triage', run: checkTriage },
@@ -258,19 +264,19 @@ async function checkList({ page }: Stage): Promise<void> {
  *  about a flat that was already showing and is still showing, whether or not this section ran. */
 async function checkRating({ page }: Stage): Promise<void> {
   const rated = page.locator(`#card-${fixtureId(4)}`);
-  const NEW_NOTE = 'Smoke: raised to exciting.';
+  const NEW_NOTE = 'Smoke: raised to loved.';
   // The note first, then the rating: the buttons pass the note themselves, precisely so that
   // leaving the field to click a rating does not race two saves. Typing it after would be testing
   // the blur path, which is a different write.
   await rated.locator('.note-edit').fill(NEW_NOTE);
   await rated.locator('[data-testid="rate-love"]').click();
 
-  // What a person would see: the line now reads Exciting, and it is attributed to whoever clicked.
+  // What a person would see: the line now reads "Love it", and it is attributed to whoever clicked.
   await rated
     .locator('[data-testid="verdict-rating"]')
-    .filter({ hasText: 'Exciting' })
+    .filter({ hasText: ratingOf('love').label })
     .waitFor({ timeout: 10_000 })
-    .catch(() => note('the card never showed the new rating after clicking Exciting'));
+    .catch(() => note(`the card never showed the new rating after clicking ${ratingOf('love').label}`));
   const by = await rated.locator('[data-testid="verdict-by"]').innerText();
   if (!by.includes(FIXTURE_NAME)) {
     note(`the re-rated card is attributed to "${by}", not to ${FIXTURE_NAME} who clicked it`);
@@ -305,6 +311,55 @@ async function checkRating({ page }: Stage): Promise<void> {
     note(`${fixtureId(4)} has ${history.length} history rows after one re-rating; expected exactly 1`);
   } else if (archived?.rating !== 'maybe') {
     note(`the archived rating is "${archived?.rating}"; the fixture set it to maybe`);
+  }
+}
+
+/** The funnel: moving a place along it, archiving it with a reason, and — the assertion this
+ *  section exists for — the rating not moving with it.
+ *
+ *  A stage and a verdict are two facts about one flat, and the failure mode is silent in both
+ *  directions: an archive that overwrote the rating would look like a tidy screen and would teach
+ *  the verdict-score model that you disliked the flat you liked most. Nothing on screen can show
+ *  that, so both are read back from Postgres.
+ *
+ *  Runs against the fourth flat, which the fixture seeds as `maybe` — so it is already in the
+ *  funnel, whether or not `rating` ran before this. The verdict is read before the archive and
+ *  compared with itself afterwards rather than against a literal, for the same reason. */
+async function checkFunnel({ page }: Stage): Promise<void> {
+  await openView(page, 'list');
+  const id = fixtureId(4);
+  const card = page.locator(`#card-${id}`);
+  const before = await verdictOf(id);
+  if (!before) return note(`${id} has no verdict, so it should not be in the funnel at all`);
+
+  // The bar the shortlist is filtered by. It is the funnel's only presence on a page that is not
+  // showing one flat, and it renders every step including the empty ones.
+  const bar = page.locator('[data-testid="funnel"]');
+  if (!(await bar.count())) note('the shortlist has no funnel bar');
+
+  await card.locator('[data-testid="stage-enquired"]').click();
+  await card
+    .locator('[data-testid="stage-now"]')
+    .filter({ hasText: 'Reached out' })
+    .waitFor({ timeout: 10_000 })
+    .catch(() => note('the card never showed the new stage after clicking Reached out'));
+
+  const moved = await settleOn(() => stageOf(id), (s) => s?.stage === 'enquired');
+  if (moved?.stage !== 'enquired') note(`the database holds "${moved?.stage ?? 'nothing'}" for ${id}, not enquired`);
+  if (moved?.setBy !== fixture.userId) note(`the move is attributed to ${moved?.setBy ?? 'nobody'}, not to whoever clicked`);
+
+  // Archiving is the one step that asks why, and nothing is written until it is answered.
+  await card.locator('[data-testid="stage-archived"]').click();
+  await card.locator('[data-testid="archive-gone"]').click();
+  const archived = await settleOn(() => stageOf(id), (s) => s?.stage === 'archived');
+  console.log(`stage: ${archived?.stage} (${archived?.archiveReason ?? 'no reason'})`);
+  if (archived?.archiveReason !== 'gone') {
+    note(`${id} was archived with reason "${archived?.archiveReason ?? 'none'}"; the click said gone`);
+  }
+
+  const after = await verdictOf(id);
+  if (after?.rating !== before.rating) {
+    note(`archiving changed the rating from "${before.rating}" to "${after?.rating ?? 'nothing'}" — the two must move apart`);
   }
 }
 

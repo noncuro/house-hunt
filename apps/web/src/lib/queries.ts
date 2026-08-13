@@ -22,13 +22,23 @@ import {
   NoActiveProject,
   retrainModel,
   setOffMarket,
+  setStage,
   setVerdict,
   travelTimes,
   Unauthenticated,
   type RetrainResult,
   type ShortlistEntry,
 } from '@house-hunt/core/db';
-import type { AuthState, HuntPreferences, LabelMode, Rating, TravelTime, Verdict } from '@house-hunt/core';
+import type {
+  ArchiveReason,
+  AuthState,
+  HuntPreferences,
+  LabelMode,
+  Rating,
+  Stage,
+  TravelTime,
+  Verdict,
+} from '@house-hunt/core';
 import { endSession } from './session';
 import { signOutExtension } from './bridge';
 
@@ -124,6 +134,30 @@ export function useSetOffMarket() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.offMarket });
     },
+  });
+}
+
+/** Move a place along the funnel — reached out, viewing booked, archived with a reason.
+ *
+ *  Not optimistic, unlike the verdict. A rating is a click you make thirty times working a pile,
+ *  where waiting on a round trip is what makes the pile unworkable; a stage is a click you make when
+ *  something has actually happened, a handful of times per flat, and it is worth the half second to
+ *  show what the database really holds — including the author, which is the point of recording it. */
+export function useSetStage() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      rightmoveId,
+      stage,
+      archiveReason,
+      note,
+    }: {
+      rightmoveId: string;
+      stage: Stage;
+      archiveReason?: ArchiveReason | null;
+      note?: string;
+    }) => setStage(rightmoveId, stage, archiveReason ?? null, note ?? ''),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.shortlist }),
   });
 }
 

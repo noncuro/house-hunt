@@ -1,8 +1,8 @@
 # house-hunt — shared house-hunting for Rightmove: a website plus a thin extension
 
 A shared shortlist for people hunting a flat together: travel times to saved places,
-one shared verdict per flat per project, and a vision pass over the photos for what the listing
-won't say. Multi-tenant, invite-only, email-code sign-in; a **project** is one hunt (up to six
+one shared verdict per flat per project, a funnel from shortlisted to archived, and a vision pass
+over the photos for what the listing won't say. Multi-tenant, invite-only, email-code sign-in; a **project** is one hunt (up to six
 people). In use on real listings.
 
 Two apps in one pnpm workspace: `apps/web` (Next.js — shortlist, compare, map, settings, sign-in,
@@ -65,7 +65,7 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 | ext `entrypoints/bridge.content.ts` | On the website's origin only; relays three messages so the two sessions stay in step |
 | ext `entrypoints/background.ts` | All network + the only Supabase client in the extension |
 | web `screens/*.tsx` | Shortlist, Compare, Map, Detail, Settings, Sweep, SignIn, Project, Admin |
-| `packages/core/` | Facts, hubs, sweep, travel, analysis, db, bridge contract |
+| `packages/core/` | Facts, hubs, stage (the funnel), sweep, travel, analysis, db, bridge contract |
 | `supabase/functions/` | `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache), `invite`, `resolve-location`, `password` |
 
 ## Decisions an agent might otherwise "fix"
@@ -82,6 +82,14 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   no coordinates is skipped, never defaulted.
 - **The sweep window snaps up, never down** — a too-narrow window drops listings and looks like
   success. Details in `packages/core/src/sweep.ts`.
+- **A verdict and a stage are two facts, and neither writes the other.** "Like it" / "love it" /
+  "not our place" is taste and is what the verdict-score model is fitted on; the funnel
+  (shortlisted → reached out → viewing booked → viewed → offer in → archived, with a reason) is
+  progress. A flat you loved and lost is archived and *still loved* — collapsing the two would
+  teach the model the opposite of what happened. The one coupling is the `enter_funnel` trigger:
+  liking a place enters it at `shortlisted`, un-liking removes it only while it is still there, and
+  a stage further along survives any change of mind. `packages/core/src/stage.ts` owns the funnel;
+  `20260813000000_property_stage.sql` owns the coupling.
 - **Driving times deliberately throw** (TfL can't do them) rather than mislabel a transit number.
 
 **Every other decision is documented as a comment on the code that owns it** (`TRAVEL_BASIS` in
@@ -106,7 +114,7 @@ pnpm check          # oxlint + tsc — run on every change
 pnpm check:all      # + every pure-function check (seconds)
 ```
 
-Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `hubs`, `sweep`, `travel`,
+Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `hubs`, `stage`, `sweep`, `travel`,
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint),
 `one-client`, `bridge`, `withdrawn`. Each pins reasoning invisible when wrong — a bad bearing still
 looks like a bearing.
@@ -139,7 +147,7 @@ problem is collected and reported together.
 
 `smoke:web` takes names too, one level down: `pnpm smoke:web list rating` runs those sections and
 `pnpm smoke:web joining` runs that one, in the order the file declares them (`session`, `list`,
-`rating`, `table`, `map`, `triage`, `tabs`, `refusals`, `joining`). The setup is not optional — the
+`rating`, `funnel`, `table`, `map`, `triage`, `tabs`, `refusals`, `joining`). The setup is not optional — the
 fixture, the Edge Functions and a production build of the website happen either way — so a subset
 saves the browser work and a few seconds of a forty-second run, which is the difference worth having
 while you iterate on one assertion. A name that matches no section stops the run and prints the

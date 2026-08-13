@@ -12,12 +12,23 @@ import {
   type Flag,
   type HuntPreferences,
 } from '@house-hunt/core';
-import { DEFAULT_SHOWING, duplicateIds, GROUP_LABEL, groupOf, parseMonthlyPrice, sizeOf, type Group } from '@house-hunt/core';
+import {
+  DEFAULT_SHOWING,
+  duplicateIds,
+  GROUP_LABEL,
+  groupOf,
+  parseMonthlyPrice,
+  sizeOf,
+  stageRank,
+  stageSentence,
+  type Group,
+} from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
 import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime } from '@house-hunt/core';
 import { FlagChip } from '@house-hunt/ui';
 import { SizeValue } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
+import { ratingOf } from '@house-hunt/ui';
 import { RightmoveLink } from '@/components/RightmoveLink';
 import { Tick, useRangePick, type Selection } from '@/components/Tick';
 import { useCachedTravel } from '@/lib/queries';
@@ -398,10 +409,12 @@ interface Column {
   render: (e: ShortlistEntry, travel: Record<string, TravelTime[]> | undefined) => React.ReactNode;
 }
 
+// The same emoji the rating buttons carry, read from the same table — this column used to keep its
+// own copy, so relabelling a rating changed it in the panel and left the table saying the old thing.
 const VERDICT_MARK: Record<Group, string> = {
-  excited: '😍',
-  maybe: '🤔',
-  rejected: '👎',
+  excited: ratingOf('love').emoji,
+  maybe: ratingOf('maybe').emoji,
+  rejected: ratingOf('no').emoji,
   unrated: '',
 };
 
@@ -484,6 +497,15 @@ function buildColumns(
           )}
         </span>
       ),
+    },
+    // How far each place has got, sorted in funnel order rather than alphabetically — which is what
+    // makes "everything past a viewing, in order" one click on a header. A flat outside the funnel
+    // sorts last whichever way the column points, the same as any other blank.
+    {
+      key: 'stage',
+      label: 'Stage',
+      value: (e) => (e.stage ? stageRank(e.stage.stage) : null),
+      render: (e) => (e.stage ? stageSentence(e.stage) : dash('Nobody has liked this one yet.')),
     },
     {
       key: 'price',

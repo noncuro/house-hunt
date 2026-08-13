@@ -697,6 +697,28 @@ export async function verdictOf(rightmoveId: string): Promise<StoredVerdict | nu
     : null;
 }
 
+/** Where a listing has got to, as the database holds it.
+ *
+ *  Read alongside `verdictOf` rather than instead of it: the two are separate facts on purpose, and
+ *  the failure worth catching is one write moving the other — an archived flat whose rating quietly
+ *  became "no" is a training label nobody chose. */
+export interface StoredStage {
+  stage: string;
+  archiveReason: string | null;
+  setBy: string | null;
+}
+
+export async function stageOf(rightmoveId: string): Promise<StoredStage | null> {
+  const { data, error } = await db
+    .from('property_stage')
+    .select('stage, archive_reason, set_by')
+    .eq('project_id', FIXTURE_PROJECT)
+    .eq('rightmove_id', rightmoveId)
+    .maybeSingle();
+  if (error) throw new Error(`fixture: reading property_stage: ${error.message}`);
+  return data ? { stage: data.stage, archiveReason: data.archive_reason, setBy: data.set_by } : null;
+}
+
 /** What the previous ratings were, newest first. Empty is the honest answer for a flat rated once —
  *  the seed writes `verdict` directly, so anything here was archived by `set_verdict`. */
 export async function verdictHistoryOf(rightmoveId: string): Promise<StoredVerdict[]> {

@@ -8,10 +8,18 @@ import type { Rating, Verdict } from '@house-hunt/core';
 // `Verdict.tsx`, which imports from here. Nothing about a verdict is spelled out twice.
 // ------------------------------------------------------------------------------------------------
 
+/** The words, in the order the buttons draw them: worst first, so the two positives sit together
+ *  and the click that ends a flat's life is at the far end from the one that advances it.
+ *
+ *  The stored values stay `no` / `maybe` / `love` and the labels moved to "like it" / "love it".
+ *  Renaming the values would mean rewriting every verdict, every archived verdict in
+ *  `verdict_history` and the label modes the score is fitted under, all to change three strings
+ *  nobody reads out of the database. What the value is called and what it is *called on screen* are
+ *  different questions, and only the second one was ever asked. */
 export const RATINGS: Array<{ value: Rating; label: string; emoji: string; word: string }> = [
   { value: 'no', label: 'Not our place', emoji: '👎', word: 'rejected' },
-  { value: 'maybe', label: 'Maybe', emoji: '🤔', word: 'maybe' },
-  { value: 'love', label: 'Exciting', emoji: '😍', word: 'exciting' },
+  { value: 'maybe', label: 'Like it', emoji: '👍', word: 'liked' },
+  { value: 'love', label: 'Love it', emoji: '😍', word: 'loved' },
 ];
 
 const BY_VALUE = new Map(RATINGS.map((r) => [r.value, r]));
