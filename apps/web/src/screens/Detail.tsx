@@ -30,11 +30,17 @@ export function Detail({
   places,
   onRate,
   onSetStage,
+  stageSaving,
 }: {
   entry: ShortlistEntry;
   places: Place[];
   onRate: (rating: Rating, note: string) => void;
   onSetStage: (stage: Stage, archiveReason: ArchiveReason | null) => void;
+  /** The step this flat is being moved to, while that write is in flight. The picker draws it as
+   *  pressed and refuses another click until it settles: two overlapping upserts can be answered in
+   *  either order, and the funnel would end up wherever the slower one said rather than where the
+   *  last click did. */
+  stageSaving?: Stage | null;
 }) {
   const [galleryAt, setGalleryAt] = useState<number | null>(null);
 
@@ -93,7 +99,12 @@ export function Detail({
       {funnelled && (
         <div className="detail-stage">
           <StageLine stage={entry.stage} />
-          <StagePicker stage={entry.stage} onSet={onSetStage} />
+          <StagePicker
+            stage={entry.stage}
+            pending={stageSaving ?? null}
+            onSet={onSetStage}
+            disabled={stageSaving ? 'Saving…' : undefined}
+          />
         </div>
       )}
 

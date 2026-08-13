@@ -42,6 +42,36 @@ create policy project_scoped on property_stage for all to authenticated
   using (public.is_member(project_id))
   with check (public.is_member(project_id) and set_by = auth.uid());
 
+-- Entering the funnel is something liking a place does, and this is the half of that sentence the
+-- database can hold. Without it the policy above lets any member insert a row saying `viewed` for a
+-- property nobody has rated — which is not a security hole (it is their own project's data) but it
+-- does quietly falsify the one thing every reader here assumes: that a flat outside the funnel is a
+-- flat nobody has liked. The funnel bar counts on it, and so does the triage pile.
+--
+-- `as restrictive`, because permissive policies are OR-ed together: a second permissive policy would
+-- widen what is allowed rather than narrow it. Restrictive ones are AND-ed, so this is a condition
+-- on top of `project_scoped` rather than an alternative to it.
+--
+-- `for insert` alone, and that is deliberate rather than an oversight. Postgres checks an INSERT
+-- policy's `with check` only for rows the insert path actually appends, so `setStage`'s upsert onto
+-- an existing row is judged by the UPDATE half of `project_scoped` — which is what keeps the rule
+-- the funnel is built on: a flat you viewed and have since decided against can still be archived,
+-- long after its verdict stopped being a like. `check:rls` asserts exactly that, because it is the
+-- flow this policy would break if that reading were wrong.
+--
+-- The trigger below is unaffected: it is SECURITY DEFINER, so it runs as the table's owner and RLS
+-- does not apply to it at all.
+drop policy if exists stage_needs_a_like on property_stage;
+create policy stage_needs_a_like on property_stage as restrictive for insert to authenticated
+  with check (
+    exists (
+      select 1 from public.verdict v
+       where v.project_id = property_stage.project_id
+         and v.rightmove_id = property_stage.rightmove_id
+         and v.rating in ('maybe', 'love')
+    )
+  );
+
 grant select, insert, update, delete on table property_stage to authenticated;
 
 -- Liking a place is what enters it into the funnel, and the database does it rather than each

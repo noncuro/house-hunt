@@ -339,6 +339,11 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     offMarket,
     setOffMarket: setEntryOffMarket,
     setStage: setEntryStage,
+    // react-query holds the variables of the mutation in flight, which is exactly the "which flat,
+    // which step" this needs — no second piece of state to keep in step with it.
+    stageSaving: stageMutation.isPending && stageMutation.variables
+      ? { rightmoveId: stageMutation.variables.rightmoveId, stage: stageMutation.variables.stage }
+      : null,
     prefs,
   };
   const byId = useMemo(() => new Map((all ?? []).map((e) => [e.rightmoveId, e])), [all]);
@@ -936,6 +941,9 @@ interface CardProps {
   /** Move a place along the funnel. Never touches its rating — the two are separate facts, which is
    *  the point of the funnel existing at all (`packages/core/src/stage.ts`). */
   setStage: (entry: ShortlistEntry, stage: Stage, archiveReason: ArchiveReason | null) => void;
+  /** The one flat whose funnel write is in flight, if any. Named rather than a bare boolean so that
+   *  saving on one card does not freeze the control on every other. */
+  stageSaving: { rightmoveId: string; stage: Stage } | null;
   /** Present only in triage: cards grow a tick box and join a batch. Absent everywhere else,
    *  because a card you are reading to decide on is not a card you are selecting. */
   selection?: Selection;
@@ -1004,6 +1012,7 @@ function Card({
   offMarket,
   setOffMarket,
   setStage,
+  stageSaving,
   selection,
   prefs,
   onPick,
@@ -1119,6 +1128,7 @@ function Card({
         places={places}
         onRate={(value, note) => rate(entry, value, note)}
         onSetStage={(stage, reason) => setStage(entry, stage, reason)}
+        stageSaving={stageSaving?.rightmoveId === entry.rightmoveId ? stageSaving.stage : null}
       />
 
       {/* Off the market, but still a place you liked — kept in the shortlist with its verdict,

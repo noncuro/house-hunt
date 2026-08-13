@@ -64,15 +64,34 @@ export function Gallery({
     setDrag(dx);
   }
 
-  function onPointerEnd(event: React.PointerEvent) {
+  function onPointerUp(event: React.PointerEvent) {
     const start = from.current;
     if (!start || event.pointerId !== start.id) return;
     from.current = null;
-    const dx = drag ?? 0;
     setDrag(null);
+
+    // Measured from the event rather than from the `drag` state. They are the same number in every
+    // ordinary swipe, and different in the one that matters: a release in the same frame as the
+    // last move reads a `drag` React has not committed yet, which loses the last few pixels — or,
+    // for a flick fast enough to produce one move and an immediate up, the whole gesture.
+    const dx = event.clientX - start.x;
+    // The same "is this even a horizontal gesture" test the moves apply, applied again to the
+    // gesture as a whole: a swipe that ended up mostly vertical is somebody scrolling.
+    if (Math.abs(dx) < Math.abs(event.clientY - start.y)) return;
     // Left means forward, the way every photo gallery on a phone works: the next photo comes in
     // from the right as the current one leaves.
     if (Math.abs(dx) >= SWIPE_MIN_PX) step(dx < 0 ? 1 : -1);
+  }
+
+  /** The gesture was taken away rather than finished — an edge swipe the browser claimed as a
+   *  back-navigation, a phone call, a palm on the screen. It has to put the photo back and must not
+   *  advance: cancelling is the one outcome that means "pretend this never happened", and a gallery
+   *  that flicked onward as the OS pulled the page out from under it would move while you were
+   *  looking somewhere else. */
+  function onPointerCancel(event: React.PointerEvent) {
+    if (from.current?.id !== event.pointerId) return;
+    from.current = null;
+    setDrag(null);
   }
 
   useEffect(() => {
@@ -125,11 +144,11 @@ export function Gallery({
         className={drag === null ? 'lightbox-image' : 'lightbox-image lightbox-dragging'}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
-        onPointerUp={onPointerEnd}
-        // A gesture the browser takes over — a back-swipe from the screen edge, a phone call — ends
-        // as a cancel and never as an up. Without this the drag would stick and the photo would sit
-        // held mid-swipe.
-        onPointerCancel={onPointerEnd}
+        onPointerUp={onPointerUp}
+        // A gesture the browser takes over ends as a cancel and never as an up. Its own handler,
+        // not this one: without any handler the drag would stick and the photo would sit held
+        // mid-swipe, and with `onPointerUp` here it would advance on a gesture that was abandoned.
+        onPointerCancel={onPointerCancel}
         // Follows the finger, and springs back when the swipe falls short — the drag is the only
         // thing that says the gesture is understood before it is finished. Damped rather than
         // one-to-one so the photo cannot be dragged clean off the screen and left there.

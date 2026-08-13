@@ -592,12 +592,26 @@ async function main() {
   allowed('verdict: changing your mind after a viewing is booked', await a.from('verdict').update({ rating: 'no' }).eq('project_id', PROJECT_A).eq('rightmove_id', LISTING_A).select());
   is('...leaves the booked viewing on the record', await stageOfA(LISTING_A), 'viewing_booked');
 
+  // The flow the insert policy would break if `for insert` did not mean what it is documented to
+  // mean. A flat rated `no` above, whose stage row predates that: archiving it is an upsert onto an
+  // existing row, so it goes down the UPDATE path and must still be allowed. If this fails, the
+  // policy is judging updates too and the funnel can no longer record how a flat ended.
+  allowed('property_stage: archiving a flat we have gone off, long after the like', await a.from('property_stage').upsert({ project_id: PROJECT_A, rightmove_id: LISTING_A, stage: 'archived', archive_reason: 'passed', set_by: userA }, { onConflict: 'project_id,rightmove_id' }).select());
+  is('...and it records why', await stageOfA(LISTING_A), 'archived');
+
   // And the other half: a flat that never got past the step the like itself created leaves the
   // funnel when the like does. Otherwise every rejected flat would sit in the funnel for good.
   allowed('verdict: liking a flat nothing has happened to yet', await a.from('verdict').insert({ project_id: PROJECT_A, rightmove_id: LISTING_NEW, rating: 'love', set_by: userA }).select());
   is('...puts it in the funnel', await stageOfA(LISTING_NEW), 'shortlisted');
   allowed('verdict: and taking the like back', await a.from('verdict').update({ rating: 'no' }).eq('project_id', PROJECT_A).eq('rightmove_id', LISTING_NEW).select());
   is('...takes it back out again', await stageOfA(LISTING_NEW), null);
+
+  // Entering the funnel is what liking a place does, and nothing else may do it. A member writing
+  // straight through PostgREST — no verdict, no trigger — must not be able to claim a viewing on a
+  // flat nobody has judged: the funnel bar and the triage pile both read "not in the funnel" as
+  // "nobody has liked this".
+  refused('property_stage: inventing a viewing for an unrated flat', await a.from('property_stage').insert({ project_id: PROJECT_A, rightmove_id: LISTING_NEW, stage: 'viewed', set_by: userA }).select());
+  is('...and it stayed out of the funnel', await stageOfA(LISTING_NEW), null);
   allowed('profile: setting my own display name', await a.from('profile').update({ display_name: 'A' }).eq('id', userA).select());
   allowed('project: renaming my own project', await a.from('project').update({ name: 'A renamed' }).eq('id', PROJECT_A).select());
   allowed('spend_summary: reading my own budget', await rpc(a, 'spend_summary', { p_project_id: PROJECT_A }));

@@ -619,6 +619,21 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
               stage={stage}
               pending={stagePending}
               onSet={(next, reason) => void moveStage(next, reason)}
+              // Shut while either write is in flight, and for two different reasons.
+              //
+              // A second stage click would race the first, and the replies can land in either
+              // order — the funnel would then settle on whichever was slower rather than on
+              // whichever you clicked last. The rating is the subtler one: a rating is optimistic,
+              // so the steps appear the instant you press "Like it", before the write has landed.
+              // Moving a place along the funnel in that window, and then having the rating fail
+              // and roll back, leaves a flat sitting at "Viewing booked" that nobody has liked.
+              disabled={
+                pending !== null
+                  ? 'Saving the rating first…'
+                  : stagePending !== null
+                    ? 'Saving…'
+                    : undefined
+              }
             />
           </>
         )}
