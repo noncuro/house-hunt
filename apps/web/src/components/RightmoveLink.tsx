@@ -9,8 +9,11 @@
  *  listing's own photos, its agent and its "book a viewing" are still a click away, they are just
  *  no longer what "open" means.
  *
- *  The click is stopped from travelling upward because in triage the row underneath it is a tick
- *  box, and following a link and rating the flat you were reading are not the same intention. */
+ *  Where a row opens its card in place, this does not appear in the row at all: it lives at the
+ *  foot of the card, one line below. Leaving it in the row put the one link that goes somewhere
+ *  else inside the one control whose job is to open the thing beside it. The click is still stopped
+ *  from travelling upward — the row it sits in on the compare table opens the card, and following a
+ *  link out and opening what we know about the place are not the same intention. */
 export function RightmoveLink({ url }: { url: string }) {
   return (
     <a

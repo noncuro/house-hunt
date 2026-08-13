@@ -66,9 +66,13 @@ export function Tick({
       role="checkbox"
       aria-checked={checked}
       className={checked ? 'tick tick-on' : 'tick'}
-      // The row underneath handles clicks too, and both would fire on the box itself.
+      // The row underneath handles clicks too — it opens the flat — and both would fire on the box.
       onClick={(event) => {
         event.stopPropagation();
+        // Shift-clicking is also the browser's "extend the text selection", which leaves several
+        // hundred characters of the table highlighted behind every range you tick. The rows are
+        // unselectable in CSS; this clears anything the gesture started before that took effect.
+        if (event.shiftKey) window.getSelection()?.removeAllRanges();
         onPick(event.shiftKey);
       }}
     >

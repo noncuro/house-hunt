@@ -559,31 +559,62 @@ function applyAmenityWants(
 
 /** Each preferable amenity, mapped to the analysis field that says whether a flat has it and the
  *  flag key the defaults use for it — so a preference escalates the existing flag rather than adding
- *  a second one about the same thing. `present` returns null for unknown, never a false. */
-const AMENITY: Record<
-  AmenityKey,
-  { flagKey: string; label: string; present: (a: NonNullable<FlagSource['analysis']>) => boolean | null }
-> = {
-  outdoor: { flagKey: 'outdoor', label: 'outdoor space', present: (a) => a.hasOutdoorSpace ?? null },
-  dishwasher: { flagKey: 'dishwasher', label: 'dishwasher', present: (a) => a.hasDishwasher ?? null },
-  bathtub: { flagKey: 'bathtub', label: 'bathtub', present: (a) => a.hasBathtub ?? null },
-  inUnitLaundry: {
+ *  a second one about the same thing. `present` returns null for unknown, never a false.
+ *
+ *  Exported, and in this order, because three surfaces ask the same question of it: the flags
+ *  above, the preferences on the Your Hunt page, and triage's filters. The Your Hunt page kept its
+ *  own copy of the list until the filters wanted a third — and a list of amenities that exists
+ *  twice is one that will disagree with itself about what a flat has.
+ *
+ *  Two names each, because the same amenity is read in two places: `label` goes mid-sentence in a
+ *  flag ("no outdoor space · must have"), `name` stands alone on a control. */
+export const AMENITIES: Array<{
+  key: AmenityKey;
+  name: string;
+  label: string;
+  flagKey: string;
+  present: (a: NonNullable<FlagSource['analysis']>) => boolean | null;
+}> = [
+  { key: 'outdoor', name: 'Outdoor space', flagKey: 'outdoor', label: 'outdoor space', present: (a) => a.hasOutdoorSpace ?? null },
+  { key: 'dishwasher', name: 'Dishwasher', flagKey: 'dishwasher', label: 'dishwasher', present: (a) => a.hasDishwasher ?? null },
+  { key: 'bathtub', name: 'Bathtub', flagKey: 'bathtub', label: 'bathtub', present: (a) => a.hasBathtub ?? null },
+  {
+    key: 'inUnitLaundry',
+    name: 'In-unit laundry',
     flagKey: 'laundry',
     label: 'in-unit laundry',
     present: (a) => (a.laundry == null ? null : a.laundry === 'in-unit'),
   },
-  brightLight: {
+  {
+    key: 'brightLight',
+    name: 'Good natural light',
     flagKey: 'light',
     label: 'good natural light',
     // Only "high" counts as having it; "medium" is the model's unsure answer, not a yes.
     present: (a) => (a.naturalLight == null ? null : a.naturalLight === 'high'),
   },
-  billsIncluded: {
+  {
+    key: 'billsIncluded',
+    name: 'Bills included',
     flagKey: 'bills',
     label: 'bills included',
     present: (a) => a.utilitiesIncluded ?? null,
   },
-};
+];
+
+const AMENITY: Record<AmenityKey, (typeof AMENITIES)[number]> = Object.fromEntries(
+  AMENITIES.map((a) => [a.key, a]),
+) as Record<AmenityKey, (typeof AMENITIES)[number]>;
+
+/** Whether a flat has an amenity: true, false, or null for "the photos did not say". The three
+ *  answers are the whole point — an amenity nobody could see is not one the flat lacks. */
+export function amenityPresent(
+  key: AmenityKey,
+  analysis: FlagSource['analysis'],
+): boolean | null {
+  if (!analysis) return null;
+  return AMENITY[key]?.present(analysis) ?? null;
+}
 
 /** Only what is wrong. The compare table exists to scan seventeen rows at once, and a column that
  *  says "bathtub" on fourteen of them spends its width telling you nothing — the question a table

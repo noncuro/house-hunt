@@ -39,9 +39,14 @@ import {
   REDEEM_EMAIL,
   REDEEM_PASSWORD,
   seedFixture,
+  stageOf,
   verdictHistoryOf,
   verdictOf,
 } from './fixture-session';
+// Deep import rather than the package barrel: the barrel is React components, and this is a Node
+// script that only wants the words a rating is drawn with. Reading them from the same table the
+// buttons do is what stops this harness asserting on a label the app stopped using.
+import { ratingOf } from '../packages/ui/src/ratings';
 import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 import { startFunctions } from './edge-functions';
@@ -86,6 +91,7 @@ const SECTIONS = [
   { name: 'session', run: checkSession },
   { name: 'list', run: checkList },
   { name: 'rating', run: checkRating },
+  { name: 'funnel', run: checkFunnel },
   { name: 'table', run: checkTable },
   { name: 'map', run: checkMap },
   { name: 'triage', run: checkTriage },
@@ -258,19 +264,19 @@ async function checkList({ page }: Stage): Promise<void> {
  *  about a flat that was already showing and is still showing, whether or not this section ran. */
 async function checkRating({ page }: Stage): Promise<void> {
   const rated = page.locator(`#card-${fixtureId(4)}`);
-  const NEW_NOTE = 'Smoke: raised to exciting.';
+  const NEW_NOTE = 'Smoke: raised to loved.';
   // The note first, then the rating: the buttons pass the note themselves, precisely so that
   // leaving the field to click a rating does not race two saves. Typing it after would be testing
   // the blur path, which is a different write.
   await rated.locator('.note-edit').fill(NEW_NOTE);
   await rated.locator('[data-testid="rate-love"]').click();
 
-  // What a person would see: the line now reads Exciting, and it is attributed to whoever clicked.
+  // What a person would see: the line now reads "Love it", and it is attributed to whoever clicked.
   await rated
     .locator('[data-testid="verdict-rating"]')
-    .filter({ hasText: 'Exciting' })
+    .filter({ hasText: ratingOf('love').label })
     .waitFor({ timeout: 10_000 })
-    .catch(() => note('the card never showed the new rating after clicking Exciting'));
+    .catch(() => note(`the card never showed the new rating after clicking ${ratingOf('love').label}`));
   const by = await rated.locator('[data-testid="verdict-by"]').innerText();
   if (!by.includes(FIXTURE_NAME)) {
     note(`the re-rated card is attributed to "${by}", not to ${FIXTURE_NAME} who clicked it`);
@@ -308,6 +314,55 @@ async function checkRating({ page }: Stage): Promise<void> {
   }
 }
 
+/** The funnel: moving a place along it, archiving it with a reason, and — the assertion this
+ *  section exists for — the rating not moving with it.
+ *
+ *  A stage and a verdict are two facts about one flat, and the failure mode is silent in both
+ *  directions: an archive that overwrote the rating would look like a tidy screen and would teach
+ *  the verdict-score model that you disliked the flat you liked most. Nothing on screen can show
+ *  that, so both are read back from Postgres.
+ *
+ *  Runs against the fourth flat, which the fixture seeds as `maybe` — so it is already in the
+ *  funnel, whether or not `rating` ran before this. The verdict is read before the archive and
+ *  compared with itself afterwards rather than against a literal, for the same reason. */
+async function checkFunnel({ page }: Stage): Promise<void> {
+  await openView(page, 'list');
+  const id = fixtureId(4);
+  const card = page.locator(`#card-${id}`);
+  const before = await verdictOf(id);
+  if (!before) return note(`${id} has no verdict, so it should not be in the funnel at all`);
+
+  // The bar the shortlist is filtered by. It is the funnel's only presence on a page that is not
+  // showing one flat, and it renders every step including the empty ones.
+  const bar = page.locator('[data-testid="funnel"]');
+  if (!(await bar.count())) note('the shortlist has no funnel bar');
+
+  await card.locator('[data-testid="stage-enquired"]').click();
+  await card
+    .locator('[data-testid="stage-now"]')
+    .filter({ hasText: 'Reached out' })
+    .waitFor({ timeout: 10_000 })
+    .catch(() => note('the card never showed the new stage after clicking Reached out'));
+
+  const moved = await settleOn(() => stageOf(id), (s) => s?.stage === 'enquired');
+  if (moved?.stage !== 'enquired') note(`the database holds "${moved?.stage ?? 'nothing'}" for ${id}, not enquired`);
+  if (moved?.setBy !== fixture.userId) note(`the move is attributed to ${moved?.setBy ?? 'nobody'}, not to whoever clicked`);
+
+  // Archiving is the one step that asks why, and nothing is written until it is answered.
+  await card.locator('[data-testid="stage-archived"]').click();
+  await card.locator('[data-testid="archive-gone"]').click();
+  const archived = await settleOn(() => stageOf(id), (s) => s?.stage === 'archived');
+  console.log(`stage: ${archived?.stage} (${archived?.archiveReason ?? 'no reason'})`);
+  if (archived?.archiveReason !== 'gone') {
+    note(`${id} was archived with reason "${archived?.archiveReason ?? 'none'}"; the click said gone`);
+  }
+
+  const after = await verdictOf(id);
+  if (after?.rating !== before.rating) {
+    note(`archiving changed the rating from "${before.rating}" to "${after?.rating ?? 'nothing'}" — the two must move apart`);
+  }
+}
+
 /** The compare table, which is its own read path and has failed as a blank screen before. */
 async function checkTable({ page }: Stage): Promise<void> {
   await openView(page, 'table');
@@ -341,6 +396,36 @@ async function checkTriage({ page }: Stage): Promise<void> {
     note(`triage lists ${triageRows} rows; the fixture has ${fixture.unratedCount} unrated`);
   }
   await page.screenshot({ path: resolve(SHOTS, 'web-triage.png'), fullPage: true });
+
+  // Clicking a row reads the flat; it does not choose it. This was the other way round once, which
+  // made looking at a place and putting it in a batch the same gesture — and three buttons at the
+  // top of the pile then rated the batch for everybody in the hunt. Selecting is the box, and only
+  // the box, so both halves are asserted: the card opens, and nothing is selected.
+  const firstRow = page.locator('.triage table tbody tr').first();
+  await firstRow.click();
+  if (!(await page.locator('.triage .compare-expanded-row .card').count())) {
+    note('clicking a triage row did not open its card');
+  }
+  const afterRowClick = await page.locator('.triage-bar .dim').first().textContent();
+  if (afterRowClick?.trim() !== 'Nothing selected') {
+    note(`clicking a triage row selected it — the bar reads "${afterRowClick?.trim()}"`);
+  }
+  // Closed again, so the counts below are about the pile this section found rather than one it left.
+  await firstRow.click();
+
+  // The filters, and the rule underneath them. A bar nothing can clear must empty the pile and say
+  // so — with the filter bar still on screen, since the control that caused it is the only way out.
+  await page.locator('[data-testid="filter-max-rent"]').fill('1');
+  const emptied = await page.locator('.triage table tbody tr').count();
+  if (emptied !== 0) note(`a £1 rent filter left ${emptied} rows`);
+  if (!(await page.locator('[data-testid="triage-filters"]').count())) {
+    note('filtering the pile to nothing took the filter bar away with it');
+  }
+  await page.locator('[data-testid="clear-filters"]').click();
+  const restored = await page.locator('.triage table tbody tr').count();
+  if (restored !== fixture.unratedCount) {
+    note(`clearing the filters left ${restored} rows, not the ${fixture.unratedCount} unrated`);
+  }
 
   // The bulk-rate buttons are dead until something is ticked. Checked up to the write and no
   // further, deliberately: the rest of this harness reads, and a bulk write is the one action here
@@ -399,10 +484,12 @@ async function checkTriage({ page }: Stage): Promise<void> {
   // and would leave this depending on how many times it had been pressed above. A fresh triage
   // page is the table by default, which is the layout this asserts about.
   await openView(page, 'triage');
-  const rowExit = await page.locator('.triage table tbody tr .rightmove-link').first().getAttribute('href');
-  if (!rowExit?.startsWith('https://www.rightmove.co.uk/')) {
-    note(`the first triage row's Rightmove link points at "${rowExit}"`);
-  }
+  // The row carries the address and nothing else. The way out to Rightmove used to sit in it, one
+  // line under the address, which put the only link that leaves inside the control whose whole job
+  // is to open the thing beside it; it lives at the foot of the card now, asserted below once a card
+  // is actually open.
+  const rowExits = await page.locator('.triage table tbody tr .rightmove-link').count();
+  if (rowExits > 0) note(`${rowExits} triage rows still carry a Rightmove link`);
   const address = page.locator('.triage table tbody tr .compare-open').first();
   const href = await address.getAttribute('href');
   // `#card-<id>`, digits — the shape the shortlist's own hash reader accepts on a cold load. The
@@ -422,6 +509,13 @@ async function checkTriage({ page }: Stage): Promise<void> {
     if ((await card.count()) === 0) note(`clicking a triage row opened no ${href} card in place`);
     else if (!(await card.isVisible())) note(`the ${href} card opened in place but is not visible`);
     console.log(`triage row expands ${href} in place`);
+
+    // And the way out is in the card, where it moved to. A pile you can work without leaving still
+    // has to let you leave deliberately.
+    const cardExit = await card.locator('.rightmove-link').first().getAttribute('href');
+    if (!cardExit?.startsWith('https://www.rightmove.co.uk/')) {
+      note(`the opened triage card's Rightmove link points at "${cardExit}"`);
+    }
 
     // Clicking the same address again shuts it — the pile you are working is not left holding open
     // cards you have already read past.

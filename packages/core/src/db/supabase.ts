@@ -46,6 +46,7 @@ import { MODEL_VERSION, type LabelMode, type Model, type ModelMetrics } from '..
 import type { SearchCard } from '../search-card';
 import { sweepProgress } from '../sweep';
 import { type StationInfo } from '../tfl';
+import type { ArchiveReason, PropertyStage, Stage } from '../stage';
 import type {
   Analysis,
   Confidence,
@@ -434,6 +435,76 @@ export async function setVerdict(rightmoveId: string, rating: Rating, note: stri
 }
 
 // ------------------------------------------------------------------------------------------------
+// The funnel — how far a place has got, which is not the same question as how much you like it.
+//
+// Nothing here writes a verdict and nothing in the verdict half writes a stage. The one link
+// between them is `enter_funnel`, a trigger on `verdict`: liking a place puts it in the funnel at
+// `shortlisted`. It is in the database rather than here so that rating one flat in the panel and
+// rating thirty in bulk from triage cannot end up meaning different things.
+// ------------------------------------------------------------------------------------------------
+
+const STAGE_COLUMNS = 'rightmove_id, stage, archive_reason, note, set_by, updated_at';
+
+function toStage(row: any, names: Map<string, { displayName: string }>): PropertyStage {
+  return {
+    rightmoveId: row.rightmove_id,
+    stage: row.stage as Stage,
+    archiveReason: (row.archive_reason ?? null) as ArchiveReason | null,
+    note: row.note ?? '',
+    // No `set_by_name` fallback here, unlike a verdict: this table is younger than accounts are, so
+    // there is no pre-auth row it could be describing.
+    person: (row.set_by && names.get(row.set_by)?.displayName) || 'someone',
+    updatedAt: row.updated_at,
+  };
+}
+
+/** Where these listings have got to, for the panel. At most one row per listing. */
+export async function getStages(rightmoveIds: string[]): Promise<PropertyStage[]> {
+  if (rightmoveIds.length === 0) return [];
+  const projectId = await activeProjectId();
+  const { data, error } = await db()
+    .from('property_stage')
+    .select(STAGE_COLUMNS)
+    .eq('project_id', projectId)
+    .in('rightmove_id', rightmoveIds);
+  fail('loading where these places have got to', error);
+
+  const rows = (data ?? []) as any[];
+  const names = await displayNames(rows.map((r) => r.set_by));
+  return rows.map((r) => toStage(r, names));
+}
+
+/** Move a place along the funnel — or archive it, which is the one move that has to say why.
+ *
+ *  The verdict is deliberately untouched. Archiving a flat you loved because somebody outbid you
+ *  must leave it recorded as loved, or the score learns the opposite of what happened. */
+export async function setStage(
+  rightmoveId: string,
+  stage: Stage,
+  archiveReason: ArchiveReason | null = null,
+  note = '',
+): Promise<void> {
+  const session = await requireSession();
+  const projectId = await activeProjectId();
+  // The database enforces this too (`property_stage_reason`), and a constraint violation arrives as
+  // "new row violates check constraint" — true, and no use to anybody reading a toast.
+  if (stage === 'archived' && !archiveReason) throw new Error('say why it is being archived');
+  const { error } = await db().from('property_stage').upsert(
+    {
+      project_id: projectId,
+      rightmove_id: rightmoveId,
+      stage,
+      archive_reason: stage === 'archived' ? archiveReason : null,
+      note,
+      set_by: session.user.id,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'project_id,rightmove_id' },
+  );
+  fail('saving where this place has got to', error);
+}
+
+// ------------------------------------------------------------------------------------------------
 // Verdict score — the project's own taste, as a classifier.
 //
 // The model is fitted server-side (the `predict` function) and read here; scoring happens in the
@@ -815,6 +886,9 @@ export interface ShortlistEntry {
   /** At most one now: the project shares a single rating per property (design D6). Kept as a list
    *  so `groupOf` and `enthusiasm` in lib/shortlist.ts read unchanged. */
   verdicts: Verdict[];
+  /** Where this place has got to, or null for one nobody has liked yet. Separate from the verdict
+   *  on purpose — see `packages/core/src/stage.ts`. */
+  stage: PropertyStage | null;
   analysis: Analysis | null;
 }
 
@@ -829,9 +903,13 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
   const { data, error } = await db()
     .from('property')
     .select(
-      'rightmove_id, url, display_address, postcode, price, bedrooms, bathrooms, floor_area_sqft, floor_area_source, floorplan_url, image_urls, furnish_type, listing_update, nearest_stations, last_seen_at, latitude, longitude, postcode_lat, postcode_lon, verdict(*), property_analysis(*), project_property!inner(project_id, last_seen_at)',
+      'rightmove_id, url, display_address, postcode, price, bedrooms, bathrooms, floor_area_sqft, floor_area_source, floorplan_url, image_urls, furnish_type, listing_update, nearest_stations, last_seen_at, latitude, longitude, postcode_lat, postcode_lon, verdict(*), property_stage(*), property_analysis(*), project_property!inner(project_id, last_seen_at)',
     )
     .eq('project_property.project_id', projectId)
+    // Scoped for exactly the reason the verdict embed below is, and with the same consequence if it
+    // were left off: a flat two projects are both chasing would arrive carrying both funnels, and
+    // whichever the planner returned first would be shown as this project's.
+    .eq('property_stage.project_id', projectId)
     // The embedded verdict needs the same filter as the membership list, and for a different
     // reason. `project_property!inner` decides *which properties* appear; this decides *whose
     // opinion* comes back with them. RLS lets a member of two projects read the verdicts of both,
@@ -843,14 +921,20 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
   fail('loading the shortlist', error);
 
   const rows = (data ?? []) as any[];
-  const verdictRows = rows.flatMap((row) => (Array.isArray(row.verdict) ? row.verdict : row.verdict ? [row.verdict] : []));
-  const names = await displayNames(verdictRows.map((v: any) => v.set_by));
+  // PostgREST returns an embedded row as an object or as an array depending on how it reads the
+  // relationship, and both shapes turn up here — so every embed is normalised the same way rather
+  // than each caller guessing.
+  const embedded = (value: any): any[] => (Array.isArray(value) ? value : value ? [value] : []);
+  const verdictRows = rows.flatMap((row) => embedded(row.verdict));
+  const stageRows = rows.flatMap((row) => embedded(row.property_stage));
+  const names = await displayNames([...verdictRows, ...stageRows].map((r: any) => r.set_by));
 
   return rows.map((row: any) => {
     // A claimed-but-unfinished analysis row is not an analysis; the panel applies the same rule.
     const analysisRow = (row.property_analysis ?? []).find?.((a: any) => a.status === 'done')
       ?? (row.property_analysis?.status === 'done' ? row.property_analysis : null);
-    const verdicts = Array.isArray(row.verdict) ? row.verdict : row.verdict ? [row.verdict] : [];
+    const verdicts = embedded(row.verdict);
+    const stageRow = embedded(row.property_stage)[0] ?? null;
 
     return {
       rightmoveId: row.rightmove_id,
@@ -885,6 +969,7 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
         note: v.note,
         updatedAt: v.updated_at,
       })),
+      stage: stageRow ? toStage(stageRow, names) : null,
       analysis: analysisRow ? toAnalysis(analysisRow) : null,
     };
   })

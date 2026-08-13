@@ -8,7 +8,16 @@
  *  Nothing here is stored. A score is computed at render against the current model, so it is always
  *  the current model's opinion; the moment someone retrains, the next render reflects it.
  */
-import { groupOf, score as scoreModel, type Hub, type Model, type PredictInput } from '@house-hunt/core';
+import {
+  groupOf,
+  parseMonthlyPrice,
+  resolveSize,
+  score as scoreModel,
+  sizeOf,
+  type Hub,
+  type Model,
+  type PredictInput,
+} from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
 
 /** Nearest station distance in miles. Rightmove gives miles; a stray kilometre is converted rather
@@ -47,34 +56,61 @@ export function scoreEntries(model: Model, entries: ShortlistEntry[], hubs: Hub[
   return scores;
 }
 
-/** How to order the triage pile. `yes` and `no` sort toward the two certainties; `uncertain`
- *  surfaces the genuine middle (nearest 0.5), which is where a human's attention is worth most. */
-export type SortMode = 'yes' | 'no' | 'uncertain' | 'default';
+/** How to order the triage pile.
+ *
+ *  Three of these ask the model: `yes` and `no` sort toward the two certainties, and `uncertain`
+ *  surfaces the genuine middle (nearest 0.5), which is where a human's attention is worth most. The
+ *  rest ask the listing, and are the ones that still work on the day a hunt starts — before there
+ *  are enough verdicts to fit a model on, which is exactly when the pile is at its biggest. */
+export type SortMode = 'yes' | 'no' | 'uncertain' | 'default' | 'cheapest' | 'biggest' | 'great-room';
 
 export const SORT_LABEL: Record<SortMode, string> = {
   default: 'Newest first',
   yes: 'Most likely yes',
   no: 'Most likely no',
   uncertain: 'Most uncertain',
+  cheapest: 'Cheapest first',
+  biggest: 'Biggest first',
+  'great-room': 'Best main room',
 };
 
-/** Order entries by score for a sort mode. `default` and a missing score leave the incoming order
- *  (newest first) untouched — an unscored pile still triages, just without the ranking. */
+/** The three that are meaningless without a fitted model. Listed rather than inferred, so the
+ *  control can grey out exactly those and leave the others usable — disabling the whole select,
+ *  which is what it used to do, took away the two sorts that never needed a model at all. */
+export const NEEDS_MODEL: SortMode[] = ['yes', 'no', 'uncertain'];
+
+/** Order entries for a sort mode. `default` leaves the incoming order (newest first) untouched, and
+ *  so does a model sort with no model — an unscored pile still triages, just without the ranking.
+ *
+ *  Missing values sink, whichever end you asked for. A flat with no floor area is not the smallest
+ *  and a flat with no price is not the cheapest; sorting either to the top would put the listings we
+ *  know least about in front of the ones the sort was meant to surface. */
 export function sortForTriage(
   entries: ShortlistEntry[],
   scores: Map<string, number> | null,
   mode: SortMode,
 ): ShortlistEntry[] {
-  if (!scores || mode === 'default') return entries;
-  const key = (e: ShortlistEntry) => scores.get(e.rightmoveId);
+  if (mode === 'default') return entries;
+  if (NEEDS_MODEL.includes(mode) && !scores) return entries;
+
   const rank = (e: ShortlistEntry): number => {
-    const s = key(e);
+    if (mode === 'cheapest') return parseMonthlyPrice(e.price) ?? Infinity;
+    if (mode === 'biggest') return negate(resolveSize(sizeOf(e))?.value);
+    if (mode === 'great-room') return negate(e.analysis?.biggestRoomSqft);
+
+    const s = scores!.get(e.rightmoveId);
     if (s == null) return Infinity; // unscored sinks to the end, whichever end you asked for
     if (mode === 'yes') return -s;
     if (mode === 'no') return s;
     return Math.abs(s - 0.5);
   };
   return [...entries].sort((a, b) => rank(a) - rank(b));
+}
+
+/** Biggest-first as an ascending rank, with "no number" still sorting last rather than first —
+ *  which is what `-null` would quietly do. */
+function negate(value: number | null | undefined): number {
+  return value == null ? Infinity : -value;
 }
 
 /** Whether the model strongly disagrees with a flat's existing rating — a loved place it scores

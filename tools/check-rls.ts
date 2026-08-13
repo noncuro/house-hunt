@@ -273,6 +273,12 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
     .insert({ project_id: PROJECT_B, label: 'B office', postcode: 'RLS 2BB' })).error);
   must("seeding B's verdict", (await admin.from('verdict')
     .insert({ project_id: PROJECT_B, rightmove_id: LISTING_B, rating: 'love', note: "B's opinion", set_by: userB })).error);
+  // Upsert, not insert: the verdict above has already put this flat in B's funnel — that is what
+  // `enter_funnel` is for — so this moves the row on rather than creating one, and a `viewed` flat
+  // is a more useful thing for A to try to reach than a freshly shortlisted one.
+  must("seeding B's funnel", (await admin.from('property_stage')
+    .upsert({ project_id: PROJECT_B, rightmove_id: LISTING_B, stage: 'viewed', set_by: userB },
+      { onConflict: 'project_id,rightmove_id' })).error);
   must("seeding B's history", (await admin.from('verdict_history')
     .insert({ project_id: PROJECT_B, rightmove_id: LISTING_B, rating: 'maybe', updated_at: new Date().toISOString() })).error);
   must("seeding B's sighting", (await admin.from('search_sighting')
@@ -323,7 +329,7 @@ async function main() {
   else fail('signUp is refused outright', 'a stranger holding only the publishable key got an account');
 
   const PROJECT_SCOPED = [
-    'place', 'verdict', 'verdict_history', 'search_sighting', 'hub_sweep',
+    'place', 'verdict', 'verdict_history', 'property_stage', 'search_sighting', 'hub_sweep',
     'project_hub', 'project_property', 'invite', 'api_usage',
   ] as const;
 
@@ -358,6 +364,10 @@ async function main() {
   refused("verdict: update B's row", await a.from('verdict').update({ rating: 'no', note: 'overwritten' }).eq('project_id', PROJECT_B).select());
   refused("verdict: delete B's row", await a.from('verdict').delete().eq('project_id', PROJECT_B).select());
 
+  refused("property_stage: insert into B", await a.from('property_stage').insert({ project_id: PROJECT_B, rightmove_id: LISTING_B, stage: 'offer_made' }).select());
+  refused("property_stage: archive B's flat", await a.from('property_stage').update({ stage: 'archived', archive_reason: 'gone' }).eq('project_id', PROJECT_B).select());
+  refused("property_stage: delete B's row", await a.from('property_stage').delete().eq('project_id', PROJECT_B).select());
+
   refused("search_sighting: insert into B", await a.from('search_sighting').insert({ project_id: PROJECT_B, rightmove_id: 'x', hub: 'h', url: 'u' }).select());
   refused("search_sighting: delete B's rows", await a.from('search_sighting').delete().eq('project_id', PROJECT_B).select());
 
@@ -386,6 +396,7 @@ async function main() {
   is("B's place survived", await count('place', 'project_id', PROJECT_B), 1);
   is("B's verdict survived", await count('verdict', 'project_id', PROJECT_B), 1);
   is("B's verdict is unchanged", (await admin.from('verdict').select('note').eq('project_id', PROJECT_B).single()).data?.note, "B's opinion");
+  is("B's funnel is untouched", (await admin.from('property_stage').select('stage').eq('project_id', PROJECT_B).single()).data?.stage, 'viewed');
   is("B's sighting survived", await count('search_sighting', 'project_id', PROJECT_B), 1);
   is("B's hub survived", await count('project_hub', 'project_id', PROJECT_B), 1);
   is("B's sweep survived", await count('hub_sweep', 'project_id', PROJECT_B), 1);
@@ -558,6 +569,50 @@ async function main() {
   // looking for a bug in `create_invite`. The schema is not at fault: the identical statement run
   // through psql as `authenticated` with a member's claims returns the row.
   is('project_property: recording a listing is what links it', await count('project_property', 'rightmove_id', LISTING_NEW), 1);
+
+  // ----------------------------------------------------------------------------------------- //
+  console.log('\nthe funnel, and the one direction it is coupled to a verdict');
+
+  // `enter_funnel` is a trigger rather than a follow-up write from whichever client rated the flat,
+  // so this is the only place it can be asserted at all — and it is worth asserting, because a
+  // trigger that silently stopped firing looks exactly like a hunt where nobody has liked anything.
+  const stageOfA = async (rightmoveId: string) =>
+    (await admin.from('property_stage').select('stage').eq('project_id', PROJECT_A).eq('rightmove_id', rightmoveId).maybeSingle()).data?.stage ?? null;
+
+  is('liking a flat entered it into the funnel', await stageOfA(LISTING_A), 'shortlisted');
+  allowed('property_stage: booking a viewing', await a.from('property_stage').update({ stage: 'viewing_booked', set_by: userA }).eq('project_id', PROJECT_A).eq('rightmove_id', LISTING_A).select());
+  refused('property_stage: attributing a move to someone else', await a.from('property_stage').update({ set_by: userB }).eq('project_id', PROJECT_A).select());
+  // `denied` rather than `refused`: this one must fail outright. An archive with no reason is a
+  // check constraint, not a policy, and "affected nothing" would be a false pass.
+  denied('property_stage: archiving without saying why', await a.from('property_stage').update({ stage: 'archived' }).eq('project_id', PROJECT_A).eq('rightmove_id', LISTING_A).select());
+
+  // The rule the whole separation rests on: changing your mind about a flat you have already
+  // viewed does not rewind the funnel — you really did book that viewing — and the rating moves on
+  // its own, which is what keeps the score learning from what you actually thought.
+  allowed('verdict: changing your mind after a viewing is booked', await a.from('verdict').update({ rating: 'no' }).eq('project_id', PROJECT_A).eq('rightmove_id', LISTING_A).select());
+  is('...leaves the booked viewing on the record', await stageOfA(LISTING_A), 'viewing_booked');
+
+  // The flow the insert policy nearly broke, and the reason it is written the way it is. A flat
+  // rated `no` above, whose stage row predates that: archiving it is an upsert, and an upsert is
+  // judged by the INSERT policy even when it takes the update path — so the first version of
+  // `stage_needs_a_like`, which asked only for a current like, refused it. Recording how a flat
+  // ended is exactly what the funnel is for, and it would have shipped unable to.
+  allowed('property_stage: archiving a flat we have gone off, long after the like', await a.from('property_stage').upsert({ project_id: PROJECT_A, rightmove_id: LISTING_A, stage: 'archived', archive_reason: 'passed', set_by: userA }, { onConflict: 'project_id,rightmove_id' }).select());
+  is('...and it records why', await stageOfA(LISTING_A), 'archived');
+
+  // And the other half: a flat that never got past the step the like itself created leaves the
+  // funnel when the like does. Otherwise every rejected flat would sit in the funnel for good.
+  allowed('verdict: liking a flat nothing has happened to yet', await a.from('verdict').insert({ project_id: PROJECT_A, rightmove_id: LISTING_NEW, rating: 'love', set_by: userA }).select());
+  is('...puts it in the funnel', await stageOfA(LISTING_NEW), 'shortlisted');
+  allowed('verdict: and taking the like back', await a.from('verdict').update({ rating: 'no' }).eq('project_id', PROJECT_A).eq('rightmove_id', LISTING_NEW).select());
+  is('...takes it back out again', await stageOfA(LISTING_NEW), null);
+
+  // Entering the funnel is what liking a place does, and nothing else may do it. A member writing
+  // straight through PostgREST — no verdict, no trigger — must not be able to claim a viewing on a
+  // flat nobody has judged: the funnel bar and the triage pile both read "not in the funnel" as
+  // "nobody has liked this".
+  refused('property_stage: inventing a viewing for an unrated flat', await a.from('property_stage').insert({ project_id: PROJECT_A, rightmove_id: LISTING_NEW, stage: 'viewed', set_by: userA }).select());
+  is('...and it stayed out of the funnel', await stageOfA(LISTING_NEW), null);
   allowed('profile: setting my own display name', await a.from('profile').update({ display_name: 'A' }).eq('id', userA).select());
   allowed('project: renaming my own project', await a.from('project').update({ name: 'A renamed' }).eq('id', PROJECT_A).select());
   allowed('spend_summary: reading my own budget', await rpc(a, 'spend_summary', { p_project_id: PROJECT_A }));

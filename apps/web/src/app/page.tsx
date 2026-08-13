@@ -8,9 +8,24 @@ import {
 } from '@house-hunt/core';
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { Sweep } from '@/screens/Sweep';
-import { duplicateIds, enthusiasm, groupOf, sizeOf, type Group } from '@house-hunt/core';
+import {
+  applyFilter,
+  duplicateIds,
+  enthusiasm,
+  groupOf,
+  NO_FILTER,
+  sizeOf,
+  FILTER_LABEL,
+  funnelCounts,
+  GROUP_LABEL,
+  matchesStage,
+  STAGE_FILTERS,
+  type FunnelCounts,
+  type Group,
+  type StageFilter,
+} from '@house-hunt/core';
 import { NoActiveProject, spendSummary, Unauthenticated, type ShortlistEntry } from '@house-hunt/core/db';
-import type { HuntPreferences, Place, Rating } from '@house-hunt/core';
+import type { ArchiveReason, HuntPreferences, Place, Rating, Stage, TriageFilter } from '@house-hunt/core';
 import { HubFact } from '@house-hunt/ui';
 import { Hint } from '@house-hunt/ui';
 import { Flags } from '@house-hunt/ui';
@@ -19,11 +34,13 @@ import { SpendWarning } from '@house-hunt/ui';
 import { RATINGS, ratingOf } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
 import { OffMarketRow } from '@house-hunt/ui';
-import { scoreEntries, sortForTriage, isSurprise, SORT_LABEL, type SortMode } from '@/lib/score';
+import { scoreEntries, sortForTriage, isSurprise, NEEDS_MODEL, SORT_LABEL, type SortMode } from '@/lib/score';
 import type { StoredModel } from '@house-hunt/core/db';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
 import { ExtensionNotice } from '@/screens/Extension';
 import { Tick, useRangePick, type Selection } from '@/components/Tick';
+import { Pager, usePaging } from '@/components/Pager';
+import { TriageFilters } from '@/components/TriageFilters';
 import { Install } from '@/screens/Install';
 import { Compare } from '@/screens/Compare';
 import { Detail } from '@/screens/Detail';
@@ -46,6 +63,7 @@ import {
   useRate,
   useRetrain,
   useSetOffMarket,
+  useSetStage,
   useShortlist,
   useSignOut,
 } from '@/lib/queries';
@@ -160,7 +178,11 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   const settingsQuery = useProjectSettings();
   const retrain = useRetrain();
   const offMarketMutation = useSetOffMarket();
+  const stageMutation = useSetStage();
   const [sortMode, setSortMode] = useState<SortMode>('default');
+  // Held here rather than inside Triage so that going to the map and back does not throw away the
+  // narrowing you set up to work through.
+  const [triageFilter, setTriageFilter] = useState<TriageFilter>(NO_FILTER);
 
   // The neighbourhoods every card places its flat against (design D11). Same hook the Sweep view
   // reads, so switching between them costs nothing and the two cannot disagree about which
@@ -172,7 +194,17 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   // that quietly refuses to analyse (design D9).
   const spendQuery = useQuery({ queryKey: ['spend'], queryFn: spendSummary });
 
-  const entries = shortlist.data ?? null;
+  const all = shortlist.data ?? null;
+  // The funnel is a filter over the whole shortlist rather than a view of its own: "the two we have
+  // viewed" is the same list of cards, the same table and the same map, narrowed. Triage is
+  // deliberately outside it — that pile is everything nobody has judged yet, which is by definition
+  // everything not in the funnel.
+  const [stageFilter, setStageFilter] = useState<StageFilter>('all');
+  const funnel = useMemo(() => funnelCounts(all ?? []), [all]);
+  const entries = useMemo(
+    () => (all === null ? null : all.filter((e) => matchesStage(e.stage, stageFilter))),
+    [all, stageFilter],
+  );
   const places = placesQuery.data ?? [];
   // Three states, and the difference matters: still reading, read and failed, read. `HubFact`
   // renders each as itself rather than letting a failure read as "nothing near this flat".
@@ -242,7 +274,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
 
   // Over every entry, not per pile: a relisted flat is routinely rejected under one id and
   // unrated under the other, which lands the two halves in piles that never see each other.
-  const twins = useMemo(() => duplicateIds(entries ?? []), [entries]);
+  const twins = useMemo(() => duplicateIds(all ?? []), [all]);
 
   /** `…/#card-88023648` opens on that flat — the thing a `chrome-extension://` address could never
    *  do, and the reason for most of this change. You can send one of these to the other laptop, or
@@ -253,15 +285,18 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
    *  scrolling away and toggling a pile does not yank you back. */
   const jumped = useRef<string | null>(null);
   useEffect(() => {
-    if (!entries) return;
+    if (!all) return;
     const id = /^#card-(\d+)$/.exec(window.location.hash)?.[1];
     if (!id || jumped.current === id) return;
-    const entry = entries.find((e) => e.rightmoveId === id);
+    const entry = all.find((e) => e.rightmoveId === id);
     if (!entry) return;
     jumped.current = id;
+    // A link to a flat has to land on it. Somebody who left the shortlist filtered to "viewed" and
+    // then opened a link to a flat that is not would otherwise be scrolled to nothing at all.
+    if (!matchesStage(entry.stage, stageFilter)) setStageFilter('all');
     openCard(id, groupOf(entry.verdicts));
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries]);
+  }, [all]);
   // Every entry's P(yes) under the current model, computed once and shared by the cards, the
   // triage sort and the mismatch marker. Null while there is no model (never trained, or too few
   // verdicts) — the UI then simply shows no scores rather than an error.
@@ -272,11 +307,11 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   // without it is a confident number about the wrong flat. No score is the honest state.
   const model = modelQuery.data?.model ?? null;
   const scores = useMemo(
-    () => (model && entries && Array.isArray(hubs) ? scoreEntries(model, entries, hubs) : null),
+    () => (model && all && Array.isArray(hubs) ? scoreEntries(model, all, hubs) : null),
     // hubsQuery.data rather than the derived `hubs` array, which is a fresh reference every render;
     // isError alongside it so a failed refetch clears the scores instead of leaving stale ones up.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-    [model, entries, hubsQuery.data, hubsQuery.isError],
+    [model, all, hubsQuery.data, hubsQuery.isError],
   );
   const offMarket = offMarketQuery.data ?? new Set<string>();
   const setEntryOffMarket = (entry: ShortlistEntry, off: boolean) =>
@@ -285,9 +320,33 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       { onError: (e) => push(`Not saved — ${(e as Error).message}`) },
     );
 
+  /** Move a place along the funnel. The verdict is not touched and must not be: losing a flat you
+   *  loved is a fact about the flat's availability, not about your taste, and the score is fitted on
+   *  the second. */
+  const setEntryStage = (entry: ShortlistEntry, stage: Stage, archiveReason: ArchiveReason | null) =>
+    stageMutation.mutate(
+      { rightmoveId: entry.rightmoveId, stage, archiveReason },
+      { onError: (e) => push(`Not saved — ${(e as Error).message}`) },
+    );
+
   const prefs = settingsQuery.data ?? {};
-  const cardProps = { places, hubs, twins, rate, scores, offMarket, setOffMarket: setEntryOffMarket, prefs };
-  const byId = useMemo(() => new Map((entries ?? []).map((e) => [e.rightmoveId, e])), [entries]);
+  const cardProps = {
+    places,
+    hubs,
+    twins,
+    rate,
+    scores,
+    offMarket,
+    setOffMarket: setEntryOffMarket,
+    setStage: setEntryStage,
+    // react-query holds the variables of the mutation in flight, which is exactly the "which flat,
+    // which step" this needs — no second piece of state to keep in step with it.
+    stageSaving: stageMutation.isPending && stageMutation.variables
+      ? { rightmoveId: stageMutation.variables.rightmoveId, stage: stageMutation.variables.stage }
+      : null,
+    prefs,
+  };
+  const byId = useMemo(() => new Map((all ?? []).map((e) => [e.rightmoveId, e])), [all]);
 
   /** The one jump from anywhere pointing at a flat — a map pin, a compare row, a triage row — so
    *  the three cannot disagree about which pile the card is waiting in. */
@@ -325,7 +384,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       </div>
     );
   }
-  if (!entries) {
+  if (!all || !entries) {
     return (
       <div className="wrap">
         <p className="dim working">Loading…</p>
@@ -344,8 +403,13 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         <div>
           <h1>Shortlist</h1>
           <p className="dim">
-            {entries.length} {entries.length === 1 ? 'place' : 'places'} opened in{' '}
+            {all.length} {all.length === 1 ? 'place' : 'places'} opened in{' '}
             <strong>{project.name}</strong>, shared with everyone in it.
+            {/* The count above is the whole hunt, so a filter has to say what is actually on
+                screen — otherwise a shortlist showing two flats claims to be showing forty. */}
+            {stageFilter !== 'all' && (
+              <span> Showing the {entries.length} at “{FILTER_LABEL[stageFilter].toLowerCase()}”.</span>
+            )}
             {shortlist.isFetching && <span className="working"> · refreshing</span>}
           </p>
           {/* Who you are, because a verdict is now signed. Sign out sits with it rather than in
@@ -429,6 +493,13 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           case, because signing in on this page hands the credentials across at that moment. */}
       <ExtensionNotice email={user.email} />
 
+      {/* The funnel, over the three views that show places rather than manage them. Triage is
+          excluded on purpose: it is the pile nobody has judged, which is exactly the pile that has
+          not entered the funnel. */}
+      {(view === 'list' || view === 'table' || view === 'map') && (
+        <Funnel counts={funnel} filter={stageFilter} setFilter={setStageFilter} />
+      )}
+
       {view === 'settings' && (
         <Settings
           places={places}
@@ -458,6 +529,14 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           retrain={retrain}
           sortMode={sortMode}
           setSortMode={setSortMode}
+          filter={triageFilter}
+          setFilter={(next) => {
+            setTriageFilter(next);
+            // Anything ticked and then filtered away would still be rated by the bulk buttons —
+            // a verdict for everybody in the hunt, on flats no longer on screen. Changing what is
+            // shown clears what is chosen.
+            setSelected([]);
+          }}
           notify={push}
           {...cardProps}
         />
@@ -482,21 +561,21 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
 
       <div hidden={view !== 'list' && view !== 'map'}>
       <Pile
-        title="Excited about"
+        title={GROUP_LABEL.excited}
         entries={grouped.excited}
-        empty="Nothing yet — mark a place “Exciting” in the panel and it lands here."
+        empty="Nothing yet — mark a place “Love it” in the panel and it lands here."
         {...cardProps}
       />
 
       <Toggle
-        label={`Maybes (${grouped.maybe.length})`}
+        label={`${GROUP_LABEL.maybe} (${grouped.maybe.length})`}
         open={showMaybes}
         onToggle={() => setShowMaybes((v) => !v)}
       />
-      {showMaybes && <Pile entries={grouped.maybe} empty="No maybes." {...cardProps} />}
+      {showMaybes && <Pile entries={grouped.maybe} empty="Nothing liked." {...cardProps} />}
 
       <Toggle
-        label={`Not yet rated (${grouped.unrated.length})`}
+        label={`${GROUP_LABEL.unrated} (${grouped.unrated.length})`}
         open={showUnrated}
         onToggle={() => setShowUnrated((v) => !v)}
       />
@@ -507,7 +586,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       {/* A count, not a list. Seeing them again is the thing rejecting was meant to prevent —
           but the number is worth knowing, and it's one click if you want to check. */}
       <Toggle
-        label={`Rejected (${grouped.rejected.length})`}
+        label={`${GROUP_LABEL.rejected} (${grouped.rejected.length})`}
         open={showRejected}
         onToggle={() => setShowRejected((v) => !v)}
       />
@@ -515,6 +594,41 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
       </div>
 
       <Toasts toasts={toasts} dismiss={dismiss} />
+    </div>
+  );
+}
+
+/** The funnel as a row of counts you can filter on: shortlisted, reached out, viewing booked,
+ *  viewed, offer in, archived — and the pile that is in none of them.
+ *
+ *  A step with nothing in it is still drawn, dimmed. A funnel that hid its empty steps would read
+ *  as a hunt with no "viewed" step rather than one with nothing viewed yet, and the shape of what
+ *  is left to do is the whole reason to look at it. */
+function Funnel({
+  counts,
+  filter,
+  setFilter,
+}: {
+  counts: FunnelCounts;
+  filter: StageFilter;
+  setFilter: (next: StageFilter) => void;
+}) {
+  return (
+    <div className="funnel" data-testid="funnel">
+      {STAGE_FILTERS.map((step) => (
+        <button
+          key={step}
+          className={filter === step ? 'key key-on' : 'key'}
+          aria-pressed={filter === step}
+          disabled={counts[step] === 0 && filter !== step}
+          data-testid={`funnel-${step}`}
+          // Clicking the step you are already on goes back to everything, so the filter can always
+          // be undone with the button that set it.
+          onClick={() => setFilter(filter === step ? 'all' : step)}
+        >
+          {FILTER_LABEL[step]} <span className="dim">{counts[step]}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -549,6 +663,8 @@ function Triage({
   retrain,
   sortMode,
   setSortMode,
+  filter,
+  setFilter,
   notify,
   ...cardProps
 }: {
@@ -565,6 +681,10 @@ function Triage({
   retrain: ReturnType<typeof useRetrain>;
   sortMode: SortMode;
   setSortMode: (mode: SortMode) => void;
+  /** The bars a flat has to clear to stay in the pile. Held above this component so that going to
+   *  the map and back does not throw away the narrowing you set up to work through. */
+  filter: TriageFilter;
+  setFilter: (next: TriageFilter) => void;
   notify: (message: string) => void;
 } & CardProps) {
   // The table is the default, and it is the layout the tick boxes were asking for. Ticking is a
@@ -586,10 +706,6 @@ function Triage({
       return next;
     });
   const chosen = new Set(selected);
-  // Ticking a flat that has since been rated elsewhere would rate it again on the next click,
-  // so the selection is read against what is actually in the pile now.
-  const all = entries.map((e) => e.rightmoveId);
-  const allChosen = all.length > 0 && all.every((id) => chosen.has(id));
   const toggle = (id: string) =>
     setSelected(chosen.has(id) ? selected.filter((s) => s !== id) : [...selected, id]);
   const setMany = (ids: string[], on: boolean) => {
@@ -597,10 +713,18 @@ function Triage({
     setSelected(on ? [...new Set([...selected, ...ids])] : selected.filter((s) => !run.has(s)));
   };
 
-  // The pile in the order the score suggests working it. When there is no model the control is off
-  // and this is the incoming order (newest first) — the pile still triages, just unranked.
-  const shown = sortForTriage(entries, cardProps.scores, sortMode);
+  // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave
+  // the ranking meaning something about flats that are no longer on screen. `unknowns` is what the
+  // filter kept without an answer either way, which the bar says out loud.
+  const { kept, unknowns } = applyFilter(entries, filter);
+  const shown = sortForTriage(kept, cardProps.scores, sortMode);
   const metrics = storedModel?.model.metrics;
+
+  // "Select all" means all of what is on screen. Ticking a flat that has since been rated elsewhere
+  // would rate it again on the next click, so the selection is read against what is in the pile now
+  // — and with a filter on, the pile is what the filter left.
+  const all = shown.map((e) => e.rightmoveId);
+  const allChosen = all.length > 0 && all.every((id) => chosen.has(id));
 
   const onRerun = () =>
     retrain.mutate(undefined, {
@@ -623,15 +747,20 @@ function Triage({
       </button>
       <label className="triage-sort">
         <span className="dim">Sort:</span>
+        {/* Per option, not per control. Disabling the whole select when there is no model — which
+            is how this started — took away "cheapest first" and "biggest first" as well, and those
+            never needed one. The day a hunt starts is the day the pile is biggest and the model
+            does not exist yet. */}
         <select
           value={sortMode}
           onChange={(e) => setSortMode(e.target.value as SortMode)}
-          disabled={!cardProps.scores || entries.length === 0}
-          title={cardProps.scores ? 'Order the pile by the predicted score.' : 'Rerun ratings first to sort by score.'}
+          disabled={entries.length === 0}
+          title="Choose which end of the pile to work from."
         >
           {(Object.keys(SORT_LABEL) as SortMode[]).map((mode) => (
-            <option key={mode} value={mode}>
+            <option key={mode} value={mode} disabled={NEEDS_MODEL.includes(mode) && !cardProps.scores}>
               {SORT_LABEL[mode]}
+              {NEEDS_MODEL.includes(mode) && !cardProps.scores ? ' — needs a model' : ''}
             </option>
           ))}
         </select>
@@ -658,8 +787,33 @@ function Triage({
     );
   }
 
+  const filters = (
+    <TriageFilters
+      filter={filter}
+      setFilter={setFilter}
+      kept={kept.length}
+      unknowns={unknowns}
+      total={entries.length}
+    />
+  );
+
+  // Filtered down to nothing is a different sentence from an empty pile, and it needs the filter
+  // bar left on screen: the only way out of it is the control that caused it.
+  if (shown.length === 0) {
+    return (
+      <div className="triage">
+        {filters}
+        {scoreBar}
+        <p className="dim">
+          None of the {entries.length} waiting clears those bars. Loosen one, or clear the filters.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="triage">
+      {filters}
       <div className="triage-bar">
         {/* A verdict on a batch this size is worth one more click. "Select all 219" sits an inch
             from three buttons that write a verdict for everybody in the hunt to see, each of them
@@ -686,7 +840,10 @@ function Triage({
         ) : (
           <>
             <button className="key triage-all" onClick={() => setSelected(allChosen ? [] : all)}>
-              {allChosen ? 'Clear' : `Select all ${entries.length}`}
+              {/* All of what the filters left, which is all of what is on screen. Offering to
+                  select two hundred when twelve are shown is offering to rate a hundred and
+                  eighty-eight flats nobody can see. */}
+              {allChosen ? 'Clear' : `Select all ${shown.length}`}
             </button>
             <span className="dim">
               {selected.length === 0 ? 'Nothing selected' : `${selected.length} selected`}
@@ -781,6 +938,12 @@ interface CardProps {
    *  love — this only keeps the model from learning it. */
   offMarket: Set<string>;
   setOffMarket: (entry: ShortlistEntry, off: boolean) => void;
+  /** Move a place along the funnel. Never touches its rating — the two are separate facts, which is
+   *  the point of the funnel existing at all (`packages/core/src/stage.ts`). */
+  setStage: (entry: ShortlistEntry, stage: Stage, archiveReason: ArchiveReason | null) => void;
+  /** The one flat whose funnel write is in flight, if any. Named rather than a bare boolean so that
+   *  saving on one card does not freeze the control on every other. */
+  stageSaving: { rightmoveId: string; stage: Stage } | null;
   /** Present only in triage: cards grow a tick box and join a batch. Absent everywhere else,
    *  because a card you are reading to decide on is not a card you are selecting. */
   selection?: Selection;
@@ -792,10 +955,16 @@ function Pile({
   empty,
   ...cardProps
 }: { title?: string; entries: ShortlistEntry[]; empty: string } & CardProps) {
+  // A page at a time. Two hundred cards, each with a photo strip and a travel-time block, is both
+  // slow and unreadable — see `Pager`.
+  const paging = usePaging(entries);
   // Cards get the same shift-pick the table has. They were the one layout of triage where a run
   // could only be ticked one at a time, and `setMany` was handed down and never called.
+  //
+  // Over the page on screen rather than the whole pile: a range you cannot see both ends of is one
+  // you did not mean to draw.
   const pick = useRangePick(
-    useMemo(() => entries.map((e) => e.rightmoveId), [entries]),
+    useMemo(() => paging.shown.map((e) => e.rightmoveId), [paging.shown]),
     cardProps.selection,
   );
   return (
@@ -804,16 +973,19 @@ function Pile({
       {entries.length === 0 ? (
         <p className="dim">{empty}</p>
       ) : (
-        <div className="cards">
-          {entries.map((entry) => (
-            <Card
-              key={entry.rightmoveId}
-              entry={entry}
-              onPick={(shiftKey) => pick(entry.rightmoveId, shiftKey)}
-              {...cardProps}
-            />
-          ))}
-        </div>
+        <>
+          <div className="cards">
+            {paging.shown.map((entry) => (
+              <Card
+                key={entry.rightmoveId}
+                entry={entry}
+                onPick={(shiftKey) => pick(entry.rightmoveId, shiftKey)}
+                {...cardProps}
+              />
+            ))}
+          </div>
+          <Pager {...paging} />
+        </>
       )}
     </section>
   );
@@ -839,6 +1011,8 @@ function Card({
   scores,
   offMarket,
   setOffMarket,
+  setStage,
+  stageSaving,
   selection,
   prefs,
   onPick,
@@ -949,7 +1123,13 @@ function Card({
           per person — its own emoji, its own wording, no author and no date — which is exactly the
           drift `components/Verdict.tsx` was written to end. A project now holds one rating
           (design D6), and one renderer states it. */}
-      <Detail entry={entry} places={places} onRate={(value, note) => rate(entry, value, note)} />
+      <Detail
+        entry={entry}
+        places={places}
+        onRate={(value, note) => rate(entry, value, note)}
+        onSetStage={(stage, reason) => setStage(entry, stage, reason)}
+        stageSaving={stageSaving?.rightmoveId === entry.rightmoveId ? stageSaving.stage : null}
+      />
 
       {/* Off the market, but still a place you liked — kept in the shortlist with its verdict,
           withheld only from training. The same control, and the same rules for when it shows, as

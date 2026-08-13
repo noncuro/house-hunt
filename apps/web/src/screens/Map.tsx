@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { DEFAULT_SHOWING, groupOf, type Group } from '@house-hunt/core';
+import { DEFAULT_SHOWING, GROUP_LABEL, groupOf, type Group } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
 
 /** Every place on one map, coloured by what the two of you said.
@@ -26,12 +26,9 @@ const COLOUR: Record<Group, string> = {
 /** What each colour means, in the order you care about them. Four unexplained shades of dot is
  *  a puzzle, not a map — and the legend doubles as the filter, so the thing that tells you what
  *  a colour means is also the thing that turns it off. */
-const LEGEND: Array<{ group: Group; label: string }> = [
-  { group: 'excited', label: 'Excited' },
-  { group: 'maybe', label: 'Maybe' },
-  { group: 'unrated', label: 'Not yet rated' },
-  { group: 'rejected', label: 'Rejected' },
-];
+// Ordered here, worded in `GROUP_LABEL`: a legend that names a pile differently from the heading
+// over the same flats is two names for one pile.
+const LEGEND_ORDER: Group[] = ['excited', 'maybe', 'unrated', 'rejected'];
 
 const LONDON: [number, number] = [51.5074, -0.1278];
 
@@ -161,7 +158,7 @@ export function ShortlistMap({
   return (
     <>
       <div className="legend">
-        {LEGEND.map(({ group, label }) => (
+        {LEGEND_ORDER.map((group) => (
           <button
             key={group}
             className={showing[group] ? 'key key-on' : 'key'}
@@ -169,7 +166,7 @@ export function ShortlistMap({
             onClick={() => show({ ...showing, [group]: !showing[group] })}
           >
             <span className="key-dot" style={{ background: COLOUR[group] }} aria-hidden="true" />
-            {label} <span className="dim">{counts[group]}</span>
+            {GROUP_LABEL[group]} <span className="dim">{counts[group]}</span>
           </button>
         ))}
       </div>

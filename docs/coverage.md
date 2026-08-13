@@ -40,7 +40,7 @@ because three findings from one run beat three runs.
 
 `smoke:web` takes names of its own, for the same reason and with the same rule about a name that
 matches nothing: `pnpm smoke:web list rating`, or `pnpm smoke:web joining`. The sections are
-`session`, `list`, `rating`, `table`, `map`, `triage`, `tabs`, `refusals` and `joining`, and they
+`session`, `list`, `rating`, `funnel`, `table`, `map`, `triage`, `tabs`, `refusals` and `joining`, and they
 always run in that order. What a subset cannot skip is the setup — the fixture, the Edge Functions
 and a production build of the website — so the saving is the browser work: six seconds for the list
 and the rating against forty for all of it, and nearly all of those six are the setup. Every
@@ -94,6 +94,19 @@ the joining check below it fails.
 JWTs, including that `signUp()` is refused outright, which every `to authenticated` policy is
 predicated on.
 
+**Triage's filters** (`smoke:web`, `check:filter`) — a bar nothing can clear empties the pile,
+says so, and leaves the filter bar on screen, because the control that caused it is the only way
+out; clearing restores the pile. `check:filter` pins the rule underneath: a flat is dropped only
+when it is *known* not to qualify, so an unmeasured flat clears every bar and is counted separately.
+A filter that dropped unknowns would look exactly like a shortlist with fewer flats in it.
+
+**The funnel** (`smoke:web`) — a place moved along it and then archived with a reason, both read
+back out of Postgres, plus the assertion the whole separation rests on: the verdict is read before
+the archive and compared with itself afterwards. A stage that overwrote a rating would look like a
+tidy screen and would put a training label on a flat nobody chose, which is invisible from every
+view. `check:stage` pins the other half — the funnel's *order*, which is not the alphabet's:
+sorted by name, "archived" leads and a viewing follows the visit it was booked for.
+
 ## Not covered
 
 Roughly in the order the risk deserves.
@@ -101,6 +114,7 @@ Roughly in the order the risk deserves.
 | Gap | Why it matters |
 |---|---|
 | **The other writes.** Adding a place, adding a hub, marking off-market, renaming a project, and bulk rating from triage are all asserted up to the button and no further. | These are the actions, and the reads are well covered only because reads are easy to assert. Rating one flat now goes all the way to Postgres, which is the pattern the rest should follow: click it, then read the row. Bulk rating is the deliberate exception — it writes verdicts nobody gave onto every ticked row, so it stops at the buttons being dead until something is ticked. |
+| **The gallery's gestures.** `smoke` opens it from the panel and asserts it paints over Rightmove; nothing drives the swipe, and nothing opens it on the website at all. | The swipe was checked by hand in a mobile-emulated Chromium driving real touch input through CDP — Playwright's own `touchscreen` only taps — and the cases worth keeping are the ones that are not the happy path: a short drag must not advance *or* dismiss, a cancelled gesture must not advance either, the arrows must still work after a pointer capture, and a tap on the photo must not close it. `smoke:web` could open it from a card's photo strip. |
 | **The Admin tab.** | Never opened by anything. It is admin-only, so the fixture would need an admin — one row in `admin_email`. Users, projects, invites and spend all render there against real queries. |
 | **The extension↔website bridge.** `check:bridge` covers the contract as a pure function; nothing drives the actual handover. | It is how signing in on the website signs the extension in. It fails silently by design (`handOver` swallows), so a break shows up as "the extension is signed out" days later. |
 | **The paced opener** (Sweep's fill-in run). | It was covered by `smoke:sweep` before the split, and that harness was deleted rather than ported. It opens tabs one at a time; the old harness stubbed its worklist so the pacing assertion could not silently skip. |

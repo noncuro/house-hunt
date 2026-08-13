@@ -33,6 +33,22 @@
   max-height: 84vh;
   border-radius: 8px;
   box-shadow: 0 20px 60px rgb(0 0 0 / 45%);
+  /* The overlay handles horizontal drags itself; `pan-y` leaves the browser its vertical gestures
+     and stops it claiming the sideways one as a scroll or a back-navigation halfway through a
+     swipe. Without it the photo follows the finger for an inch and then the page takes over. */
+  touch-action: pan-y;
+  /* A long-press on a photo otherwise offers to save or share it, and a drag across one starts the
+     browser's own image drag — both fire in the middle of a swipe. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 160ms ease-out;
+}
+
+/* While the finger is down the photo tracks it exactly; the transition above is what springs it
+   back afterwards, and easing it on the way out would make the drag feel like it was lagging. */
+.lightbox-dragging {
+  transition: none;
 }
 
 .lightbox-close,

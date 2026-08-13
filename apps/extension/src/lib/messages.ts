@@ -25,7 +25,17 @@ import type {
   AdminUser,
   UsageRow,
 } from '@house-hunt/core';
-import type { Analysis, Listing, Place, Rating, TravelTime, Verdict } from '@house-hunt/core';
+import type {
+  Analysis,
+  ArchiveReason,
+  Listing,
+  Place,
+  PropertyStage,
+  Rating,
+  Stage,
+  TravelTime,
+  Verdict,
+} from '@house-hunt/core';
 
 /** The shared vocabulary, re-exported.
  *
@@ -88,6 +98,17 @@ export type Request =
   | { type: 'listing:withdrawn'; rightmoveId: string }
   | { type: 'verdict:set'; rightmoveId: string; rating: Rating; note: string }
   | { type: 'verdicts:get'; rightmoveIds: string[] }
+  /** Where a place has got to — reached out, viewing booked, archived with a reason. A different
+   *  fact from the verdict and stored apart from it: an offer that falls through must not overwrite
+   *  the rating the score is fitted on (`packages/core/src/stage.ts`). */
+  | { type: 'stage:get'; rightmoveId: string }
+  | {
+      type: 'stage:set';
+      rightmoveId: string;
+      stage: Stage;
+      archiveReason: ArchiveReason | null;
+      note: string;
+    }
   /** Off the market: withheld from the verdict-score model's training, the verdict itself untouched
    *  (design in the verdict-score migration). The panel needs both to read the current state and to
    *  set it — the website could do this already, the panel could not. */
@@ -179,6 +200,9 @@ export interface ResponseMap {
    *  the display name of whoever set it — the author, not the owner of a private opinion — and it
    *  is shown alongside `updatedAt` so last-write-wins stays visible rather than silent. */
   'verdicts:get': Verdict[];
+  /** Where this listing has got to for the active project, or null for one nobody has liked yet. */
+  'stage:get': PropertyStage | null;
+  'stage:set': null;
   /** Whether this listing is off the market for the active project. */
   'off-market:get': boolean;
   'off-market:set': null;

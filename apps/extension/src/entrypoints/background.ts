@@ -44,6 +44,7 @@ import {
   NoActiveProject,
   pendingSightings,
   readAuthState,
+  getStages,
   getVerdicts,
   listPlaces,
   recordSweepPage,
@@ -59,6 +60,7 @@ import {
   setActiveProject,
   setDisplayName,
   setOffMarket,
+  setStage,
   setVerdict,
   spendSummary,
   updateHub,
@@ -274,6 +276,13 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
 
     case 'verdicts:get':
       return await getVerdicts(request.rightmoveIds);
+
+    case 'stage:get':
+      return (await getStages([request.rightmoveId]))[0] ?? null;
+
+    case 'stage:set':
+      await setStage(request.rightmoveId, request.stage, request.archiveReason, request.note);
+      return null;
 
     case 'off-market:get': {
       // A plain membership check against the project's off-market set — cheaper to reason about than

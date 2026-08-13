@@ -1,0 +1,103 @@
+/* The funnel, shared by the panel's shadow root and the shortlist card — same reasoning as
+   ratings.css: one control, one look, wherever a place is moved along. */
+
+.rm-stage-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.rm-stage-none {
+  color: #93a1af;
+}
+
+.rm-stage-now {
+  font-weight: 650;
+}
+
+/* The steps warm up as a place gets closer to being yours, and archived steps out of the scale
+   rather than sitting at the hot end of it — it is the end of the road, not the finish line. */
+.rm-stage-shortlisted {
+  color: #5a6b7b;
+}
+
+.rm-stage-enquired {
+  color: #2f6d8a;
+}
+
+.rm-stage-viewing_booked {
+  color: #2f7d6d;
+}
+
+.rm-stage-viewed {
+  color: #1a7f5a;
+}
+
+.rm-stage-offer_made {
+  color: #8a5a2f;
+}
+
+.rm-stage-archived {
+  color: #93a1af;
+}
+
+.rm-stage-by {
+  color: #93a1af;
+  font-size: 11px;
+}
+
+.rm-stage-steps,
+.rm-stage-reasons {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.rm-step,
+.rm-reason {
+  border: 1px solid #d8e0e8;
+  background: #fff;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  color: inherit;
+  white-space: nowrap;
+}
+
+.rm-step:hover:not(:disabled),
+.rm-reason:hover {
+  background: #f5f8fa;
+}
+
+.rm-step:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.rm-step-on,
+.rm-reason-on {
+  background: #12263a;
+  border-color: #12263a;
+  color: #fff;
+}
+
+/* Archiving is the one step that ends a flat's run, so it is the one step that does not look like
+   the others until it is the answer. */
+.rm-step-archive:not(.rm-step-on) {
+  border-style: dashed;
+  color: #6b7a89;
+}
+
+.rm-step-pending {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgb(255 255 255 / 22%) 0 6px,
+    transparent 6px 12px
+  );
+  animation: rm-pending 700ms linear infinite;
+}

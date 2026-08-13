@@ -15,6 +15,7 @@ import {
   revokeInvite,
   setActiveProject,
 } from '@house-hunt/core/db';
+import { AMENITIES } from '@house-hunt/core';
 import type {
   AmenityKey,
   AmenityWant,
@@ -83,15 +84,6 @@ export function Project({ notify }: { notify: Notify }) {
  *  (a missing must-have goes red, a missing nice-to-have amber) and where the great-room mark sits —
  *  it never filters anything out. Every control saves on change; there is no Save button, because a
  *  preference you set and forgot to save is a preference that silently did nothing. */
-const AMENITY_OPTIONS: { key: AmenityKey; label: string }[] = [
-  { key: 'outdoor', label: 'Outdoor space' },
-  { key: 'dishwasher', label: 'Dishwasher' },
-  { key: 'bathtub', label: 'Bathtub' },
-  { key: 'inUnitLaundry', label: 'In-unit laundry' },
-  { key: 'brightLight', label: 'Good natural light' },
-  { key: 'billsIncluded', label: 'Bills included' },
-];
-
 /** Offered as the great-room bar when it is first switched on — a sensible "large reception room"
  *  size, and the same number `BIGGEST_ROOM_SMALL_SQFT` uses for the other end of the scale. The
  *  range is what a bar could sensibly be: below the small-room mark it stops meaning "great", and a
@@ -210,12 +202,15 @@ function HuntSettings({ notify }: { notify: Notify }) {
       </label>
 
       <div className="hunt-pref-amenities">
-        {AMENITY_OPTIONS.map(({ key, label }) => {
+        {/* From `AMENITIES` in core rather than a list of its own: this page, the flags and
+            triage's filters all ask what a flat has, and three copies of the list is three chances
+            to disagree about what "in-unit laundry" means. */}
+        {AMENITIES.map(({ key, name }) => {
           const want = draft.amenities?.[key] ?? null;
           return (
             <div className="hunt-pref-row" key={key}>
-              <span className="hunt-pref-name">{label}</span>
-              <div className="hunt-pref-choice" role="group" aria-label={label}>
+              <span className="hunt-pref-name">{name}</span>
+              <div className="hunt-pref-choice" role="group" aria-label={name}>
                 {WANT_CHOICES.map((choice) => (
                   <button
                     key={choice.label}
