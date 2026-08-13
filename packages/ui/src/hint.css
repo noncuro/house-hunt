@@ -37,6 +37,16 @@
   display: block;
 }
 
+/* Read aloud, never drawn — see the `aria-describedby` span in Hint.tsx. */
+.rm-hint-said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* The dotted underline is the whole signal that something is hoverable. */
 .rm-hint-mark {
   border-bottom: 1px dotted #9fb0bf;

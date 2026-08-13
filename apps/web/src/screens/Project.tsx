@@ -405,11 +405,14 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
   const count = headcount.data ?? null;
   const full = count !== null && count.members + count.pending >= count.maxMembers;
 
-  // "Outstanding" is the same thing the headcount means by pending: a place held by somebody who
-  // has not arrived. Everything else — joined, revoked, expired — is history.
+  // "Outstanding" is the same thing the headcount means by pending, and it is `inviteIsLive` that
+  // says so: `project_headcount` counts `status = 'pending' and expires_at > now()`, so an invite
+  // that lapsed holds no place and belongs with the joined and the revoked. One clock reading for
+  // the whole partition, so a row cannot fall between the two filters.
   const all = invites.data ?? [];
-  const outstanding = all.filter((invite) => invite.status === 'pending');
-  const settled = all.filter((invite) => invite.status !== 'pending');
+  const now = Date.now();
+  const outstanding = all.filter((invite) => inviteIsLive(invite, now));
+  const settled = all.filter((invite) => !inviteIsLive(invite, now));
 
   return (
     <section className="setting">
@@ -707,8 +710,8 @@ function ProjectRows({ projects, activeId }: { projects: ProjectSummary[]; activ
  *  Nothing ages a pending invite out: a row fourteen days past its `expires_at` still reads
  *  `pending` in the database. Showing that word would say the invite is waiting for someone when
  *  it confers nothing, so expiry is derived from the date here and at every other reading. */
-function inviteIsLive(invite: Invite): boolean {
-  return invite.status === 'pending' && !invite.expired && Date.parse(invite.expiresAt) > Date.now();
+function inviteIsLive(invite: Invite, now = Date.now()): boolean {
+  return invite.status === 'pending' && !invite.expired && Date.parse(invite.expiresAt) > now;
 }
 
 function inviteState(invite: Invite): string {

@@ -33,9 +33,11 @@ export function ExtensionNotice({ email }: { email: string }) {
     };
   }, []);
 
-  // Nothing at all while the question is outstanding. Half a second of "checking for the
-  // extension…" above the shortlist is half a second of noise about something almost always fine.
-  if (!state) return null;
+  // Nothing to say while the question is outstanding — half a second of "checking for the
+  // extension…" above the shortlist is half a second of noise about something almost always fine —
+  // but the space it might need is held from the first paint. Returning nothing here is what made
+  // the page jump when the answer arrived, which is the whole point of the slot.
+  if (!state) return <div className="notice-slot" />;
 
   // Staleness is orthogonal to sign-in — an out-of-date extension can be signed in, signed out, or
   // on the wrong account — so it renders as its own banner above whatever else this component has to

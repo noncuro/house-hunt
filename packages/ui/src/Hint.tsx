@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import './hint.css';
 
@@ -34,6 +34,7 @@ export function Hint({
   const [at, setAt] = useState<{ left: number; top: number; above: boolean } | null>(null);
   const anchor = useRef<HTMLElement | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const id = useId();
 
   useLayoutEffect(() => () => clearTimeout(timer.current), []);
 
@@ -66,12 +67,20 @@ export function Hint({
       ref={anchor as never}
       className={classes}
       tabIndex={0}
+      aria-describedby={id}
       onMouseEnter={show}
       onMouseLeave={hide}
       onFocus={show}
       onBlur={hide}
     >
       {children}
+      {/* The description a screen reader reads, always present and never drawn. The bubble is
+          hover state — it exists only while open, and only after a delay — so pointing
+          `aria-describedby` at it would name an element that is usually not there. This is the
+          same text, said the other way. */}
+      <span className="rm-hint-said" id={id}>
+        {text}
+      </span>
       {open && at && portalTarget(anchor.current) &&
         createPortal(
           <span

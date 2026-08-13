@@ -709,7 +709,7 @@ function Triage({
                       : `Mark all ${selected.length} selected “${r.label}”, with no note.`
                   }
                   onClick={() =>
-                    selected.length >= CONFIRM_BULK_ABOVE ? setConfirming(r.value) : onRate(r.value)
+                    selected.length > CONFIRM_BULK_ABOVE ? setConfirming(r.value) : onRate(r.value)
                   }
                 >
                   {r.emoji} {r.label}
