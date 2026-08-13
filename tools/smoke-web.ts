@@ -397,6 +397,22 @@ async function checkTriage({ page }: Stage): Promise<void> {
   }
   await page.screenshot({ path: resolve(SHOTS, 'web-triage.png'), fullPage: true });
 
+  // Clicking a row reads the flat; it does not choose it. This was the other way round once, which
+  // made looking at a place and putting it in a batch the same gesture — and three buttons at the
+  // top of the pile then rated the batch for everybody in the hunt. Selecting is the box, and only
+  // the box, so both halves are asserted: the card opens, and nothing is selected.
+  const firstRow = page.locator('.triage table tbody tr').first();
+  await firstRow.click();
+  if (!(await page.locator('.triage .compare-expanded-row .card').count())) {
+    note('clicking a triage row did not open its card');
+  }
+  const afterRowClick = await page.locator('.triage-bar .dim').first().textContent();
+  if (afterRowClick?.trim() !== 'Nothing selected') {
+    note(`clicking a triage row selected it — the bar reads "${afterRowClick?.trim()}"`);
+  }
+  // Closed again, so the counts below are about the pile this section found rather than one it left.
+  await firstRow.click();
+
   // The bulk-rate buttons are dead until something is ticked. Checked up to the write and no
   // further, deliberately: the rest of this harness reads, and a bulk write is the one action here
   // that would put verdicts nobody gave onto rows — which is exactly what the fixture exists to

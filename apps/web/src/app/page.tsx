@@ -37,6 +37,7 @@ import type { StoredModel } from '@house-hunt/core/db';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
 import { ExtensionNotice } from '@/screens/Extension';
 import { Tick, useRangePick, type Selection } from '@/components/Tick';
+import { Pager, usePaging } from '@/components/Pager';
 import { Install } from '@/screens/Install';
 import { Compare } from '@/screens/Compare';
 import { Detail } from '@/screens/Detail';
@@ -889,10 +890,16 @@ function Pile({
   empty,
   ...cardProps
 }: { title?: string; entries: ShortlistEntry[]; empty: string } & CardProps) {
+  // A page at a time. Two hundred cards, each with a photo strip and a travel-time block, is both
+  // slow and unreadable — see `Pager`.
+  const paging = usePaging(entries);
   // Cards get the same shift-pick the table has. They were the one layout of triage where a run
   // could only be ticked one at a time, and `setMany` was handed down and never called.
+  //
+  // Over the page on screen rather than the whole pile: a range you cannot see both ends of is one
+  // you did not mean to draw.
   const pick = useRangePick(
-    useMemo(() => entries.map((e) => e.rightmoveId), [entries]),
+    useMemo(() => paging.shown.map((e) => e.rightmoveId), [paging.shown]),
     cardProps.selection,
   );
   return (
@@ -901,16 +908,19 @@ function Pile({
       {entries.length === 0 ? (
         <p className="dim">{empty}</p>
       ) : (
-        <div className="cards">
-          {entries.map((entry) => (
-            <Card
-              key={entry.rightmoveId}
-              entry={entry}
-              onPick={(shiftKey) => pick(entry.rightmoveId, shiftKey)}
-              {...cardProps}
-            />
-          ))}
-        </div>
+        <>
+          <div className="cards">
+            {paging.shown.map((entry) => (
+              <Card
+                key={entry.rightmoveId}
+                entry={entry}
+                onPick={(shiftKey) => pick(entry.rightmoveId, shiftKey)}
+                {...cardProps}
+              />
+            ))}
+          </div>
+          <Pager {...paging} />
+        </>
       )}
     </section>
   );

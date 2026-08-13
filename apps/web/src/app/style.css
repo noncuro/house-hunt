@@ -705,6 +705,40 @@ h2 {
   border-radius: 999px;
 }
 
+/* --- paging ------------------------------------------------------------------------------ */
+
+/* Under every list. Wraps on a narrow window rather than pushing the size control off the edge,
+   which is the one control on it you cannot reach any other way. */
+.pager {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.pager .key:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pager-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.pager-size select {
+  font: inherit;
+  padding: 4px 8px;
+  border: 1px solid #cdd8e0;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
 /* --- compare table --------------------------------------------------------------------- */
 
 /* Wide by design — one column per saved place — so it scrolls inside itself. The page body
@@ -1129,9 +1163,9 @@ h2 {
   background: #eef4fb;
 }
 
-/* The rows toggle on click here, so the whole row has to look like a target. `user-select` because
-   shift-click is a range of ticks — the browser reads the same gesture as a range of text and paints
-   half the table blue underneath the selection you actually asked for. */
+/* A row opens the flat's card on click, so the whole row has to look like a target. `user-select`
+   because shift-clicking a box is a range of ticks — the browser reads the same gesture as a range
+   of text and paints half the table blue underneath the selection you actually asked for. */
 .triage .compare tbody tr {
   cursor: pointer;
   user-select: none;
@@ -1150,8 +1184,29 @@ h2 {
   background: none;
 }
 
+/* The card's cell spans every column, which makes it the *first* cell as well — so it inherits the
+   pinned-address rules above: 320px of max-width, `nowrap`, and a sticky white background. All
+   three are wrong for a card. Nowrap is the one that shows: every sentence on the card ran off to
+   the right in one line. */
 .compare tbody tr.compare-expanded-row > td {
   padding: 0 8px 12px;
+  position: static;
+  max-width: none;
+  white-space: normal;
+  background: none;
+  box-shadow: none;
+}
+
+/* Pinned to the left of the scroll box and sized to what is visible of it, so the card is a card
+   whatever the table is doing. Without this it is as wide as the widest row — twelve columns and
+   several screens on a phone — and reading it means scrolling sideways through a column of prose.
+   `--compare-view` is the scroll box's own client width, measured in Compare.tsx; the fallback is
+   the old behaviour, for the frame before the first measurement lands. */
+.compare-card {
+  position: sticky;
+  left: 0;
+  width: var(--compare-view, 100%);
+  max-width: 100%;
 }
 
 .triage-layout {
@@ -1452,4 +1507,54 @@ h2 {
 .hunt-pref-choice {
   display: inline-flex;
   gap: 4px;
+}
+
+/* --- narrow windows ---------------------------------------------------------------------- */
+
+/* A card has to fit the screen it is on, wherever it is drawn.
+ *
+ * The rule this section exists for: a card opened under a table row must never be the reason
+ * anything scrolls sideways. The *table* may — one column per saved place is wide on purpose, and
+ * on a phone held sideways it is wider than the phone — but the card underneath it is a column of
+ * prose, photographs and buttons, and none of that is comparing anything. `.compare-card` pins it
+ * to what is actually visible; these rules keep its own contents inside that.
+ *
+ * Anything that cannot fit scrolls inside itself instead: the photo strip already does, and the
+ * travel rows wrap. Nothing here changes what a card says — only where it wraps.
+ */
+
+/* Grid children default to `min-width: auto`, which means "as wide as my contents" — so one long
+   address, or a photo strip of twelve, quietly widens the whole card and every other block with
+   it. This is the fix for the card at any width; the media query below is only about the columns. */
+.detail > * {
+  min-width: 0;
+}
+
+.address,
+.compare-address {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .wrap {
+    padding: 18px 12px 48px;
+  }
+
+  /* Two 240px columns need 512px before the gap. Below that they do not shrink, they overflow —
+     which on a card inside a scrolling table is invisible until you reach the right-hand edge and
+     find half a travel-time block hanging past it. */
+  .detail {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  /* The verdict row is buttons plus a note field; at this width they stack rather than squeezing
+     the note to nothing. */
+  .detail-verdict .note-edit {
+    flex-basis: 100%;
+  }
+
+  .card {
+    padding: 12px;
+  }
 }

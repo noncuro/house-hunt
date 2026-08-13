@@ -31,6 +31,7 @@ import { ScoreBadge } from '@house-hunt/ui';
 import { ratingOf } from '@house-hunt/ui';
 import { RightmoveLink } from '@/components/RightmoveLink';
 import { Tick, useRangePick, type Selection } from '@/components/Tick';
+import { Pager, usePaging } from '@/components/Pager';
 import { useCachedTravel } from '@/lib/queries';
 import { isSurprise } from '@/lib/score';
 
@@ -72,8 +73,8 @@ export function Compare({
   entries: ShortlistEntry[];
   places: Place[];
   /** Go to this app's own view of a flat — the shortlist card, which carries the photos, the
-   *  travel times and the verdict buttons. Both the address in every row and (outside triage,
-   *  where a click on the row means ticking it) the row itself do this. */
+   *  travel times and the verdict buttons. Both the address and the row it sits in do this, unless
+   *  `expand` is set, in which case they open the card underneath the row instead. */
   onOpen: (rightmoveId: string) => void;
   /** Which stored set of column choices this table uses. Compare and triage answer different
    *  questions — one is "which of these do we like best", the other is "is this worth a second
@@ -81,7 +82,8 @@ export function Compare({
   columnsKey?: string;
   /** Triage borrows this table and adds a tick column. A pile of tick boxes down the left of a
    *  stack of cards is a shape that argues with itself — you tick things you are comparing, and
-   *  comparing is what the table is for. Rows toggle rather than jumping to a card when it is on. */
+   *  comparing is what the table is for. Ticking is the box and nothing else; the row itself opens
+   *  the flat, here as everywhere. */
   selection?: Selection;
   /** Triage is already one pile, so the include-unrated switches would only ever empty it. */
   filters?: boolean;
@@ -100,9 +102,9 @@ export function Compare({
    *  great-room bar. Absent everywhere the preferences do not reach — the default flag behaviour. */
   prefs?: HuntPreferences;
   /** Triage opens a row's full card in place rather than jumping to the list. When set, clicking the
-   *  address toggles the inline card instead of navigating, and an expanded row renders that card
-   *  full-width beneath its own row — the whole of what the flat is, without leaving the pile you
-   *  are working. `onOpen` is still what the address does everywhere this is absent. */
+   *  row (or its address) toggles the inline card instead of navigating, and the expanded row renders
+   *  that card beneath its own — the whole of what the flat is, without leaving the pile you are
+   *  working. `onOpen` is still what a click does everywhere this is absent. */
   expand?: {
     isOpen: (rightmoveId: string) => boolean;
     toggle: (rightmoveId: string) => void;
@@ -131,7 +133,14 @@ export function Compare({
   const [more, setMore] = useState(false);
   const measure = useCallback(() => {
     const box = scroll.current;
-    if (box) setMore(box.scrollLeft + box.clientWidth < box.scrollWidth - 1);
+    if (!box) return;
+    setMore(box.scrollLeft + box.clientWidth < box.scrollWidth - 1);
+    // How much of the table is actually on screen. A card opened under a row is sized from this
+    // rather than from the row it belongs to — a row is as wide as the table, which on a phone is
+    // several screens, and a card that width is one nobody can read without scrolling it sideways.
+    // Measured rather than assumed from the viewport: the box is inset by the page's own margins,
+    // and on a desktop the difference is a hundred pixels of card hanging past the table's edge.
+    box.style.setProperty('--compare-view', `${box.clientWidth}px`);
   }, []);
   useEffect(() => {
     measure();
@@ -186,9 +195,10 @@ export function Compare({
   // Where the address goes: to the list card (`onOpen`) normally, or — in triage — to the card
   // that opens inline beneath the row, so working the pile never leaves it.
   const openRow = expand ? expand.toggle : onOpen;
+  const inline = Boolean(expand);
   const all = useMemo(
-    () => buildColumns(places, twins, openRow, scoreColumn, prefs),
-    [places, twins, openRow, scoreColumn, prefs],
+    () => buildColumns(places, twins, openRow, scoreColumn, prefs, inline),
+    [places, twins, openRow, scoreColumn, prefs, inline],
   );
   // The first column is the address and never hides — a row you cannot identify is not a row.
   // Before the picker has ever been touched, `chosen` is null and the defaults decide. After, the
@@ -224,6 +234,11 @@ export function Compare({
     });
   }, [shown, columns, sort, travel.data]);
 
+  // A page of rows, after the sort — the order is the whole answer here, so paging can only ever be
+  // the last thing applied. Sorting a page rather than paging a sort would put the cheapest flat of
+  // twenty-five at the top of a shortlist of two hundred and call it the cheapest.
+  const paging = usePaging(sorted);
+
   const counts = useMemo(() => {
     const tally: Record<Group, number> = { excited: 0, maybe: 0, rejected: 0, unrated: 0 };
     for (const entry of entries) tally[groupOf(entry.verdicts)] += 1;
@@ -233,7 +248,7 @@ export function Compare({
   // One picker for the row and for the box in it, over the order actually on screen, so the two
   // cannot disagree about what a shift-click means.
   const pick = useRangePick(
-    useMemo(() => sorted.map((e) => e.rightmoveId), [sorted]),
+    useMemo(() => paging.shown.map((e) => e.rightmoveId), [paging.shown]),
     selection,
   );
 
@@ -341,27 +356,23 @@ export function Compare({
             </tr>
           </thead>
           <tbody>
-            {sorted.map((entry) => (
+            {paging.shown.map((entry) => (
               <Fragment key={entry.rightmoveId}>
               <tr
                 className={`compare-${groupOf(entry.verdicts)}${
                   selection?.chosen.has(entry.rightmoveId) ? ' compare-ticked' : ''
                 }${expand?.isOpen(entry.rightmoveId) ? ' compare-expanded' : ''}`}
-                onClick={(event) => {
-                  if (!selection) {
-                    openRow(entry.rightmoveId);
-                    return;
-                  }
-                  // Shift-clicking a row is also the browser's "extend the text selection", which
-                  // leaves several hundred characters of the table highlighted behind every range
-                  // you pick. The rows are unselectable in CSS; this clears anything the gesture
-                  // managed to start before that took effect.
-                  if (event.shiftKey) window.getSelection()?.removeAllRanges();
-                  pick(entry.rightmoveId, event.shiftKey);
-                }}
+                // A click on a row opens the flat, and never ticks it. Ticking used to be what a row
+                // click did in triage, which made reading a row and choosing it the same gesture:
+                // clicking an address to see the photos added it to a batch that three buttons at
+                // the top would then rate for everybody in the hunt. Selecting is the box, and only
+                // the box — a deliberate target you have to aim at.
+                onClick={() => openRow(entry.rightmoveId)}
               >
                 {selection && (
-                  <td className="tick-col">
+                  // The cell as well as the box, because the cell is bigger than the box and a
+                  // click that lands beside a checkbox must not open the card instead.
+                  <td className="tick-col" onClick={(event) => event.stopPropagation()}>
                     <Tick
                       checked={selection.chosen.has(entry.rightmoveId)}
                       label={entry.displayAddress}
@@ -378,8 +389,14 @@ export function Compare({
               {expand?.isOpen(entry.rightmoveId) && (
                 <tr className="compare-expanded-row">
                   {/* One cell across the whole row, holding the flat's own card — the same
-                      renderer the list uses, so the two never disagree about what a place is. */}
-                  <td colSpan={columns.length + (selection ? 1 : 0)}>{expand.render(entry)}</td>
+                      renderer the list uses, so the two never disagree about what a place is.
+                      The card is pinned to the left of the scroll box and sized to what is
+                      actually visible (`--compare-view`), so a table twelve columns wide does not
+                      make its own cards twelve columns wide: on a phone the row scrolls sideways
+                      and the card, which is a column of prose and photographs, does not. */}
+                  <td colSpan={columns.length + (selection ? 1 : 0)}>
+                    <div className="compare-card">{expand.render(entry)}</div>
+                  </td>
                 </tr>
               )}
               </Fragment>
@@ -387,6 +404,10 @@ export function Compare({
           </tbody>
         </table>
       </div>
+
+      {/* Outside the scroll box: a pager that scrolled sideways with the table would be off the
+          screen exactly when the table is wide enough to need one. */}
+      <Pager {...paging} />
     </>
   );
 }
@@ -458,6 +479,11 @@ function buildColumns(
   onOpen: (rightmoveId: string) => void,
   scores: Map<string, number> | null = null,
   prefs?: HuntPreferences,
+  /** True where the card opens underneath the row rather than in another view. The row then carries
+   *  the address and nothing else: the way out to Rightmove is at the foot of the card, one line
+   *  below, and a link to somewhere else sitting in a row whose job is to open the thing beside it
+   *  is the one click on the row that leaves. */
+  inline = false,
 ): Column[] {
   const columns: Column[] = [
     {
@@ -488,7 +514,7 @@ function buildColumns(
             >
               {e.displayAddress}
             </a>
-            <RightmoveLink url={e.url} />
+            {!inline && <RightmoveLink url={e.url} />}
           </span>
           {(twins.get(e.rightmoveId)?.length ?? 0) > 0 && (
             <span className="twin" title="Listed twice — same postcode and rent">
