@@ -52,15 +52,34 @@ create policy project_scoped on property_stage for all to authenticated
 -- widen what is allowed rather than narrow it. Restrictive ones are AND-ed, so this is a condition
 -- on top of `project_scoped` rather than an alternative to it.
 --
--- `for insert` alone, and that is deliberate rather than an oversight. Postgres checks an INSERT
--- policy's `with check` only for rows the insert path actually appends, so `setStage`'s upsert onto
--- an existing row is judged by the UPDATE half of `project_scoped` — which is what keeps the rule
--- the funnel is built on: a flat you viewed and have since decided against can still be archived,
--- long after its verdict stopped being a like. `check:rls` asserts exactly that, because it is the
--- flow this policy would break if that reading were wrong.
+-- The second half of the test — "or it is already in the funnel" — is what makes this survivable,
+-- and it is here because `check:rls` refused the first version of it. Every stage write from either
+-- client is an upsert, and an `insert … on conflict do update` is judged by the INSERT policy even
+-- when it takes the update path. Without the disjunct, a flat you viewed and have since decided
+-- against could never be archived: its verdict is no longer a like, so the write that records how
+-- it ended was refused. That is a rule this feature exists to keep — progress survives a change of
+-- mind — and it would have gone out broken.
 --
--- The trigger below is unaffected: it is SECURITY DEFINER, so it runs as the table's owner and RLS
--- does not apply to it at all.
+-- `in_funnel` rather than a subquery on this table, because a policy on `property_stage` that reads
+-- `property_stage` recurses ("infinite recursion detected in policy"). Same shape, and same reason,
+-- as `is_member` — and gated on membership itself, so it cannot answer questions about anybody
+-- else's hunt.
+--
+-- The trigger below is unaffected either way: it is SECURITY DEFINER, so it runs as the table's
+-- owner and RLS does not apply to it at all.
+create or replace function public.in_funnel(p_project_id uuid, p_rightmove_id text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select public.is_member(p_project_id) and exists (
+    select 1 from public.property_stage s
+     where s.project_id = p_project_id and s.rightmove_id = p_rightmove_id
+  );
+$$;
+
 drop policy if exists stage_needs_a_like on property_stage;
 create policy stage_needs_a_like on property_stage as restrictive for insert to authenticated
   with check (
@@ -70,6 +89,7 @@ create policy stage_needs_a_like on property_stage as restrictive for insert to 
          and v.rightmove_id = property_stage.rightmove_id
          and v.rating in ('maybe', 'love')
     )
+    or public.in_funnel(property_stage.project_id, property_stage.rightmove_id)
   );
 
 grant select, insert, update, delete on table property_stage to authenticated;

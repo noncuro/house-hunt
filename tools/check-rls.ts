@@ -592,10 +592,11 @@ async function main() {
   allowed('verdict: changing your mind after a viewing is booked', await a.from('verdict').update({ rating: 'no' }).eq('project_id', PROJECT_A).eq('rightmove_id', LISTING_A).select());
   is('...leaves the booked viewing on the record', await stageOfA(LISTING_A), 'viewing_booked');
 
-  // The flow the insert policy would break if `for insert` did not mean what it is documented to
-  // mean. A flat rated `no` above, whose stage row predates that: archiving it is an upsert onto an
-  // existing row, so it goes down the UPDATE path and must still be allowed. If this fails, the
-  // policy is judging updates too and the funnel can no longer record how a flat ended.
+  // The flow the insert policy nearly broke, and the reason it is written the way it is. A flat
+  // rated `no` above, whose stage row predates that: archiving it is an upsert, and an upsert is
+  // judged by the INSERT policy even when it takes the update path — so the first version of
+  // `stage_needs_a_like`, which asked only for a current like, refused it. Recording how a flat
+  // ended is exactly what the funnel is for, and it would have shipped unable to.
   allowed('property_stage: archiving a flat we have gone off, long after the like', await a.from('property_stage').upsert({ project_id: PROJECT_A, rightmove_id: LISTING_A, stage: 'archived', archive_reason: 'passed', set_by: userA }, { onConflict: 'project_id,rightmove_id' }).select());
   is('...and it records why', await stageOfA(LISTING_A), 'archived');
 
