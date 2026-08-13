@@ -35,6 +35,14 @@ const LEGEND: Array<{ group: Group; label: string }> = [
 
 const LONDON: [number, number] = [51.5074, -0.1278];
 
+/** Where the map was when you last left it. Clicking a pin takes you to the flat's card, which is
+ *  another view, so the map is unmounted every time it is used — and coming back to London at zoom
+ *  12, refitted, with the legend reset, means working a street pin by pin is re-finding the street
+ *  every time. Module-level rather than state above, because it is the map's own business and
+ *  nothing else on the page has an opinion about it. */
+let lastView: { center: L.LatLngLiteral; zoom: number } | null = null;
+let lastShowing: Record<Group, boolean> = DEFAULT_SHOWING;
+
 export function ShortlistMap({
   entries,
   onSelect,
@@ -47,12 +55,20 @@ export function ShortlistMap({
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const markers = useRef(new Map<string, L.CircleMarker>());
+  const firstRun = useRef(true);
 
   // Rejecting a place is how you get it out of your way, and a map that keeps showing it has
   // undone that. Rejected and unrated start off (see `DEFAULT_SHOWING`); the legend turns either
   // back on when you want to check whether you've already ruled out a whole street, or see where
   // the ones you haven't got to yet are.
-  const [showing, setShowing] = useState<Record<Group, boolean>>(DEFAULT_SHOWING);
+  // Kept with the viewport, and for the same reason: turning the unrated on to work through them
+  // and having it turn itself off the moment you click one is the map undoing the thing you came
+  // to it for.
+  const [showing, setShowing] = useState<Record<Group, boolean>>(lastShowing);
+  const show = (next: Record<Group, boolean>) => {
+    lastShowing = next;
+    setShowing(next);
+  };
 
   // The click handler is recreated on every render of the page above. Reading it through a ref
   // means the marker effect doesn't have to re-run (and refit the viewport) just to pick up a
@@ -73,15 +89,22 @@ export function ShortlistMap({
 
   useEffect(() => {
     if (!host.current || map.current) return;
-    map.current = L.map(host.current, { scrollWheelZoom: true }).setView(LONDON, 12);
+    const instance = L.map(host.current, { scrollWheelZoom: true }).setView(
+      lastView ? lastView.center : LONDON,
+      lastView ? lastView.zoom : 12,
+    );
+    map.current = instance;
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© OpenStreetMap contributors',
-    }).addTo(map.current);
+    }).addTo(instance);
+    instance.on('moveend', () => {
+      lastView = { center: instance.getCenter(), zoom: instance.getZoom() };
+    });
 
     const pins = markers.current;
     return () => {
-      map.current?.remove();
+      instance.remove();
       map.current = null;
       pins.clear();
     };
@@ -111,8 +134,12 @@ export function ShortlistMap({
     }
 
     // Frame everything rather than leaving the reader to find the pins. Only on a change of
-    // contents — refitting on every selection would fight the person panning around.
-    if (located.length > 0) {
+    // contents — refitting on every selection would fight the person panning around — and never
+    // on the first run of a mount that restored where you were, which is the same fight one step
+    // removed.
+    const restored = firstRun.current && lastView !== null;
+    firstRun.current = false;
+    if (located.length > 0 && !restored) {
       instance.fitBounds(L.latLngBounds(located.map((e) => [e.lat!, e.lon!] as [number, number])), {
         padding: [40, 40],
         maxZoom: 15,
@@ -139,7 +166,7 @@ export function ShortlistMap({
             key={group}
             className={showing[group] ? 'key key-on' : 'key'}
             aria-pressed={showing[group]}
-            onClick={() => setShowing((s) => ({ ...s, [group]: !s[group] }))}
+            onClick={() => show({ ...showing, [group]: !showing[group] })}
           >
             <span className="key-dot" style={{ background: COLOUR[group] }} aria-hidden="true" />
             {label} <span className="dim">{counts[group]}</span>

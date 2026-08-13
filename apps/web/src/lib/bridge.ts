@@ -60,14 +60,22 @@ export type ExtensionState =
    *  is how a real fault gets ignored. */
   | { status: 'broken'; message: string };
 
-/** Half a second. An installed extension answers this in single-digit milliseconds — the content
- *  script is already running and the worker wakes on the message — so anything near the deadline is
- *  a machine under load rather than a slow extension, and being wrong here only means offering an
- *  install link to somebody who has it. */
+/** Half a second, and then a second and a half.
+ *
+ *  Waking the worker is the part that costs: the content script answers immediately, but an MV3
+ *  service worker is evicted between page loads, and a cold one here was measured at 891ms against
+ *  254ms warm. One deadline of half a second therefore told a machine with the extension installed
+ *  and signed in that it had no extension — on the first load, every time, and never on the second.
+ *  That is not a stray line: it says the panel on Rightmove is dead when it is working.
+ *
+ *  So: ask, and if nothing answers, ask again with room for a cold start. Silence still means "not
+ *  installed" — it just has to be silence twice now. Two seconds is the whole cost, and only for
+ *  somebody who genuinely does not have it. */
 const HELLO_MS = 500;
+const HELLO_RETRY_MS = 1_500;
 
 export async function helloExtension(): Promise<ExtensionState> {
-  const reply = await ask({ kind: 'hello' }, HELLO_MS);
+  const reply = (await ask({ kind: 'hello' }, HELLO_MS)) ?? (await ask({ kind: 'hello' }, HELLO_RETRY_MS));
   if (!reply) return { status: 'absent' };
   if (reply.kind === 'error') return { status: 'broken', message: reply.message };
   if (reply.kind !== 'hello') return { status: 'broken', message: `unexpected ${reply.kind} reply` };

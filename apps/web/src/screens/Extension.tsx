@@ -93,12 +93,16 @@ export function ExtensionNotice({ email }: { email: string }) {
     );
   })();
 
-  if (!outOfDate && !primary) return null;
+  // The slot keeps its height whether or not there is anything in it. The check finishes after the
+  // first paint, so a banner that appears then pushes the page down under the cursor — and the
+  // controls it pushes are the ones being clicked at exactly that moment: a tick landing on the row
+  // below the one aimed at is how this was found.
+  if (!outOfDate && !primary) return <div className="notice-slot" />;
   return (
-    <>
+    <div className="notice-slot">
       {outOfDate}
       {primary}
-    </>
+    </div>
   );
 }
 
