@@ -94,6 +94,12 @@ the joining check below it fails.
 JWTs, including that `signUp()` is refused outright, which every `to authenticated` policy is
 predicated on.
 
+**Triage's filters** (`smoke:web`, `check:filter`) — a bar nothing can clear empties the pile,
+says so, and leaves the filter bar on screen, because the control that caused it is the only way
+out; clearing restores the pile. `check:filter` pins the rule underneath: a flat is dropped only
+when it is *known* not to qualify, so an unmeasured flat clears every bar and is counted separately.
+A filter that dropped unknowns would look exactly like a shortlist with fewer flats in it.
+
 **The funnel** (`smoke:web`) — a place moved along it and then archived with a reason, both read
 back out of Postgres, plus the assertion the whole separation rests on: the verdict is read before
 the archive and compared with itself afterwards. A stage that overwrote a rating would look like a

@@ -1394,6 +1394,54 @@ h2 {
 
 /* The score's own row in the triage bar: rerun, then choose which end of the pile to work. Sits
    under the rating bar and wraps on a narrow screen rather than fighting it for the line. */
+/* The bars a flat has to clear to stay in the pile. Above the rating bar, because it decides what
+   the rating bar is looking at — and quiet: it is a row of empty boxes reading "any" until somebody
+   uses it. */
+.triage-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* The gap between one bar and the next has to beat the gap inside one, or "Min size 800 sq ft" and
+   "Min main room" read as a single run of words. */
+.triage-filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.triage-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+}
+
+/* Wide enough for four digits and no wider: these are rents and square feet, and a full-width text
+   box beside them reads as somewhere to type a sentence. */
+.triage-filter input {
+  width: 5.5em;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid #cdd8e0;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+.triage-filter-clear {
+  margin-left: auto;
+}
+
+.triage-filter-count {
+  margin: 0;
+  font-size: 12px;
+}
+
 .triage-score-bar {
   display: flex;
   align-items: center;

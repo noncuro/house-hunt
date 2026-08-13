@@ -9,9 +9,11 @@ import {
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { Sweep } from '@/screens/Sweep';
 import {
+  applyFilter,
   duplicateIds,
   enthusiasm,
   groupOf,
+  NO_FILTER,
   sizeOf,
   FILTER_LABEL,
   funnelCounts,
@@ -23,7 +25,7 @@ import {
   type StageFilter,
 } from '@house-hunt/core';
 import { NoActiveProject, spendSummary, Unauthenticated, type ShortlistEntry } from '@house-hunt/core/db';
-import type { ArchiveReason, HuntPreferences, Place, Rating, Stage } from '@house-hunt/core';
+import type { ArchiveReason, HuntPreferences, Place, Rating, Stage, TriageFilter } from '@house-hunt/core';
 import { HubFact } from '@house-hunt/ui';
 import { Hint } from '@house-hunt/ui';
 import { Flags } from '@house-hunt/ui';
@@ -32,12 +34,13 @@ import { SpendWarning } from '@house-hunt/ui';
 import { RATINGS, ratingOf } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
 import { OffMarketRow } from '@house-hunt/ui';
-import { scoreEntries, sortForTriage, isSurprise, SORT_LABEL, type SortMode } from '@/lib/score';
+import { scoreEntries, sortForTriage, isSurprise, NEEDS_MODEL, SORT_LABEL, type SortMode } from '@/lib/score';
 import type { StoredModel } from '@house-hunt/core/db';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
 import { ExtensionNotice } from '@/screens/Extension';
 import { Tick, useRangePick, type Selection } from '@/components/Tick';
 import { Pager, usePaging } from '@/components/Pager';
+import { TriageFilters } from '@/components/TriageFilters';
 import { Install } from '@/screens/Install';
 import { Compare } from '@/screens/Compare';
 import { Detail } from '@/screens/Detail';
@@ -177,6 +180,9 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   const offMarketMutation = useSetOffMarket();
   const stageMutation = useSetStage();
   const [sortMode, setSortMode] = useState<SortMode>('default');
+  // Held here rather than inside Triage so that going to the map and back does not throw away the
+  // narrowing you set up to work through.
+  const [triageFilter, setTriageFilter] = useState<TriageFilter>(NO_FILTER);
 
   // The neighbourhoods every card places its flat against (design D11). Same hook the Sweep view
   // reads, so switching between them costs nothing and the two cannot disagree about which
@@ -518,6 +524,14 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           retrain={retrain}
           sortMode={sortMode}
           setSortMode={setSortMode}
+          filter={triageFilter}
+          setFilter={(next) => {
+            setTriageFilter(next);
+            // Anything ticked and then filtered away would still be rated by the bulk buttons —
+            // a verdict for everybody in the hunt, on flats no longer on screen. Changing what is
+            // shown clears what is chosen.
+            setSelected([]);
+          }}
           notify={push}
           {...cardProps}
         />
@@ -644,6 +658,8 @@ function Triage({
   retrain,
   sortMode,
   setSortMode,
+  filter,
+  setFilter,
   notify,
   ...cardProps
 }: {
@@ -660,6 +676,10 @@ function Triage({
   retrain: ReturnType<typeof useRetrain>;
   sortMode: SortMode;
   setSortMode: (mode: SortMode) => void;
+  /** The bars a flat has to clear to stay in the pile. Held above this component so that going to
+   *  the map and back does not throw away the narrowing you set up to work through. */
+  filter: TriageFilter;
+  setFilter: (next: TriageFilter) => void;
   notify: (message: string) => void;
 } & CardProps) {
   // The table is the default, and it is the layout the tick boxes were asking for. Ticking is a
@@ -681,10 +701,6 @@ function Triage({
       return next;
     });
   const chosen = new Set(selected);
-  // Ticking a flat that has since been rated elsewhere would rate it again on the next click,
-  // so the selection is read against what is actually in the pile now.
-  const all = entries.map((e) => e.rightmoveId);
-  const allChosen = all.length > 0 && all.every((id) => chosen.has(id));
   const toggle = (id: string) =>
     setSelected(chosen.has(id) ? selected.filter((s) => s !== id) : [...selected, id]);
   const setMany = (ids: string[], on: boolean) => {
@@ -692,10 +708,18 @@ function Triage({
     setSelected(on ? [...new Set([...selected, ...ids])] : selected.filter((s) => !run.has(s)));
   };
 
-  // The pile in the order the score suggests working it. When there is no model the control is off
-  // and this is the incoming order (newest first) — the pile still triages, just unranked.
-  const shown = sortForTriage(entries, cardProps.scores, sortMode);
+  // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave
+  // the ranking meaning something about flats that are no longer on screen. `unknowns` is what the
+  // filter kept without an answer either way, which the bar says out loud.
+  const { kept, unknowns } = applyFilter(entries, filter);
+  const shown = sortForTriage(kept, cardProps.scores, sortMode);
   const metrics = storedModel?.model.metrics;
+
+  // "Select all" means all of what is on screen. Ticking a flat that has since been rated elsewhere
+  // would rate it again on the next click, so the selection is read against what is in the pile now
+  // — and with a filter on, the pile is what the filter left.
+  const all = shown.map((e) => e.rightmoveId);
+  const allChosen = all.length > 0 && all.every((id) => chosen.has(id));
 
   const onRerun = () =>
     retrain.mutate(undefined, {
@@ -718,15 +742,20 @@ function Triage({
       </button>
       <label className="triage-sort">
         <span className="dim">Sort:</span>
+        {/* Per option, not per control. Disabling the whole select when there is no model — which
+            is how this started — took away "cheapest first" and "biggest first" as well, and those
+            never needed one. The day a hunt starts is the day the pile is biggest and the model
+            does not exist yet. */}
         <select
           value={sortMode}
           onChange={(e) => setSortMode(e.target.value as SortMode)}
-          disabled={!cardProps.scores || entries.length === 0}
-          title={cardProps.scores ? 'Order the pile by the predicted score.' : 'Rerun ratings first to sort by score.'}
+          disabled={entries.length === 0}
+          title="Choose which end of the pile to work from."
         >
           {(Object.keys(SORT_LABEL) as SortMode[]).map((mode) => (
-            <option key={mode} value={mode}>
+            <option key={mode} value={mode} disabled={NEEDS_MODEL.includes(mode) && !cardProps.scores}>
               {SORT_LABEL[mode]}
+              {NEEDS_MODEL.includes(mode) && !cardProps.scores ? ' — needs a model' : ''}
             </option>
           ))}
         </select>
@@ -753,8 +782,33 @@ function Triage({
     );
   }
 
+  const filters = (
+    <TriageFilters
+      filter={filter}
+      setFilter={setFilter}
+      kept={kept.length}
+      unknowns={unknowns}
+      total={entries.length}
+    />
+  );
+
+  // Filtered down to nothing is a different sentence from an empty pile, and it needs the filter
+  // bar left on screen: the only way out of it is the control that caused it.
+  if (shown.length === 0) {
+    return (
+      <div className="triage">
+        {filters}
+        {scoreBar}
+        <p className="dim">
+          None of the {entries.length} waiting clears those bars. Loosen one, or clear the filters.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="triage">
+      {filters}
       <div className="triage-bar">
         {/* A verdict on a batch this size is worth one more click. "Select all 219" sits an inch
             from three buttons that write a verdict for everybody in the hunt to see, each of them
@@ -781,7 +835,10 @@ function Triage({
         ) : (
           <>
             <button className="key triage-all" onClick={() => setSelected(allChosen ? [] : all)}>
-              {allChosen ? 'Clear' : `Select all ${entries.length}`}
+              {/* All of what the filters left, which is all of what is on screen. Offering to
+                  select two hundred when twelve are shown is offering to rate a hundred and
+                  eighty-eight flats nobody can see. */}
+              {allChosen ? 'Clear' : `Select all ${shown.length}`}
             </button>
             <span className="dim">
               {selected.length === 0 ? 'Nothing selected' : `${selected.length} selected`}

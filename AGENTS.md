@@ -82,6 +82,11 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   no coordinates is skipped, never defaulted.
 - **The sweep window snaps up, never down** — a too-narrow window drops listings and looks like
   success. Details in `packages/core/src/sweep.ts`.
+- **A filter never drops a flat for a number we do not have.** Triage's filters (rent, beds, size,
+  main room, must-have amenities) exclude only what is *known* not to qualify — most of those
+  figures are read off photographs, and "we could not tell" is common. Dropping unknowns would hide
+  precisely the least-known listings, which is the pile triage exists to work through, and it would
+  do it invisibly. `applyFilter` counts them and the bar says how many are kept on that basis.
 - **A verdict and a stage are two facts, and neither writes the other.** "Like it" / "love it" /
   "not our place" is taste and is what the verdict-score model is fitted on; the funnel
   (shortlisted → reached out → viewing booked → viewed → offer in → archived, with a reason) is
@@ -114,7 +119,7 @@ pnpm check          # oxlint + tsc — run on every change
 pnpm check:all      # + every pure-function check (seconds)
 ```
 
-Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `hubs`, `stage`, `sweep`, `travel`,
+Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `hubs`, `stage`, `sweep`, `travel`,
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint),
 `one-client`, `bridge`, `withdrawn`. Each pins reasoning invisible when wrong — a bad bearing still
 looks like a bearing.

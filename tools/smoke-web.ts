@@ -413,6 +413,20 @@ async function checkTriage({ page }: Stage): Promise<void> {
   // Closed again, so the counts below are about the pile this section found rather than one it left.
   await firstRow.click();
 
+  // The filters, and the rule underneath them. A bar nothing can clear must empty the pile and say
+  // so — with the filter bar still on screen, since the control that caused it is the only way out.
+  await page.locator('[data-testid="filter-max-rent"]').fill('1');
+  const emptied = await page.locator('.triage table tbody tr').count();
+  if (emptied !== 0) note(`a £1 rent filter left ${emptied} rows`);
+  if (!(await page.locator('[data-testid="triage-filters"]').count())) {
+    note('filtering the pile to nothing took the filter bar away with it');
+  }
+  await page.locator('[data-testid="clear-filters"]').click();
+  const restored = await page.locator('.triage table tbody tr').count();
+  if (restored !== fixture.unratedCount) {
+    note(`clearing the filters left ${restored} rows, not the ${fixture.unratedCount} unrated`);
+  }
+
   // The bulk-rate buttons are dead until something is ticked. Checked up to the write and no
   // further, deliberately: the rest of this harness reads, and a bulk write is the one action here
   // that would put verdicts nobody gave onto rows — which is exactly what the fixture exists to
