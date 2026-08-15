@@ -1,8 +1,10 @@
 import './offmarket.css';
 
-/** Off the market: the flat stays in the shortlist and keeps its verdict, but is withheld from the
- *  verdict-score model's training — the model should not learn from a place nobody can rent, and
- *  deleting the verdict would lose that you ever liked it (see the verdict-score migration).
+/** Off the market: the flat keeps its verdict and its place in the funnel, but drops out of the
+ *  shortlist's views and out of the verdict-score model's training — the model should not learn
+ *  from a place nobody can rent, and deleting the verdict would lose that you ever liked it (see
+ *  the verdict-score migration). Reversible from the line under the tally, which says how many are
+ *  hidden.
  *
  *  Shown wherever a flat is — the website card and the Rightmove panel — so it lives here rather than
  *  being written twice and drifting. Only offered where there is a positive verdict to withhold
@@ -26,7 +28,7 @@ export function OffMarketRow({
   return (
     <div className="rm-offmarket">
       {isOff && (
-        <span className="rm-offmarket-tag" title="Withheld from the score's training.">
+        <span className="rm-offmarket-tag" title="Hidden from the shortlist and withheld from the score's training.">
           Off the market
         </span>
       )}

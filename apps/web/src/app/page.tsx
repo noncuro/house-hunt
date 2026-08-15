@@ -15,6 +15,7 @@ import {
   addressBesidePostcode,
   enthusiasm,
   groupOf,
+  withoutOffMarket,
   parseFilter,
   withKnownPlaces,
   sizeOf,
@@ -75,6 +76,10 @@ import {
   useCachedTravel,
   usePrices,
 } from '@/lib/queries';
+
+/** Nobody is off the market, for the frames before the set has been read. One shared value so that
+ *  a card's props do not change identity every render. */
+const EMPTY: ReadonlySet<string> = new Set();
 
 /** What the page is at all is decided here, and by one question: who is signed in.
  *
@@ -260,10 +265,27 @@ function App({
   // everything not in the funnel.
   const [stageFilter, setStageFilter] = useState<StageFilter>('all');
   const funnel = useMemo(() => funnelCounts(all ?? []), [all]);
+  // Flats somebody has marked gone. Hidden from every view here rather than only dimmed: the mark
+  // was built for the model and reused as the record of "this one is gone", and a shortlist that
+  // goes on listing gone flats among the live ones is wrong about the one thing it says. One line
+  // under the tally says how many, and shows them again — see `withoutOffMarket`.
+  const [showOffMarket, setShowOffMarket] = useState(false);
+  const offMarket = offMarketQuery.data ?? null;
   const entries = useMemo(
-    () => (all === null ? null : all.filter((e) => matchesStage(e.stage, stageFilter))),
-    [all, stageFilter],
+    () =>
+      all === null
+        ? null
+        : withoutOffMarket(
+            all.filter((e) => matchesStage(e.stage, stageFilter)),
+            offMarket,
+            showOffMarket,
+          ),
+    [all, stageFilter, offMarket, showOffMarket],
   );
+  // Over the whole hunt, not over `entries`, and not over the piles: the sentence offering to show
+  // them has to be there whatever else is filtered, or the only way back to a flat you hid is to
+  // clear the funnel filter first and work out why it reappeared.
+  const hiddenOffMarket = offMarket === null ? 0 : (all ?? []).filter((e) => offMarket.has(e.rightmoveId)).length;
   const places = placesQuery.data ?? [];
   // A stored filter can name a place somebody has since deleted, and a bar with no place is one the
   // panel cannot draw and nobody can clear. Pruned on the way in rather than on the way out of
@@ -432,7 +454,6 @@ function App({
     // oxlint-disable-next-line react-hooks/exhaustive-deps
     [model, all, placesQuery.data, placesQuery.isError],
   );
-  const offMarket = offMarketQuery.data ?? new Set<string>();
   const setEntryOffMarket = (entry: ShortlistEntry, off: boolean) =>
     offMarketMutation.mutate(
       { rightmoveId: entry.rightmoveId, off },
@@ -455,7 +476,10 @@ function App({
     twins,
     rate,
     scores,
-    offMarket,
+    // The cards only ask whether one flat is off, and not knowing yet answers that as "no" — the
+    // pill appears when the set arrives. Which flats are *hidden* is the question that must not be
+    // answered from an empty set, and that is `entries`, above.
+    offMarket: offMarket ?? EMPTY,
     prices: pricesQuery.data,
     setOffMarket: setEntryOffMarket,
     setStage: setEntryStage,
@@ -552,6 +576,18 @@ function App({
                 screen — otherwise a shortlist showing two flats claims to be showing forty. */}
             {stageFilter !== 'all' && (
               <span> Showing the {entries.length} at “{FILTER_LABEL[stageFilter].toLowerCase()}”.</span>
+            )}
+            {/* Hidden, and said so. A flat that vanishes with no account of where it went is the
+                shortlist looking broken, and the way back to one has to be on the screen it left
+                rather than in Settings. */}
+            {hiddenOffMarket > 0 && (
+              <span data-testid="off-market-hidden">
+                {' '}
+                {hiddenOffMarket} off the market{showOffMarket ? ', shown' : ', hidden'}.{' '}
+                <button className="linkish" onClick={() => setShowOffMarket(!showOffMarket)}>
+                  {showOffMarket ? 'Hide them' : 'Show them'}
+                </button>
+              </span>
             )}
             {shortlist.isFetching && <span className="working"> · refreshing</span>}
           </p>
@@ -1103,7 +1139,7 @@ interface CardProps {
   prefs: HuntPreferences;
   /** Flats withheld from training (off the market). A love you can no longer act on is still a
    *  love — this only keeps the model from learning it. */
-  offMarket: Set<string>;
+  offMarket: ReadonlySet<string>;
   setOffMarket: (entry: ShortlistEntry, off: boolean) => void;
   /** What each flat has cost over time, keyed by listing. Undefined while the read is outstanding,
    *  which renders as no note rather than as "no change" — see `PriceMove`. */
