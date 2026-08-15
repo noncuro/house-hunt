@@ -12,7 +12,10 @@
 import {
   NO_FILTER,
   applyFilter,
+  barModesFor,
   CROW,
+  defaultMax,
+  startingBar,
   filterIsOn,
   matchesFilter,
   parseFilter,
@@ -332,8 +335,49 @@ check(
 
 // A place can be deleted while a filter naming it is still stored, and a bar nobody can see is a
 // bar nobody can clear — so it goes, which shows more flats rather than fewer.
-check('a bar naming a deleted place is dropped', withKnownPlaces(toWork, ['gym']), NO_FILTER);
-check('and one naming a place that exists is kept', withKnownPlaces(toWork, ['work']), toWork);
+const WORK = { id: 'work', postcode: 'EC1V 1JN', lat: 51.53, lon: -0.09 };
+const GYM = { id: 'gym', postcode: 'N1 7GU', lat: 51.54, lon: -0.1 };
+/** A neighbourhood folded in from the old hub list: a point on the map, and nothing to ask TfL. */
+const ANGEL_PLACE = { id: 'angel', postcode: null, lat: ANGEL.lat, lon: ANGEL.lon };
+/** A place whose postcode never resolved to a point. The other half of the same coin. */
+const UNPLACED = { id: 'work', postcode: 'EC1V 1JN', lat: null, lon: null };
+
+check('a bar naming a deleted place is dropped', withKnownPlaces(toWork, [GYM]), NO_FILTER);
+check('and one naming a place that exists is kept', withKnownPlaces(toWork, [WORK]), toWork);
+
+// --------------------------------------------------------------------------------------------- //
+console.log('\nwhat a place can be asked');
+
+check('a place with both offers all four', barModesFor(WORK).length, 4);
+check('a point with no postcode offers only the straight line', barModesFor(ANGEL_PLACE).join(), CROW);
+check('a postcode that never resolved offers the three journeys', barModesFor(UNPLACED).join(), 'walking,cycling,transit');
+check('a place with neither offers nothing', barModesFor({ postcode: null, lat: null, lon: null }).length, 0);
+check('and gets no starting bar at all', startingBar({ postcode: null, lat: null, lon: null }), null);
+
+// The stored bar nobody was ever offered. A postcode removed from a place leaves its transit bars
+// reading `unknown` for every flat in the hunt — the pile unfiltered, the control saying otherwise.
+check(
+  'a transit bar on a place that lost its postcode is dropped',
+  withKnownPlaces(toWork, [{ id: 'work', postcode: null, lat: 51.53, lon: -0.09 }]),
+  NO_FILTER,
+);
+check(
+  'and a distance bar on a place that lost its coordinates goes too',
+  withKnownPlaces(withinMile, [{ id: 'angel', postcode: 'N1 1AA', lat: null, lon: null }]),
+  NO_FILTER,
+);
+check(
+  'a distance bar on a place that still has a point is kept',
+  withKnownPlaces(withinMile, [ANGEL_PLACE]),
+  withinMile,
+);
+
+// Thirty minutes and thirty miles are the same digits and nothing like the same filter, so the
+// number never crosses between units — see the note on `startingBar`.
+check('a place with a postcode starts on the commute', startingBar(WORK)?.max, 30);
+check('a point on the map starts at a mile', startingBar(ANGEL_PLACE)?.max, 1);
+check('minutes default to thirty', defaultMax('transit'), 30);
+check('miles default to one', defaultMax(CROW), 1);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

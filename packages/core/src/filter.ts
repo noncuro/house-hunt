@@ -54,6 +54,53 @@ export interface TravelBar {
   max: number;
 }
 
+/** Enough of a place to know what can be asked about it. */
+export interface Measurable {
+  postcode: string | null;
+  lat: number | null;
+  lon: number | null;
+}
+
+/** The bars this place can actually answer.
+ *
+ *  A journey needs a postcode, because that is what TfL is asked with. A straight line needs a
+ *  coordinate, because that is what a distance is between. Most places have both; the neighbourhoods
+ *  folded in from the old hub list have only the second, and a place whose postcode never resolved
+ *  to a point has only the first.
+ *
+ *  Empty is a real answer and means this place cannot be measured to at all. A bar against one would
+ *  read `unknown` for every flat in the hunt — which keeps the whole pile, so the control sits there
+ *  looking like a filter and doing nothing, and that is the one failure this file exists to refuse.
+ *  The picker offers only these, and `withKnownPlaces` drops a stored bar that has stopped being
+ *  one of them. */
+export function barModesFor(place: Measurable): BarMode[] {
+  const modes: BarMode[] = place.postcode === null ? [] : [...TRAVEL_MODES];
+  if (place.lat !== null && place.lon !== null) modes.push(CROW);
+  return modes;
+}
+
+/** What a new bar against this place starts as, and what an existing one becomes when it is moved
+ *  onto a place measured differently.
+ *
+ *  Thirty minutes on public transport where there is a postcode to route from — the commute is what
+ *  people save a place for. A mile as the crow flies where there is not.
+ *
+ *  The number comes with the mode and is never carried across. Thirty minutes and thirty miles are
+ *  the same digits and nothing like the same filter: switching one to the other silently widened a
+ *  half-hour commute to most of the South East, and switching back turned half a mile into thirty
+ *  seconds and excluded every journey ever measured. Either way the control reads exactly as it did
+ *  before, which is what makes it worth throwing the number away. */
+export function startingBar(place: Measurable): { mode: BarMode; max: number } | null {
+  const modes = barModesFor(place);
+  if (modes.length === 0) return null;
+  return modes.includes('transit') ? { mode: 'transit', max: 30 } : { mode: CROW, max: 1 };
+}
+
+/** The default for one mode, for when only the mode is changing. */
+export function defaultMax(mode: BarMode): number {
+  return mode === CROW ? 1 : 30;
+}
+
 /** Where the places are, by id, for the bars measured in miles. Only the ones with a coordinate:
  *  a place we cannot put on the map is one no straight line can be drawn to, and guessing a point
  *  would silently move every flat's answer. */
@@ -256,8 +303,18 @@ function bar(value: unknown): number | null {
  *  cannot draw and nobody can clear — it would sit there narrowing the pile with no control on
  *  screen to say so. Dropping it widens the filter, which is the direction that shows you more
  *  rather than less. */
-export function withKnownPlaces(filter: TriageFilter, placeIds: Iterable<string>): TriageFilter {
-  const known = new Set(placeIds);
-  const travel = filter.travel.filter((t) => known.has(t.placeId));
+export function withKnownPlaces(
+  filter: TriageFilter,
+  places: Iterable<Measurable & { id: string }>,
+): TriageFilter {
+  const known = new Map([...places].map((p) => [p.id, p]));
+  const travel = filter.travel.filter((t) => {
+    const place = known.get(t.placeId);
+    // And a bar whose place can no longer answer it goes the same way, for the same reason: a
+    // postcode removed from a place leaves its transit bars reading `unknown` for every flat in the
+    // hunt, so the pile is unfiltered and the control says otherwise. The picker would not offer
+    // that combination, but a filter restored from storage was never offered anything.
+    return place !== undefined && barModesFor(place).includes(t.mode);
+  });
   return travel.length === filter.travel.length ? filter : { ...filter, travel };
 }

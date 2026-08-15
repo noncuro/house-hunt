@@ -2,10 +2,12 @@
 
 import {
   AMENITIES,
-  BAR_MODES,
   CROW,
   NO_FILTER,
+  barModesFor,
+  defaultMax,
   filterIsOn,
+  startingBar,
   type AmenityKey,
   type BarMode,
   type Place,
@@ -47,8 +49,9 @@ export function TriageFilters({
   // Every place we can measure to at all. A postcode is what TfL is asked with and a coordinate is
   // what a straight line is drawn between, so a neighbourhood folded in from the old hub list has
   // no journey time and does have a distance — filtering it out of the picker entirely was how it
-  // disappeared from this control without explanation. The mode select below is what narrows it.
-  const destinations = places.filter((p) => p.postcode !== null || (p.lat !== null && p.lon !== null));
+  // disappeared from this control without explanation. The mode select below is what narrows it,
+  // and `barModesFor` is the one place that decides which is which.
+  const destinations = places.filter((p) => barModesFor(p).length > 0);
   const on = filterIsOn(filter);
   const set = (patch: Partial<TriageFilter>) => setFilter({ ...filter, ...patch });
 
@@ -128,7 +131,7 @@ export function TriageFilters({
               set({
                 travel: [
                   ...filter.travel,
-                  { placeId: destinations[0]!.id, ...startingBar(destinations[0]!) },
+                  { placeId: destinations[0]!.id, ...startingBar(destinations[0]!)! },
                 ],
               })
             }
@@ -171,10 +174,11 @@ function TravelRow({
   onRemove: () => void;
 }) {
   const miles = bar.mode === CROW;
-  // Whether this place can be routed to at all. A place saved without a postcode — every
-  // neighbourhood folded in from the old hub list — has a coordinate and nothing to ask TfL with,
-  // so the straight line is the only honest option and the journeys are not offered.
-  const routable = places.find((p) => p.id === bar.placeId)?.postcode !== null;
+  // Only what this place can answer. A place saved without a postcode — every neighbourhood folded
+  // in from the old hub list — has a coordinate and nothing to ask TfL with, so the straight line is
+  // the only honest option and the journeys are not offered.
+  const place = places.find((p) => p.id === bar.placeId);
+  const modes = place ? barModesFor(place) : [bar.mode];
   return (
     <span className="triage-travel-bar" data-testid={`travel-filter-${bar.placeId}-${bar.mode}`}>
       <input
@@ -199,13 +203,15 @@ function TravelRow({
         aria-label="Place"
         onChange={(e) => {
           const place = places.find((p) => p.id === e.target.value);
-          // Moving a bar onto a place with no postcode has to move the mode too, or it would sit
-          // there asking for a journey time that can never be answered and keeping the whole pile
-          // on the unknown rule — filtering nothing while looking like it was.
+          if (!place) return;
+          // Moving a bar onto a place measured differently has to move the mode too, or it would
+          // sit there asking a question that can never be answered — every flat unknown, the whole
+          // pile kept, and a control that looks like it is filtering.
+          const start = startingBar(place);
           onChange(
-            place && place.postcode === null
-              ? { placeId: place.id, ...startingBar(place) }
-              : { ...bar, placeId: e.target.value },
+            start && !barModesFor(place).includes(bar.mode)
+              ? { placeId: place.id, ...start }
+              : { ...bar, placeId: place.id },
           );
         }}
       >
@@ -218,9 +224,17 @@ function TravelRow({
       <select
         value={bar.mode}
         aria-label="How"
-        onChange={(e) => onChange({ ...bar, mode: e.target.value as BarMode })}
+        onChange={(e) => {
+          const mode = e.target.value as BarMode;
+          // The number does not come along when the unit changes. Thirty minutes and thirty miles
+          // are the same digits and nothing like the same filter — carrying it across widened a
+          // half-hour commute to most of the South East, with the control reading exactly as it did
+          // before.
+          const crossing = (mode === CROW) !== (bar.mode === CROW);
+          onChange({ ...bar, mode, max: crossing ? defaultMax(mode) : bar.max });
+        }}
       >
-        {BAR_MODES.filter((mode) => mode === CROW || routable).map((mode) => (
+        {modes.map((mode) => (
           <option key={mode} value={mode}>
             {BAR_ICON[mode]} {BAR_LABEL[mode]}
           </option>
@@ -244,15 +258,7 @@ const BAR_LABEL: Record<BarMode, string> = {
 
 const BAR_ICON: Record<BarMode, string> = { ...MODE_ICON, [CROW]: '📏' };
 
-/** What a new bar against this place starts as.
- *
- *  Thirty minutes on public transport where there is a postcode to route from — the commute is what
- *  people save a place for. A mile as the crow flies where there is not, because that is the only
- *  question answerable about it, and a bar that starts on a mode with no numbers behind it looks
- *  broken rather than empty. */
-function startingBar(place: Place): { mode: BarMode; max: number } {
-  return place.postcode === null ? { mode: CROW, max: 1 } : { mode: 'transit', max: 30 };
-}
+
 
 /** One numeric bar. Empty is "don't mind", which is a different thing from nought — typing a zero
  *  into "min size" is a filter that passes everything and looks like one that is off. */

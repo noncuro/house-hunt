@@ -266,7 +266,7 @@ function App({
   const triageFilterNow = useMemo(
     () =>
       placesQuery.data
-        ? withKnownPlaces(triageFilter, placesQuery.data.map((p) => p.id))
+        ? withKnownPlaces(triageFilter, placesQuery.data)
         : triageFilter,
     [triageFilter, placesQuery.data],
   );
