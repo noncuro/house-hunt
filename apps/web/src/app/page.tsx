@@ -351,7 +351,14 @@ function App({
    *  itself. Nothing to open now that every card shows everything; it is purely a scroll, plus
    *  whichever pile the flat is in, since three of the four start collapsed and scrolling to a card
    *  that is not rendered lands on nothing. */
+  /** What a deep link still owes: the id it jumped to before we knew which flats are off the
+   *  market. Declared here because `openCard` clears it. */
+  const owed = useRef<string | null>(null);
+
   function openCard(id: string, group?: Group) {
+    // Whatever a link was still owed, it is not owed now: the reader has gone somewhere of their
+    // own accord, and paying it later would take them back to the flat they left.
+    owed.current = null;
     setView('list');
     if (group === 'maybe') setShowMaybes(true);
     if (group === 'unrated') setShowUnrated(true);
@@ -431,7 +438,6 @@ function App({
    *  found nothing: the list does not exist until the shortlist read lands. Runs once per id, so
    *  scrolling away and toggling a pile does not yank you back. */
   const jumped = useRef<string | null>(null);
-  const owed = useRef<string | null>(null);
   useEffect(() => {
     if (!all) return;
     const id = /^#card-(\d+)$/.exec(window.location.hash)?.[1];
@@ -439,13 +445,14 @@ function App({
     const entry = all.find((e) => e.rightmoveId === id);
     if (!entry) return;
     jumped.current = id;
-    // Jumping on what we have. If the exclusions have not landed, this jump may be to a flat that
-    // is about to be hidden, and the effect below finishes the job when they do.
-    owed.current = offMarket === null ? id : null;
     // A link to a flat has to land on it. Somebody who left the shortlist filtered to "viewed" and
     // then opened a link to a flat that is not would otherwise be scrolled to nothing at all.
     if (!matchesStage(entry.stage, stageFilter)) setStageFilter('all');
     openCard(id, groupOf(entry.verdicts));
+    // After the open, which clears any debt of its own. Jumping on what we have: if the exclusions
+    // have not landed, this jump may be to a flat that is about to be hidden, and the effect below
+    // finishes the job when they do.
+    owed.current = offMarket === null ? id : null;
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [all]);
 
