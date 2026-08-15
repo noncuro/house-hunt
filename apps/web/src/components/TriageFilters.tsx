@@ -101,6 +101,21 @@ export function TriageFilters({
             <AmenityLabel amenity={amenity.key} />
           </button>
         ))}
+        {/* In this row because it reads as one more "must have", and separated by a rule because it
+            is a different kind of fact — the others are about the flat and this is about the
+            listing. It is also the only bar here that removes the flats it cannot answer for, which
+            is what makes it worth having: a listing with no floorplan is the one you cannot triage
+            from the screen at all. */}
+        <span className="triage-filter-sep" aria-hidden="true" />
+        <button
+          className={filter.hasFloorplan ? 'key key-on' : 'key'}
+          aria-pressed={filter.hasFloorplan}
+          data-testid="want-floorplan"
+          title="Only listings that published a floorplan"
+          onClick={() => set({ hasFloorplan: !filter.hasFloorplan })}
+        >
+          Floorplan
+        </button>
       </div>
 
       {/* How far it is from the places you saved. A row per bar rather than a column per place,

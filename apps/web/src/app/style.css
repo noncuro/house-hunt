@@ -2044,6 +2044,15 @@ code {
   margin-left: auto;
 }
 
+/* Between the amenities and the floorplan toggle: same row, different kind of question. Matches the
+   header's rule rather than inventing a second divider. */
+.triage-filter-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+  margin: 0 var(--s1);
+}
+
 .triage-filter-count {
   margin: 0;
   font-size: 12px;
