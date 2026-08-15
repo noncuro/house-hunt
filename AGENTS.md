@@ -50,13 +50,21 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 - **Only `background.ts` constructs a Supabase client** (extension side). One session holder is
   what keeps an MV3 session alive; `pnpm check:one-client` enforces it.
 - **Change anything under `apps/extension/` and bump `apps/extension/package.json`'s `version`,
-  and `EXPECTED_EXTENSION_VERSION` in `apps/web/src/lib/extension-version.ts` to match.** The two
+  and `EXPECTED_EXTENSION_VERSION` in `apps/web/src/lib/extension-version.ts` to match — then run
+  `pnpm package` and commit the zip it writes.** The first two
   are compared over the bridge on `hello`, and that comparison is the only thing that can tell
   somebody the copy in their Chrome is older than the code. Nothing enforces it: Vercel builds
   only `apps/web`, so a forgotten bump ships as a confident "up to date" on a browser running
   last week's extension — which is how eleven withdrawn listings stayed on a worklist that had
   already been taught to drop them. A stale unpacked copy is the most common bug in this project
   and it never looks like one.
+
+  The zip is the third copy of that number and the one people actually run. `pnpm package` used to
+  write a gitignored archive at the repo root, so the file the install page serves was a hand copy
+  that stopped being made: it sat at 0.1.0 through three bumps while the site said 0.3.1 and told
+  everybody who downloaded it that they were out of date — which is the message they had just acted
+  on. `pnpm package` now writes `apps/web/public/rightmove-house-hunt.zip` directly and
+  `pnpm check:zip` reads the version back out of it.
 - **Rightmove's own mark may be used on the buttons that go to Rightmove**, and nowhere else. It
   labels an outbound link with the thing it opens, which is what a trademark is for, and it is the
   owner's decision on the owner's product. What stays forbidden is unchanged and is a different
@@ -224,8 +232,11 @@ instead (`.github/workflows/check.yml`: `check:all`, `check:rls`, `check:spend`,
 
 ## Packaging
 
-`pnpm package` → `rightmove-house-hunt.zip` (gitignored). `SETUP.md` goes with it. The manifest
-carries a fixed `key` so the extension id survives moving the folder.
+`pnpm package` → `apps/web/public/rightmove-house-hunt.zip`, which is **committed**: Vercel builds
+only `apps/web` and cannot build the extension, so the install page serves it as a static asset and
+the artefact in git is the artefact people download. `pnpm check:zip` compares its manifest to
+`EXPECTED_EXTENSION_VERSION`. `SETUP.md` goes with it. The manifest carries a fixed `key` so the
+extension id survives moving the folder.
 
 ## Code Review
 
