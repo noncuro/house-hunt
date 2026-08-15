@@ -5,12 +5,11 @@ import { Toasts, useToasts } from '@house-hunt/ui';
 import { CappedNotice, SpendWarning } from '@house-hunt/ui';
 import { VerdictLine, RatingButtons } from '@house-hunt/ui';
 import { StageLine, StagePicker } from '@house-hunt/ui';
-import { ScoreBadge } from '@house-hunt/ui';
+import { ScoreGauge } from '@house-hunt/ui';
 import { OffMarketRow } from '@house-hunt/ui';
 import { scoreListing } from '@/lib/score';
 import { send, type AnalysisRequest, type SessionUser, type SpendSummary } from '@/lib/messages';
 import {
-  FLAG_ICON,
   explainReading,
   relativeUpdate,
   resolveReading,
@@ -21,9 +20,21 @@ import { Flags } from '@house-hunt/ui';
 import { webAppUrl } from '@/lib/web-app';
 import { HubFact } from '@house-hunt/ui';
 import { galleryFor, hubsFromProject, travelDestinations, type Hub } from '@house-hunt/core';
-import { formatDuration, MapsButton, MODE_ICON, readTravel, Routes, TransitBasis } from '@house-hunt/ui';
+import {
+  formatDuration,
+  Icon,
+  MapsButton,
+  ModeIcon,
+  readTravel,
+  Routes,
+  TransitBasis,
+  type IconName,
+} from '@house-hunt/ui';
 import { Stations, STATIONS_SHOWN } from '@house-hunt/ui';
 import { Gallery } from '@house-hunt/ui';
+/* First, so everything after it can read a token. Inside a shadow root there is no page stylesheet
+   to inherit these from — Rightmove's page is what surrounds this, and it has never heard of them. */
+import '@house-hunt/ui/tokens.css';
 import '@house-hunt/ui/flags.css';
 // The section caveat's styling lived in this file and was imported by nothing, so it never
 // applied. One import, and the rule that was written for it takes effect.
@@ -409,7 +420,7 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   if (collapsed) {
     return (
       <button className="rm-reopen" onClick={() => setCollapsed(false)}>
-        🏠 House hunt
+        <Icon name="hunt" /> House hunt
       </button>
     );
   }
@@ -459,8 +470,8 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
               )}
             </div>
             <div className="rm-fact-row">
-              <CountFact icon="🛏" word="bed" listed={listing.bedrooms} seen={analysis?.bedrooms} />
-              <CountFact icon="🚿" word="bath" listed={listing.bathrooms} seen={analysis?.bathrooms} />
+              <CountFact icon="bed" word="bed" listed={listing.bedrooms} seen={analysis?.bedrooms} />
+              <CountFact icon="bath" word="bath" listed={listing.bathrooms} seen={analysis?.bathrooms} />
             </div>
             <div className="rm-fact-row">
               <SizeFact
@@ -564,7 +575,7 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
                   underline={false}
                   text={routes && routes.length > 0 ? <Routes options={routes} /> : undefined}
                 >
-                  {MODE_ICON[mode]} {formatDuration(t.seconds)}
+                  <ModeIcon mode={mode} size={12} /> {formatDuration(t.seconds)}
                 </Hint>
               );
             }).filter(Boolean);
@@ -629,7 +640,7 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
             not a verdict — it orders a sweep's worth of listings; you still decide this one. */}
         {modelScore !== null && (
           <div className="rm-score">
-            <ScoreBadge score={modelScore} />
+            <ScoreGauge score={modelScore} />
           </div>
         )}
         {/* Whose opinion this is, above the buttons that would replace it. */}
@@ -756,7 +767,7 @@ function NoteEditor({
   if (note.trim() === '') {
     return (
       <button className="rm-chip rm-chip-action rm-note-add" onClick={() => setEditing(true)}>
-        ✎ Add note
+        <Icon name="pencil" size={12} /> Add note
       </button>
     );
   }
@@ -789,7 +800,7 @@ function AnalysisState({
     return (
       <span className="rm-claim">
         <Hint className="rm-bad" text={`The analyse function refused: ${request.message}`}>
-          {FLAG_ICON.yellow} photos not analysed
+          <Icon name="warning" size={12} /> photos not analysed
         </Hint>
         <button className="rm-retry" onClick={retry}>
           ↻
@@ -898,7 +909,7 @@ function CountFact({
   listed,
   seen,
 }: {
-  icon: string;
+  icon: IconName;
   word: string;
   listed: number | null;
   seen: number | null | undefined;
@@ -910,7 +921,7 @@ function CountFact({
   if (!reading) return null;
   return (
     <Fact reading={reading} format={(n) => `${n} ${word}`}>
-      {icon} {reading.value} {word}
+      <Icon name={icon} size={12} /> {reading.value} {word}
     </Fact>
   );
 }
@@ -930,7 +941,8 @@ function CopyablePostcode({ postcode }: { postcode: string | null }) {
         });
       }}
     >
-      📍 {postcode} {copied ? '✓' : '⧉'}
+      <Icon name="pin" size={12} /> {postcode}{' '}
+      <Icon name={copied ? 'tick' : 'twin'} size={12} label={copied ? 'Copied' : 'Copy'} />
     </button>
   );
 }
@@ -957,7 +969,7 @@ function PhotosChip({ listing, onOpen }: { listing: Listing; onOpen: () => void 
       }
     >
       <button className="rm-chip rm-chip-action" onClick={onOpen}>
-        🖼 Photos <span className="rm-dim">{count}</span>
+        Photos <span className="rm-dim">{count}</span>
       </button>
     </Hint>
   );
@@ -984,7 +996,9 @@ function FloorplanChip({
   if (published) {
     return (
       <Hint text="Floorplan unreadable — everything below comes from the photos alone. Open the photos and check.">
-        <span className="rm-chip rm-chip-warn">⚠️ Floorplan unreadable</span>
+        <span className="rm-chip rm-chip-warn">
+          <Icon name="warning" size={12} /> Floorplan unreadable
+        </span>
       </Hint>
     );
   }
@@ -999,15 +1013,23 @@ function FloorplanChip({
         }
       >
         <span className={unreadable ? 'rm-chip rm-chip-warn' : 'rm-chip'}>
-          {unreadable ? '⚠️ Floorplan unreadable' : '📐 Floorplan in the photos'}
+          <Icon name={unreadable ? 'warning' : 'floorplan'} size={12} />{' '}
+          {unreadable ? 'Floorplan unreadable' : 'Floorplan in the photos'}
         </span>
       </Hint>
     );
   }
-  if (pending) return <span className="rm-chip rm-dim rm-working">📐 checking…</span>;
+  if (pending)
+    return (
+      <span className="rm-chip rm-dim rm-working">
+        <Icon name="floorplan" size={12} /> checking…
+      </span>
+    );
   return (
     <Hint text="No floorplan anywhere in this listing.">
-      <span className="rm-chip rm-chip-warn">⚠️ No floorplan</span>
+      <span className="rm-chip rm-chip-warn">
+        <Icon name="warning" size={12} /> No floorplan
+      </span>
     </Hint>
   );
 }

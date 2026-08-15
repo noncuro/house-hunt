@@ -1,0 +1,99 @@
+/* The palette, the type and the spacing, in one place both surfaces read.
+ *
+ * The website used to hold its own navy-on-blue-grey scheme in `apps/web/src/app/style.css` and the
+ * panel held a second one in its shadow-root stylesheet, and the two had already drifted: the same
+ * flat was a different green in the two views, and "dim" was three different greys depending on
+ * which file you were in. Tokens rather than a shared stylesheet because the panel lives in a shadow
+ * root and cannot inherit the page's rules — it re-declares these on its own host and gets the same
+ * values.
+ *
+ * Light only, deliberately. This is a warm paper ground with ink-brown text — a dark rendering of it
+ * is a different design rather than the same one inverted, and half-doing it would leave the flag
+ * chips and the verdict stamp illegible in exactly the state nobody tests. `color-scheme: light`
+ * says so to the browser so form controls come back light too. */
+
+/* `:host` as well as `:root`, and it is load-bearing rather than defensive. The panel's stylesheet
+   is adopted into a shadow root inside Rightmove's page, where `:root` is Rightmove's `<html>` and
+   this file is not on it — so `:root` alone matched nothing and every `var()` in the panel resolved
+   to the initial value, which for a colour is transparent. */
+:root,
+:host {
+  color-scheme: light;
+
+  /* --- ink ------------------------------------------------------------------------------- */
+  --ink: #241f1a;
+  --ink-soft: #453e33;
+  --muted: #6e6659;
+  --faint: #9a927f;
+  --fainter: #b3aca0;
+  /* The em dash that means "we have no number for this". Lighter than `--fainter` on purpose: it
+     has to read as an absence rather than as a quiet value. */
+  --dash: #cfc9bc;
+
+  /* --- ground ---------------------------------------------------------------------------- */
+  --line: #e5e0d6;
+  --line-2: #eae6de;
+  --line-3: #f0ece3;
+  --paper: #faf8f4;
+  --raised: #fdfcfa;
+  --white: #fff;
+
+  /* --- the verdict, and only the verdict -------------------------------------------------- */
+  --good-bg: oklch(0.95 0.03 155);
+  --good-line: oklch(0.5 0.1 155);
+  --good-ink: oklch(0.38 0.09 155);
+  --warn-bg: #faf3e3;
+  --warn-line: #ecd9a8;
+  --warn-ink: #8a6d1f;
+  --bad-bg: oklch(0.96 0.02 25);
+  --bad-line: oklch(0.75 0.08 25);
+  --bad-ink: oklch(0.48 0.11 25);
+
+  /* Map pins and the table's leading dot, which have to stay legible at 8px against paper — so a
+     little more chroma than the chip colours above, and a fourth for the pile nobody has judged. */
+  --pin-loved: oklch(0.55 0.12 155);
+  --pin-liked: oklch(0.55 0.12 85);
+  --pin-unrated: oklch(0.55 0.09 240);
+  --pin-rejected: #b3aca0;
+
+  /* --- a flag icon's own hue --------------------------------------------------------------
+     Not severity. These say what the icon is a picture *of* — water, a plant, something warm —
+     which is the one job colour still does on a neutral chip. */
+  --subject-water: oklch(0.55 0.09 240);
+  --subject-green: oklch(0.52 0.1 155);
+  --subject-warm: #b3894a;
+
+  /* --- type ------------------------------------------------------------------------------- */
+  /* The `-loaded` variables are set by `next/font` on the website's <html>, and are absent inside
+     the extension's shadow root — which has no build step of its own to download a face into. So
+     each falls back to the family by name, then to the platform's own, and the panel gets the
+     nearest thing the machine has rather than a request to a CDN the CSP would refuse anyway. */
+  /* The fallback goes *inside* the var(), not after it. An undefined custom property makes the
+     whole declaration invalid at computed-value time rather than skipping that one name, so
+     `var(--font-sans-loaded), system-ui` would leave the panel with no font-family at all. */
+  --font-sans: var(--font-sans-loaded, 'IBM Plex Sans'), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-serif: var(--font-serif-loaded, 'Newsreader'), Georgia, 'Times New Roman', serif;
+  --font-mono: var(--font-mono-loaded, 'IBM Plex Mono'), ui-monospace, Menlo, monospace;
+
+  /* --- spacing: one 8px scale, because the card had three different gaps ------------------- */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  --r-chip: 5px;
+  --r-control: 7px;
+  --r-card: 8px;
+  --r-panel: 10px;
+  --r-pill: 99px;
+
+  /* One shadow, for the two things that genuinely float: the map's docked card and a popover. */
+  --shadow-pop: 0 6px 20px rgb(36 31 26 / 18%);
+  --shadow-card: 0 1px 3px rgb(36 31 26 / 6%);
+
+  /* Where the desktop nav becomes a bottom tab bar. A custom property so the value is written down
+     once even though `@media` cannot read it — every query that uses it names this line. */
+  --bp-mobile: 768px;
+}

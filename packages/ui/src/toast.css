@@ -13,12 +13,12 @@
 .rm-toast {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  border-radius: 10px;
-  padding: 10px 12px;
+  gap: var(--s2);
+  border-radius: var(--r-panel);
+  padding: 10px var(--s3);
   font-size: 12px;
   line-height: 1.4;
-  box-shadow: 0 10px 26px rgb(18 38 58 / 26%);
+  box-shadow: var(--shadow-pop);
   animation: rm-toast-in 160ms ease-out;
 }
 
@@ -29,14 +29,16 @@
   }
 }
 
+/* Both are dark slabs, and only the error takes a colour: a toast interrupts by existing, so the
+   ground does not also need to shout. */
 .rm-toast-error {
-  background: #b23a48;
-  color: #fff;
+  background: var(--bad-ink);
+  color: var(--white);
 }
 
 .rm-toast-info {
-  background: #12263a;
-  color: #f4f8fb;
+  background: var(--ink);
+  color: var(--paper);
 }
 
 .rm-toast-close {

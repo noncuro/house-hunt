@@ -351,7 +351,6 @@ export interface Flag {
   /** Stable identity, so a view can pick a subset without matching on the words. */
   key: string;
   severity: Severity;
-  icon: string;
   /** Already hedged for confidence, via `claimLabel`. */
   text: string;
   /** How sure the model was, or null where the fact is not an inference at all — "there is no
@@ -392,16 +391,11 @@ export interface FlagSource {
   size?: SizeSource | null;
 }
 
-/** One glyph per severity, and never the same glyph for two of them.
- *
- *  Every flag that was not good news used to render `⚠️`, so "no bathtub" — a reason to skip the
- *  viewing — looked exactly like an unreadable floorplan. Worse, `🛁` marked both "bathtub" and
- *  "no bathtub", so the icon actively argued against the words next to it at a glance. The icon
- *  now carries severity and nothing else; the subject icon survives only on good news, where
- *  there is no severity for it to contradict. */
-export const FLAG_ICON: Record<Severity, string> = { red: '⛔', yellow: '⚠️', good: '' };
-const RED = FLAG_ICON.red;
-const AMBER = FLAG_ICON.yellow;
+/* A flag carries no picture. It used to carry an emoji chosen here, which put a rendering decision
+   in the data layer and then made it twice: every flag that was not good news rendered the same
+   warning sign, so "no bathtub" — a reason to skip the viewing — looked exactly like an unreadable
+   floorplan, and the bath glyph marked both "bathtub" and "no bathtub". `FlagChip` draws the glyph
+   now, from `key` and `severity`, out of the one drawn icon set both surfaces share. */
 
 export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: HuntPreferences): Flag[] {
   const flags: Flag[] = [];
@@ -419,7 +413,6 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
     flags.push({
       key: 'size',
       severity: 'red',
-      icon: RED,
       // The caveat rides along: a figure read out of the description may be measuring the garden,
       // and being told a flat is too small on the strength of one is worth knowing about.
       text: `${floorArea.value} sq ft — under your ${prefs.minSqft}${floorArea.approximate ? ', and approximate' : ''}`,
@@ -429,20 +422,19 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
 
   if (!analysis) {
     if (!floorplanUrl) {
-      flags.push({ key: 'floorplan', severity: 'yellow', icon: AMBER, text: 'no floorplan', confidence: null });
+      flags.push({ key: 'floorplan', severity: 'yellow', text: 'no floorplan', confidence: null });
     }
     return flags;
   }
 
   if (!analysis.hasFloorplan && !floorplanUrl) {
-    flags.push({ key: 'floorplan', severity: 'yellow', icon: AMBER, text: 'no floorplan', confidence: null });
+    flags.push({ key: 'floorplan', severity: 'yellow', text: 'no floorplan', confidence: null });
   } else if (analysis.floorplanLegible === false) {
     // A plan we could not read is not the same as no plan: it means everything below it came from
     // the photos alone, which is worth knowing before trusting any of it.
     flags.push({
       key: 'floorplan',
       severity: 'yellow',
-      icon: AMBER,
       text: 'floorplan unreadable',
       confidence: null,
     });
@@ -451,9 +443,9 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
   const bath = analysis.bathtubConfidence ?? null;
   if (analysis.hasBathtub === false) {
     // Red: a shower-only flat is a reason to skip the viewing, not a reservation to raise at it.
-    flags.push({ key: 'bathtub', severity: 'red', icon: RED, text: claimLabel('bathtub-absent', bath), confidence: bath });
+    flags.push({ key: 'bathtub', severity: 'red', text: claimLabel('bathtub-absent', bath), confidence: bath });
   } else if (analysis.hasBathtub) {
-    flags.push({ key: 'bathtub', severity: 'good', icon: '🛁', text: claimLabel('bathtub-present', bath), confidence: bath });
+    flags.push({ key: 'bathtub', severity: 'good', text: claimLabel('bathtub-present', bath), confidence: bath });
   }
 
   const room = analysis.biggestRoomSqft ?? null;
@@ -467,7 +459,6 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
     flags.push({
       key: 'rooms',
       severity: 'yellow',
-      icon: AMBER,
       text: `${claimLabel('rooms-small', rooms)} · ${room} sq ft`,
       confidence: rooms,
     });
@@ -479,7 +470,6 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
     flags.push({
       key: 'rooms',
       severity: 'good',
-      icon: '⭐',
       text: named ? `great room · ${room} sq ft` : claimLabel('rooms-big', rooms),
       confidence: rooms,
     });
@@ -488,16 +478,15 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
   const outdoor = analysis.outdoorConfidence ?? null;
   const area = analysis.outdoorSqft ?? null;
   if (analysis.hasOutdoorSpace === false) {
-    flags.push({ key: 'outdoor', severity: 'red', icon: RED, text: claimLabel('outdoor-absent', outdoor), confidence: outdoor });
+    flags.push({ key: 'outdoor', severity: 'red', text: claimLabel('outdoor-absent', outdoor), confidence: outdoor });
   } else if (analysis.hasOutdoorSpace && area !== null && area < OUTDOOR_MINIMUM_SQFT) {
     // Under the minimum it is a window box rather than somewhere to sit, which is the same answer
     // as none at all.
-    flags.push({ key: 'outdoor', severity: 'red', icon: RED, text: `only ${area} sq ft outdoors`, confidence: outdoor });
+    flags.push({ key: 'outdoor', severity: 'red', text: `only ${area} sq ft outdoors`, confidence: outdoor });
   } else if (analysis.hasOutdoorSpace) {
     flags.push({
       key: 'outdoor',
       severity: 'good',
-      icon: '🌿',
       text: [
         analysis.outdoorKind ?? 'outdoor space',
         area !== null ? `${analysis.outdoorIsEstimate ? 'about ' : ''}${area} sq ft` : null,
@@ -516,7 +505,7 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
   // and would not cancel one over.
   const share = analysis.houseShareConfidence ?? null;
   if (analysis.isHouseShare) {
-    flags.push({ key: 'share', severity: 'red', icon: RED, text: claimLabel('house-share', share), confidence: share });
+    flags.push({ key: 'share', severity: 'red', text: claimLabel('house-share', share), confidence: share });
   }
 
   const kitchenBed = analysis.bedInKitchenConfidence ?? null;
@@ -524,7 +513,6 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
     flags.push({
       key: 'bed-in-kitchen',
       severity: 'red',
-      icon: RED,
       text: claimLabel('bed-in-kitchen', kitchenBed),
       confidence: kitchenBed,
     });
@@ -532,17 +520,16 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
 
   const wash = analysis.laundryConfidence ?? null;
   if (analysis.laundry === 'none') {
-    flags.push({ key: 'laundry', severity: 'yellow', icon: AMBER, text: claimLabel('laundry-none', wash), confidence: wash });
+    flags.push({ key: 'laundry', severity: 'yellow', text: claimLabel('laundry-none', wash), confidence: wash });
   } else if (analysis.laundry === 'in-building') {
     flags.push({
       key: 'laundry',
       severity: 'yellow',
-      icon: AMBER,
       text: claimLabel('laundry-building', wash),
       confidence: wash,
     });
   } else if (analysis.laundry === 'in-unit') {
-    flags.push({ key: 'laundry', severity: 'good', icon: '🧺', text: claimLabel('laundry-unit', wash), confidence: wash });
+    flags.push({ key: 'laundry', severity: 'good', text: claimLabel('laundry-unit', wash), confidence: wash });
   }
 
   const dish = analysis.dishwasherConfidence ?? null;
@@ -550,7 +537,6 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
     flags.push({
       key: 'dishwasher',
       severity: 'yellow',
-      icon: AMBER,
       text: claimLabel('dishwasher-absent', dish),
       confidence: dish,
     });
@@ -558,7 +544,6 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
     flags.push({
       key: 'dishwasher',
       severity: 'good',
-      icon: '🍽',
       text: claimLabel('dishwasher-present', dish),
       confidence: dish,
     });
@@ -568,16 +553,16 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
   // amber "bills not included" on nearly every place would be a column of noise saying nothing.
   const bills = analysis.utilitiesConfidence ?? null;
   if (analysis.utilitiesIncluded) {
-    flags.push({ key: 'bills', severity: 'good', icon: '💡', text: claimLabel('bills-included', bills), confidence: bills });
+    flags.push({ key: 'bills', severity: 'good', text: claimLabel('bills-included', bills), confidence: bills });
   }
 
   // Only the ends of the scale say anything. "Medium light" on two thirds of the rows is a column
   // of noise, and it is also the answer the model reaches for when it is unsure.
   const lit = analysis.naturalLightConfidence ?? null;
   if (analysis.naturalLight === 'low') {
-    flags.push({ key: 'light', severity: 'yellow', icon: AMBER, text: claimLabel('light-low', lit), confidence: lit });
+    flags.push({ key: 'light', severity: 'yellow', text: claimLabel('light-low', lit), confidence: lit });
   } else if (analysis.naturalLight === 'high') {
-    flags.push({ key: 'light', severity: 'good', icon: '☀️', text: claimLabel('light-high', lit), confidence: lit });
+    flags.push({ key: 'light', severity: 'good', text: claimLabel('light-high', lit), confidence: lit });
   }
 
   applyAmenityWants(flags, analysis, prefs);
@@ -644,13 +629,11 @@ function applyAmenityWants(
     if (existing) {
       if (severityRank[target] > severityRank[existing.severity]) {
         existing.severity = target;
-        existing.icon = FLAG_ICON[target];
       }
     } else {
       flags.push({
         key: spec.flagKey,
         severity: target,
-        icon: FLAG_ICON[target],
         text: `no ${spec.label}`,
         confidence: null,
       });

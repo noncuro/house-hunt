@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { helloExtension, type ExtensionState } from '@/lib/bridge';
+import type { ExtensionState } from '@/lib/bridge';
 import { EXPECTED_EXTENSION_VERSION, extensionBehind } from '@/lib/extension-version';
+import { useExtension } from '@/lib/queries';
 
 /** Getting the Rightmove half onto this laptop.
  *
@@ -25,17 +25,10 @@ import { EXPECTED_EXTENSION_VERSION, extensionBehind } from '@/lib/extension-ver
  *  everybody who downloaded it that their copy was out of date. The steps below are lifted from
  *  SETUP.md's "Installing it" so the page and the printed instructions cannot drift. */
 export function Install({ email }: { email: string }) {
-  const [state, setState] = useState<ExtensionState | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    void helloExtension().then((next) => {
-      if (live) setState(next);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
+  // The same probe the banner above the page reads. Two of them, each with its own deadline, could
+  // and did disagree — this screen saying "already installed (v0.3.1)" under a banner saying it was
+  // not installed at all.
+  const state = useExtension().data ?? null;
 
   return (
     <div className="settings">

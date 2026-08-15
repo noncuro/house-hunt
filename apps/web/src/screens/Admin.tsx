@@ -20,7 +20,7 @@ import {
   listInvites,
   revokeInvite,
 } from '@house-hunt/core/db';
-import { money, WARN_AT } from '@house-hunt/ui';
+import { Icon, money, WARN_AT } from '@house-hunt/ui';
 
 /** What everyone is spending, and the ceilings on it.
  *
@@ -64,6 +64,21 @@ export function Admin() {
 
   const lastMonth = useMemo(() => bucketPreviousMonth(usage.data ?? [], months), [usage.data, months]);
 
+  /** What Charges is worth opening for, in the same place the other three tabs say how many rows
+   *  they hold. A count of charges would be the wrong figure — nobody is rationing rows — so the
+   *  tab carries the month's total across every user, which is the number a cap is set against.
+   *  Summed from the stored `cost_usd` of the rows this month, the way every other figure here is:
+   *  a total recomputed from tokens and a price would disagree with the caps the database
+   *  enforces. */
+  const spentThisMonth = useMemo(
+    () =>
+      (usage.data ?? []).reduce(
+        (sum, row) => (Date.parse(row.occurredAt) >= months.currentStart ? sum + row.costUsd : sum),
+        0,
+      ),
+    [usage.data, months],
+  );
+
   function drill(next: Focus) {
     setFocus(next);
     setTab('charges');
@@ -74,23 +89,26 @@ export function Admin() {
       <div className="admin-tabs">
         {(
           [
-            ['users', `Users${users.data ? ` (${users.data.length})` : ''}`],
-            ['projects', `Projects${projects.data ? ` (${projects.data.length})` : ''}`],
-            ['invites', `Invites${invites.data ? ` (${invites.data.length})` : ''}`],
-            ['charges', 'Charges'],
+            ['users', 'Users', users.data ? String(users.data.length) : null],
+            ['projects', 'Projects', projects.data ? String(projects.data.length) : null],
+            ['invites', 'Invites', invites.data ? String(invites.data.length) : null],
+            ['charges', 'Charges', usage.data ? charge(spentThisMonth) : null],
           ] as const
-        ).map(([key, label]) => (
+        ).map(([key, label, count]) => (
           <button
             key={key}
-            className={tab === key ? 'key key-on' : 'key'}
+            className={tab === key ? 'admin-pill admin-pill-on' : 'admin-pill'}
             aria-pressed={tab === key}
             onClick={() => setTab(key)}
           >
             {label}
+            {/* Absent while the query is in flight rather than a zero, which would be a figure
+                somebody could act on. */}
+            {count !== null && <span className="admin-pill-count">{count}</span>}
           </button>
         ))}
-        <span className="dim admin-note">
-          Spend is this calendar month, Europe/London — the same boundary the cap is enforced on.
+        <span className="admin-note" title="The same boundary the cap is enforced on">
+          this calendar month, Europe/London
         </span>
       </div>
 
@@ -236,25 +254,32 @@ function levelOf(spent: number, cap: number): BudgetLevel {
   return spent / cap >= WARN_AT ? 'near' : 'under';
 }
 
-/** Spend against a cap, as a bar and the two numbers behind it.
+/** Spend against a cap: one bar with the two numbers drawn on top of it.
  *
  *  The track is drawn at full width whatever the fill, so every row's bar occupies the same space
  *  and a column of them can be read down: the eye compares fills, not footprints. A cap of zero is
  *  its own state rather than a division by zero rendered as an empty bar, because "no budget at
- *  all" and "nothing spent yet" look identical once you draw them the same way. */
+ *  all" and "nothing spent yet" look identical once you draw them the same way.
+ *
+ *  The figures sit inside the track rather than under it. Stacked they read as two facts about the
+ *  row — a picture and, separately, a number — and cost a line of height on every user; behind, the
+ *  bar is the number's own scale. Which also means nothing at all is drawn for zero: the fill is
+ *  omitted rather than given a minimum width, because a visible stub beside "$0" says a small
+ *  amount was spent. */
 function Budget({ spent, cap, label }: { spent: number; cap: number; label?: string }) {
   const level = levelOf(spent, cap);
   const fraction = level === 'none' ? 0 : Math.min(spent / cap, 1);
   const percent = level === 'none' ? '' : `${Math.round((spent / cap) * 100)}%`;
 
   return (
-    <span className="budget" title={`${label ? `${label}: ` : ''}$${spent.toFixed(6)} of ${money(cap)}${percent ? ` — ${percent}` : ''}`}>
-      <span className={`budget-track budget-${level}`}>
-        <span className="budget-fill" style={{ width: `${fraction * 100}%` }} />
-      </span>
+    <span
+      className={`budget budget-${level}`}
+      title={`${label ? `${label}: ` : ''}$${spent.toFixed(6)} of ${money(cap)}${percent ? ` — ${percent}` : ''}`}
+    >
+      {fraction > 0 && <span className="budget-fill" style={{ width: `${fraction * 100}%` }} />}
       <span className="budget-figures">
         <b className={level === 'under' ? undefined : `budget-word budget-${level}`}>{charge(spent)}</b>
-        <span className="dim"> of {level === 'none' ? 'no budget' : money(cap)}</span>
+        <span className="budget-of"> of {level === 'none' ? 'no budget' : money(cap)}</span>
       </span>
     </span>
   );
@@ -296,7 +321,7 @@ function Editable({
   if (!editing) {
     return (
       <button
-        className="cap"
+        className="admin-cap"
         title={`Change this ${unit}`}
         onClick={() => {
           setDraft(String(value));
@@ -324,7 +349,7 @@ function Editable({
   };
 
   return (
-    <span className="cap-edit">
+    <span className="admin-edit">
       <input
         type="number"
         min={min}
@@ -453,7 +478,7 @@ function Users({
               </td>
               <td className="budget-cell">
                 <button
-                  className="drill"
+                  className="admin-drill"
                   title="The individual charges behind this"
                   onClick={() => onDrill({ kind: 'user', id: user.id, label: user.displayName || user.email })}
                 >
@@ -544,7 +569,7 @@ function SetPassword({
   };
 
   return (
-    <span className="cap-edit">
+    <span className="admin-edit">
       <input
         type="text"
         value={draft}
@@ -621,7 +646,7 @@ function Projects({
               </td>
               <td className="budget-cell">
                 <button
-                  className="drill"
+                  className="admin-drill"
                   title="The individual charges behind this"
                   onClick={() => onDrill({ kind: 'project', id: project.id, label: project.name })}
                 >
@@ -751,7 +776,7 @@ function Invites({ query, onNotice }: { query: Loadable<Invite[]>; onNotice: (me
                     {invite.projectName ?? <span className="dim">a new project of their own</span>}
                   </td>
                   <td>
-                    <span className={`chip chip-${state}`}>{INVITE_WORD[state]}</span>
+                    <span className={`admin-chip admin-chip-${state}`}>{INVITE_WORD[state]}</span>
                   </td>
                   <td className="dim">{ago(invite.createdAt)}</td>
                   <td className={state === 'pending' ? 'dim' : 'dim admin-struck'}>{ago(invite.expiresAt)}</td>
@@ -835,7 +860,7 @@ function Charges({
         ).map(([key, label]) => (
           <button
             key={key}
-            className={when === key ? 'key key-on' : 'key'}
+            className={when === key ? 'admin-pill admin-pill-on' : 'admin-pill'}
             aria-pressed={when === key}
             onClick={() => setWhen(key)}
           >
@@ -846,7 +871,7 @@ function Charges({
           kinds.map((name) => (
             <button
               key={name}
-              className={kind === name ? 'key key-on' : 'key'}
+              className={kind === name ? 'admin-pill admin-pill-on' : 'admin-pill'}
               aria-pressed={kind === name}
               onClick={() => setKind(kind === name ? null : name)}
             >
@@ -854,11 +879,16 @@ function Charges({
             </button>
           ))}
         {focus && (
-          <button className="key key-on" onClick={() => setFocus(null)} title="Show every charge again">
-            {focus.kind === 'user' ? 'by' : 'in'} {focus.label} ✕
+          <button
+            className="admin-pill admin-pill-on"
+            onClick={() => setFocus(null)}
+            title="Show every charge again"
+          >
+            {focus.kind === 'user' ? 'by' : 'in'} {focus.label}
+            <Icon name="close" size={11} />
           </button>
         )}
-        <span className="dim admin-note">
+        <span className="admin-note">
           {rows.length === 0
             ? 'nothing here'
             : `${rows.length} ${rows.length === 1 ? 'charge' : 'charges'}, ${charge(total)}`}

@@ -1,0 +1,351 @@
+/* The Your Hunt screen (`screens/Project.tsx`), and nothing else.
+ *
+ * Its own file rather than more of `style.css`: this screen is one long column of settings and the
+ * rules it needs — a segmented control, a place card, a collapsed explainer — are read nowhere else.
+ * Every colour, size and radius here is a token from `packages/ui/src/tokens.css`; a literal in this
+ * file is a value that has escaped the palette.
+ *
+ * The `.settings` prefix on the headings is deliberate specificity: `style.css` styles `.setting h2`
+ * and the two files' order in the bundle is not something this file gets to decide. */
+
+/* --- headings and the explainers ---------------------------------------------------------- */
+
+.settings .hunt-h,
+.settings .hunt-h3 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--s1);
+}
+
+.settings .hunt-h {
+  font-size: 21px;
+}
+
+.settings .hunt-h3 {
+  font-size: 19px;
+}
+
+/* A small-caps mono label, for the places in the wireframe that name a block rather than title it. */
+.settings .hunt-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--faint);
+  margin: var(--s5) 0 var(--s2);
+}
+
+.hunt-lead {
+  margin: 0 0 var(--s2);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* The rest of the explanation, folded. Closed it is one quiet line; open it reads exactly as the
+   paragraph it used to be. */
+.hunt-more {
+  margin: 0 0 var(--s4);
+  font-size: 13px;
+}
+
+.hunt-more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  cursor: pointer;
+  color: var(--faint);
+  font-size: 12px;
+  list-style: none;
+  padding: var(--s1) 0;
+}
+
+.hunt-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hunt-more > summary:hover {
+  color: var(--muted);
+}
+
+.hunt-more[open] > summary .hunt-more-mark {
+  transform: rotate(180deg);
+}
+
+.hunt-more-body {
+  color: var(--muted);
+  line-height: 1.55;
+  padding: var(--s1) 0 0;
+  max-width: 60ch;
+}
+
+/* --- one control language: a row is a label and a segmented answer ------------------------- */
+
+.hunt-rows {
+  border-top: 1px solid var(--line-3);
+}
+
+.hunt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--line-3);
+}
+
+.hunt-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink);
+  min-width: 0;
+}
+
+/* The subject's own hue, and only that: severity is never drawn here (see tokens.css). */
+.hunt-ico {
+  flex: none;
+}
+
+.hunt-ico-water {
+  color: var(--subject-water);
+}
+
+.hunt-ico-green {
+  color: var(--subject-green);
+}
+
+.hunt-ico-warm {
+  color: var(--subject-warm);
+}
+
+/* The number rides beside the label it qualifies, and only while the answer is not "don't mind". */
+.hunt-row-size {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.hunt-row-size input {
+  width: 4.5em;
+  font: inherit;
+  font-size: 13px;
+  padding: 3px var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  background: var(--white);
+  color: var(--ink);
+}
+
+.hunt-unit {
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* Right-aligned so the chosen segment forms one legible column down the section — which is the
+   whole point of asking every preference the same way. */
+.hunt-seg {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  background: var(--line-3);
+  border-radius: var(--r-control);
+}
+
+.hunt-seg-pick {
+  border: none;
+  background: none;
+  border-radius: 5px;
+  padding: 5px var(--s3);
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hunt-seg-pick:hover:not(:disabled):not(.hunt-seg-on) {
+  color: var(--ink);
+}
+
+.hunt-seg-pick:disabled {
+  cursor: default;
+  color: var(--fainter);
+}
+
+/* Filled, not outlined. A selected segment a shade darker than its neighbours is a selection you
+   have to compare to read; ink under white is one you see. */
+.hunt-seg-on {
+  background: var(--ink);
+  color: var(--white);
+  font-weight: 600;
+}
+
+.hunt-seg-on:disabled {
+  color: var(--white);
+  opacity: 0.5;
+}
+
+/* --- places -------------------------------------------------------------------------------- */
+
+.hunt-place {
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--line-3);
+}
+
+.hunt-place-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.hunt-place-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.hunt-place-where {
+  font-size: 12px;
+  color: var(--faint);
+  margin-right: auto;
+}
+
+/* Whether this place is searchable, said as a state rather than as Rightmove's identifier: the id
+   is a string nobody reads and everybody trips over, and it survives in the hint. */
+.hunt-place-state {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.hunt-place-note {
+  margin-top: var(--s1);
+  font-size: 12.5px;
+}
+
+.hunt-place-add {
+  margin-top: var(--s3);
+}
+
+/* A pill that is really a select: the radius control, and in its off state the sentence saying this
+   place is not swept at all. */
+.hunt-pill-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.hunt-pill {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 24px 4px var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--raised);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.hunt-pill-off {
+  color: var(--faint);
+}
+
+.hunt-pill-mark {
+  position: absolute;
+  right: var(--s2);
+  color: var(--faint);
+  pointer-events: none;
+}
+
+/* --- what we search for -------------------------------------------------------------------- */
+
+.hunt-search {
+  margin-top: var(--s5);
+}
+
+/* The address bar and the button that accepts it, on one line: a pasted URL is long, so the field
+   takes whatever is left rather than a width guessed here. */
+.hunt-search-paste {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+  margin-bottom: var(--s3);
+}
+
+.hunt-search-paste input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12.5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--white);
+  color: var(--ink);
+  padding: var(--s2);
+}
+
+.hunt-search-paste input::placeholder {
+  color: var(--fainter);
+}
+
+/* The filters as sentences. No bullets: each line is already a whole statement of one filter, and a
+   marker beside it reads as a list of things to do rather than a description of what is in force. */
+.hunt-search-summary {
+  list-style: none;
+  margin: 0 0 var(--s3);
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s2);
+}
+
+.hunt-search-summary li {
+  font-size: 12px;
+  color: var(--ink-soft);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  padding: 3px var(--s2);
+}
+
+/* --- narrow windows (M4) ------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  /* The group takes its own line under the label and splits the width evenly, so the three answers
+     stay one tap each rather than three targets squeezed into a corner. */
+  .hunt-row {
+    flex-wrap: wrap;
+    padding: var(--s3) 0;
+  }
+
+  .hunt-seg {
+    display: flex;
+    width: 100%;
+  }
+
+  .hunt-seg-pick {
+    flex: 1;
+    min-height: 44px;
+  }
+
+  .hunt-pill {
+    min-height: 44px;
+  }
+
+  /* A pasted Rightmove URL and the button that takes it do not share 360px between them. */
+  .hunt-search-paste {
+    flex-wrap: wrap;
+  }
+
+  .hunt-search-paste input {
+    flex-basis: 100%;
+    min-height: 44px;
+  }
+}

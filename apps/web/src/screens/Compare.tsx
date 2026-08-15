@@ -1,8 +1,17 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Hint } from '@house-hunt/ui';
-import { formatDuration, MODE_ICON, readTravel, Routes } from '@house-hunt/ui';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  FlagChip,
+  Hint,
+  Icon,
+  ModeIcon,
+  Routes,
+  SizeValue,
+  StageSelect,
+  formatDuration,
+  readTravel,
+} from '@house-hunt/ui';
 import {
   flagsFor,
   problemsOnly,
@@ -13,15 +22,11 @@ import {
   type HuntPreferences,
 } from '@house-hunt/core';
 import {
-  DEFAULT_SHOWING,
   duplicateIds,
-  GROUP_LABEL,
   groupOf,
   parseMonthlyPrice,
   sizeOf,
   stageRank,
-  stageSentence,
-  type Group,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
 import {
@@ -31,15 +36,11 @@ import {
   type TravelMode,
   type TravelTime,
 } from '@house-hunt/core';
-import { FlagChip } from '@house-hunt/ui';
-import { SizeValue } from '@house-hunt/ui';
-import { ScoreBadge } from '@house-hunt/ui';
-import { ratingOf } from '@house-hunt/ui';
 import { RightmoveLink } from '@/components/RightmoveLink';
 import { Tick, useRangePick, type Selection } from '@/components/Tick';
 import { Pager, usePaging } from '@/components/Pager';
+import type { SetStage } from '@/lib/actions';
 import { useCachedTravel } from '@/lib/queries';
-import { isSurprise } from '@/lib/score';
 
 /** One row per place, one column per thing you'd compare it on.
  *
@@ -54,81 +55,68 @@ import { isSurprise } from '@/lib/score';
 
 type Sort = { key: string; descending: boolean };
 
-/** How the table was left, per table — compare and triage keep their own. Sorting by rent, opening
- *  a flat and coming back to a table sorted by price again is the table undoing the question you
- *  asked it. Module-level rather than lifted into the page, for the same reason as the map's
- *  viewport: nothing above has an opinion about it, and it is deliberately not persisted — a fresh
- *  visit starts at the caller's `defaultSort`.
- *
- *  Which piles are shown rides along: it is the same gesture ("show me the rejected ones too")
- *  thrown away by the same trip. */
-const kept = new Map<string, { sort: Sort | null; showing: Record<Group, boolean> }>();
+/** How the table was left. Sorting by rent, opening a flat and coming back to a table sorted by
+ *  price again is the table undoing the question you asked it. Module-level rather than lifted into
+ *  the page, for the same reason as the map's viewport: nothing above has an opinion about it, and
+ *  it is deliberately not persisted — a fresh visit starts at `DEFAULT_SORT`. */
+let keptSort: { at: Sort | null } | null = null;
+
+const DEFAULT_SORT: Sort = { key: 'price', descending: false };
 
 export function Compare({
   entries,
   places,
   onOpen,
-  selection,
-  filters = true,
-  columnsKey = 'compare',
-  defaultSort = { key: 'price', descending: false },
-  scores = null,
+  onSetStage,
+  picked,
+  setPicked,
+  onHeadToHead,
   prefs,
-  expand,
 }: {
   entries: ShortlistEntry[];
   places: Place[];
-  /** Go to this app's own view of a flat — the shortlist card, which carries the photos, the
-   *  travel times and the verdict buttons. Both the address and the row it sits in do this, unless
-   *  `expand` is set, in which case they open the card underneath the row instead. */
+  /** Go to this app's own view of a flat — the panel with the photos, the travel times and the
+   *  verdict buttons. Both the address and the row it sits in do this. */
   onOpen: (rightmoveId: string) => void;
-  /** Which stored set of column choices this table uses. Compare and triage answer different
-   *  questions — one is "which of these do we like best", the other is "is this worth a second
-   *  look" — so they get their own, rather than one changing the other under you. */
-  columnsKey?: string;
-  /** Triage borrows this table and adds a tick column. A pile of tick boxes down the left of a
-   *  stack of cards is a shape that argues with itself — you tick things you are comparing, and
-   *  comparing is what the table is for. Ticking is the box and nothing else; the row itself opens
-   *  the flat, here as everywhere. */
-  selection?: Selection;
-  /** Triage is already one pile, so the include-unrated switches would only ever empty it. */
-  filters?: boolean;
-  /** What the table sorts by before anyone clicks a header. `null` means "leave the rows as they
-   *  came" — the caller has already put them in a meaningful order and would lose it. Triage does
-   *  exactly that: it hands the rows over ranked by the verdict score. */
-  defaultSort?: Sort | null;
-  /** The verdict score per flat, P(yes) under the current model — only ever passed by triage. The
-   *  score is deliberately absent from the compare table (see the header note, and `Score.tsx`):
-   *  compare is for seeing which trade you are making, and a blended number hides that. Triage is
-   *  the opposite question — "is this worth a second look" — where one predicted number is exactly
-   *  the aid you want, and the sort control already ranks the pile by it. Showing it as a column
-   *  there, and nowhere else, is why this is gated rather than a plain column. */
-  scores?: Map<string, number> | null;
+  /** Moving a flat along, in the row rather than by opening it. The table is where you see all six
+   *  of them at once, which is where "these two are still just shortlisted" is noticed. */
+  onSetStage: SetStage;
+  /** The finalists, for the head-to-head. Ticking is the box and nothing else; the row itself opens
+   *  the flat, here as everywhere — a click on an address used to add it to a batch that three
+   *  buttons at the top would then rate for everybody in the hunt. */
+  picked: string[];
+  setPicked: (next: string[]) => void;
+  onHeadToHead: () => void;
   /** This hunt's preferences, so the "Against it" column reflects a must-have absence and the
-   *  great-room bar. Absent everywhere the preferences do not reach — the default flag behaviour. */
-  prefs?: HuntPreferences;
-  /** Triage opens a row's full card in place rather than jumping to the list. When set, clicking the
-   *  row (or its address) toggles the inline card instead of navigating, and the expanded row renders
-   *  that card beneath its own — the whole of what the flat is, without leaving the pile you are
-   *  working. `onOpen` is still what a click does everywhere this is absent. */
-  expand?: {
-    isOpen: (rightmoveId: string) => boolean;
-    toggle: (rightmoveId: string) => void;
-    render: (entry: ShortlistEntry) => React.ReactNode;
-  };
+   *  great-room bar. */
+  prefs: HuntPreferences;
 }) {
-  const [showing, setShowing] = useState<Record<Group, boolean>>(
-    () => kept.get(columnsKey)?.showing ?? DEFAULT_SHOWING,
-  );
-  const [sort, setSort] = useState<Sort | null>(() =>
-    kept.has(columnsKey) ? kept.get(columnsKey)!.sort : defaultSort,
-  );
-  const [chosen, setChosen] = useColumnChoice(columnsKey);
+  const [sort, setSort] = useState<Sort | null>(() => (keptSort ? keptSort.at : DEFAULT_SORT));
+  const [chosen, setChosen] = useColumnChoice('compare');
   const [picking, setPicking] = useState(false);
 
   useEffect(() => {
-    kept.set(columnsKey, { sort, showing });
-  }, [columnsKey, sort, showing]);
+    keptSort = { at: sort };
+  }, [sort]);
+
+  // The ticked set lives above this screen (going to the map and back must not throw the four
+  // finalists you had just assembled), so the `Selection` the tick boxes want is assembled here
+  // rather than held here.
+  const selection: Selection = useMemo(
+    () => ({
+      chosen: new Set(picked),
+      toggle: (id) => setPicked(picked.includes(id) ? picked.filter((p) => p !== id) : [...picked, id]),
+      setMany: (ids, on) => {
+        const next = new Set(picked);
+        for (const id of ids) {
+          if (on) next.add(id);
+          else next.delete(id);
+        }
+        setPicked([...next]);
+      },
+    }),
+    [picked, setPicked],
+  );
 
   // The table is wider than the page whenever there is more than a place or two saved, and a
   // plain `overflow-x: auto` gives no sign of it: the audit found 191px — the whole "Listed"
@@ -179,13 +167,11 @@ export function Compare({
     };
   }, [picking]);
 
-  // Only the places one of you has said something about, unless you ask for more. The table is
-  // for weighing up flats against each other, and a row nobody has an opinion on is not yet in
-  // that argument — see `DEFAULT_SHOWING`.
-  const shown = useMemo(
-    () => (filters ? entries.filter((e) => showing[groupOf(e.verdicts)]) : entries),
-    [entries, showing, filters],
-  );
+  // Every row the lens left. The table used to keep its own pair of include-unrated switches, which
+  // meant the toolbar above it said one number and the table drew a different set — two filters over
+  // the same list, one of them invisible from the other three renderings. The chips are the filter
+  // now, everywhere.
+  const shown = entries;
 
   // Travel comes from the cache alone — see `travel:cached`. A property nobody has opened since
   // a place was added simply has no number, and the table says so rather than making one up.
@@ -195,21 +181,14 @@ export function Compare({
   // rent rather than one listed twice, and the two rows disagree about everything the model read
   // off the photos, because they carry different photos.
   const twins = useMemo(() => duplicateIds(entries), [entries]);
-  // The score is a triage-only column (see the `scores` prop). Anywhere but triage it stays out of
-  // the table on purpose, so `buildColumns` is handed the map only there.
-  const scoreColumn = columnsKey === 'triage' ? scores : null;
-  // Where the address goes: to the list card (`onOpen`) normally, or — in triage — to the card
-  // that opens inline beneath the row, so working the pile never leaves it.
-  const openRow = expand ? expand.toggle : onOpen;
-  const inline = Boolean(expand);
   // Travel columns only for places we can actually route to. A place folded in from the old
   // neighbourhood list has no postcode, so its four columns would be blank down every row for as
   // long as the table exists — four widths spent saying nothing, and indistinguishable from a
   // journey nobody has looked up yet.
   const destinations = useMemo(() => travelDestinations(places), [places]);
   const all = useMemo(
-    () => buildColumns(destinations, twins, openRow, scoreColumn, prefs, inline),
-    [destinations, twins, openRow, scoreColumn, prefs, inline],
+    () => buildColumns(destinations, twins, onOpen, onSetStage, prefs),
+    [destinations, twins, onOpen, onSetStage, prefs],
   );
   // The first column is the address and never hides — a row you cannot identify is not a row.
   // Before the picker has ever been touched, `chosen` is null and the defaults decide. After, the
@@ -229,7 +208,7 @@ export function Compare({
     setChosen(next);
   };
   const sorted = useMemo(() => {
-    // No sort at all means the caller's order is already the answer — see `defaultSort`.
+    // No sort at all means the order the rows arrived in is already the answer.
     if (!sort) return shown;
     const column = columns.find((c) => c.key === sort.key);
     if (!column) return shown;
@@ -250,12 +229,6 @@ export function Compare({
   // twenty-five at the top of a shortlist of two hundred and call it the cheapest.
   const paging = usePaging(sorted);
 
-  const counts = useMemo(() => {
-    const tally: Record<Group, number> = { excited: 0, maybe: 0, rejected: 0, unrated: 0 };
-    for (const entry of entries) tally[groupOf(entry.verdicts)] += 1;
-    return tally;
-  }, [entries]);
-
   // One picker for the row and for the box in it, over the order actually on screen, so the two
   // cannot disagree about what a shift-click means.
   const pick = useRangePick(
@@ -267,27 +240,8 @@ export function Compare({
 
   return (
     <>
-      {filters && (
-      <div className="legend">
-        {/* Only the two piles that start hidden get a switch. "Include excited" would be a button
-            whose only use is to empty the table of the flats it exists to compare. */}
-        {(['unrated', 'rejected'] as const).map((group) => (
-          <button
-            key={group}
-            className={showing[group] ? 'key key-on' : 'key'}
-            aria-pressed={showing[group]}
-            onClick={() => setShowing((s) => ({ ...s, [group]: !s[group] }))}
-          >
-            Include {GROUP_LABEL[group].toLowerCase()} <span className="dim">{counts[group]}</span>
-          </button>
-        ))}
-        <span className="dim compare-note">
-          Travel times are the ones already worked out. Open a place to fill in the gaps.
-        </span>
-      </div>
-      )}
-
-      <div className="columns-pick" ref={picker}>
+      <div className="table-bar">
+        <div className="columns-pick" ref={picker}>
         <button className="key" aria-expanded={picking} onClick={() => setPicking(!picking)}>
           Columns <span className="dim">{columns.length} of {all.length}</span>
         </button>
@@ -314,9 +268,9 @@ export function Compare({
                     <label key={column.key}>
                       <input type="checkbox" checked={on(column.key)} onChange={() => flip(column.key)} />
                       {/* The icon is the label on screen and says nothing out loud, so the mode's
-                          name goes with it — "🚲" is not a choice anybody can act on. */}
+                          name goes with it — a bicycle is not a choice anybody can act on. */}
                       <span aria-hidden="true">
-                        {column.place!.mode ? MODE_ICON[column.place!.mode] : 'fastest'}
+                        {column.place!.mode ? <ModeIcon mode={column.place!.mode} /> : 'fastest'}
                       </span>
                       <span className="visually-hidden">
                         {place.label} {column.place!.mode ?? 'fastest'}
@@ -331,13 +285,46 @@ export function Compare({
             </button>
           </div>
         )}
+        </div>
+
+        {/* The reason the tick boxes are there, and it only appears once they have been used. Two is
+            the fewest that can be set beside each other; past four the head-to-head is a table
+            again, which is the thing you are standing in. */}
+        {picked.length > 0 && (
+          <p className="table-picked" data-testid="picked">
+            <span>{picked.length} picked</span>
+            <button
+              type="button"
+              className="key"
+              disabled={picked.length < 2 || picked.length > 4}
+              title={
+                picked.length < 2
+                  ? 'Pick at least two'
+                  : picked.length > 4
+                    ? 'Four at most — more than that is this table'
+                    : undefined
+              }
+              data-testid="head-to-head"
+              onClick={() => onHeadToHead()}
+            >
+              Set them side by side
+            </button>
+            <button type="button" className="linkish" onClick={() => setPicked([])}>
+              Clear
+            </button>
+          </p>
+        )}
+
+        <span className="dim table-note">
+          Travel times are the ones already worked out. Open a place to fill in the gaps.
+        </span>
       </div>
 
       <div className="compare-scroll" ref={scroll} onScroll={measure} data-more={more ? 'yes' : 'no'}>
         <table className="compare">
           <thead>
             <tr>
-              {selection && <th className="tick-col" />}
+              <th className="tick-col" />
               {columns.map((column) => (
                 <th
                   key={column.key}
@@ -368,49 +355,36 @@ export function Compare({
           </thead>
           <tbody>
             {paging.shown.map((entry) => (
-              <Fragment key={entry.rightmoveId}>
               <tr
-                className={`compare-${groupOf(entry.verdicts)}${
-                  selection?.chosen.has(entry.rightmoveId) ? ' compare-ticked' : ''
-                }${expand?.isOpen(entry.rightmoveId) ? ' compare-expanded' : ''}`}
+                key={entry.rightmoveId}
+                className={selection.chosen.has(entry.rightmoveId) ? 'compare-ticked' : undefined}
                 // A click on a row opens the flat, and never ticks it. Ticking used to be what a row
                 // click did in triage, which made reading a row and choosing it the same gesture:
                 // clicking an address to see the photos added it to a batch that three buttons at
                 // the top would then rate for everybody in the hunt. Selecting is the box, and only
                 // the box — a deliberate target you have to aim at.
-                onClick={() => openRow(entry.rightmoveId)}
+                onClick={() => onOpen(entry.rightmoveId)}
               >
-                {selection && (
-                  // The cell as well as the box, because the cell is bigger than the box and a
-                  // click that lands beside a checkbox must not open the card instead.
-                  <td className="tick-col" onClick={(event) => event.stopPropagation()}>
-                    <Tick
-                      checked={selection.chosen.has(entry.rightmoveId)}
-                      label={entry.displayAddress}
-                      onPick={(shiftKey) => pick(entry.rightmoveId, shiftKey)}
-                    />
-                  </td>
-                )}
+                {/* The cell as well as the box, because the cell is bigger than the box and a
+                    click that lands beside a checkbox must not open the flat instead. */}
+                <td className="tick-col" onClick={(event) => event.stopPropagation()}>
+                  <Tick
+                    checked={selection.chosen.has(entry.rightmoveId)}
+                    label={entry.displayAddress}
+                    onPick={(shiftKey) => pick(entry.rightmoveId, shiftKey)}
+                  />
+                </td>
                 {columns.map((column) => (
-                  <td key={column.key} className={column.numeric ? 'num' : undefined}>
+                  <td
+                    key={column.key}
+                    className={column.numeric ? 'num' : undefined}
+                    // The stage cell holds a menu; a click in it must not also open the flat behind.
+                    onClick={column.interactive ? (event) => event.stopPropagation() : undefined}
+                  >
                     {column.render(entry, travel.data)}
                   </td>
                 ))}
               </tr>
-              {expand?.isOpen(entry.rightmoveId) && (
-                <tr className="compare-expanded-row">
-                  {/* One cell across the whole row, holding the flat's own card — the same
-                      renderer the list uses, so the two never disagree about what a place is.
-                      The card is pinned to the left of the scroll box and sized to what is
-                      actually visible (`--compare-view`), so a table twelve columns wide does not
-                      make its own cards twelve columns wide: on a phone the row scrolls sideways
-                      and the card, which is a column of prose and photographs, does not. */}
-                  <td colSpan={columns.length + (selection ? 1 : 0)}>
-                    <div className="compare-card">{expand.render(entry)}</div>
-                  </td>
-                </tr>
-              )}
-              </Fragment>
             ))}
           </tbody>
         </table>
@@ -425,7 +399,9 @@ export function Compare({
 
 interface Column {
   key: string;
-  label: string;
+  /** A node, not a string: the single-mode travel columns carry the mode's icon beside the place's
+   *  name, and the icon is a drawn one rather than an emoji that would sit in a string. */
+  label: React.ReactNode;
   numeric?: boolean;
   /** Sorting a column of "more is better" the useful way round on first click. */
   bigIsBetter?: boolean;
@@ -434,21 +410,14 @@ interface Column {
    *  before you have chosen anything. */
   offByDefault?: boolean;
   /** Set on the travel columns, so the picker can group them. Flat, the twelve of them ran across
-   *  the general columns in reading order and "Work 🚲" ended up on a different line from "Work
-   *  🚇" — you had to hunt the grid for the place you were thinking about. */
+   *  the general columns in reading order and "Work, by bike" ended up on a different line from
+   *  "Work, by tube" — you had to hunt the grid for the place you were thinking about. */
   place?: { label: string; mode: TravelMode | null };
+  /** The cell holds a control of its own, so a click in it stops rather than opening the flat. */
+  interactive?: boolean;
   value: (e: ShortlistEntry, travel: Record<string, TravelTime[]> | undefined) => number | string | null;
   render: (e: ShortlistEntry, travel: Record<string, TravelTime[]> | undefined) => React.ReactNode;
 }
-
-// The same emoji the rating buttons carry, read from the same table — this column used to keep its
-// own copy, so relabelling a rating changed it in the panel and left the table saying the old thing.
-const VERDICT_MARK: Record<Group, string> = {
-  excited: ratingOf('love').emoji,
-  maybe: ratingOf('maybe').emoji,
-  rejected: ratingOf('no').emoji,
-  unrated: '',
-};
 
 /** Which columns this table carries, remembered per table and surviving a refresh.
  *
@@ -488,13 +457,8 @@ function buildColumns(
   places: Place[],
   twins: Map<string, string[]>,
   onOpen: (rightmoveId: string) => void,
-  scores: Map<string, number> | null = null,
-  prefs?: HuntPreferences,
-  /** True where the card opens underneath the row rather than in another view. The row then carries
-   *  the address and nothing else: the way out to Rightmove is at the foot of the card, one line
-   *  below, and a link to somewhere else sitting in a row whose job is to open the thing beside it
-   *  is the one click on the row that leaves. */
-  inline = false,
+  onSetStage: SetStage,
+  prefs: HuntPreferences,
 ): Column[] {
   const columns: Column[] = [
     {
@@ -503,7 +467,13 @@ function buildColumns(
       value: (e) => e.displayAddress,
       render: (e) => (
         <span className="compare-address">
-          <span className="compare-mark">{VERDICT_MARK[groupOf(e.verdicts)]}</span>
+          {/* A dot rather than the rating's emoji. Down two hundred rows a column of faces is the
+              loudest thing in the table and the least precise — the colour is the whole fact, and
+              the word for it is one column along on the row you are actually reading. */}
+          <span
+            className={`verdict-dot verdict-dot-${groupOf(e.verdicts)}`}
+            title={e.verdicts[0] ? `${e.verdicts[0].rating} — ${e.verdicts[0].person}` : 'Not rated'}
+          />
           <span className="compare-address-lines">
             {/* A real href rather than a bare button, so the address can be copied, opened in a
                 second tab and sent to the other laptop — `#card-<id>` is the deep link the
@@ -525,7 +495,7 @@ function buildColumns(
             >
               {e.displayAddress}
             </a>
-            {!inline && <RightmoveLink url={e.url} />}
+            <RightmoveLink url={e.url} />
           </span>
           {(twins.get(e.rightmoveId)?.length ?? 0) > 0 && (
             <span className="twin" title="Listed twice — same postcode and rent">
@@ -541,8 +511,14 @@ function buildColumns(
     {
       key: 'stage',
       label: 'Stage',
+      interactive: true,
       value: (e) => (e.stage ? stageRank(e.stage.stage) : null),
-      render: (e) => (e.stage ? stageSentence(e.stage) : dash('Nobody has liked this one yet.')),
+      // Editable in the row. Seeing all six steps at once is what makes "these two have been
+      // shortlisted for a fortnight" noticeable, and having noticed it, moving one along should not
+      // mean opening the flat, moving it, coming back and finding the sort has re-run.
+      render: (e) => (
+        <StageSelect stage={e.stage} onSet={(stage, reason) => onSetStage(e, stage, reason)} />
+      ),
     },
     {
       key: 'price',
@@ -605,11 +581,6 @@ function buildColumns(
       render: (e) => e.furnishType ?? dash('Not stated on the listing.'),
     },
   ];
-
-  // Right after the address, so it is the first thing you read across the row — this is the column
-  // you work the pile by in triage. Present only when triage passed a score map; null everywhere
-  // else keeps it out of the compare table entirely.
-  if (scores) columns.splice(1, 0, scoreColumnDef(scores));
 
   // The analysis-derived features, each its own sortable column but every one off by default so the
   // table does not arrive nine columns wider — turn on the ones a hunt cares about from the Columns
@@ -748,28 +719,17 @@ const LIGHT_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
  *  unknown — the last never reads as a "no". */
 function yesNo(value: boolean | null | undefined): React.ReactNode {
   if (value == null) return dash();
-  return value ? <span className="compare-clear">✓</span> : <span className="dim">no</span>;
+  return value ? (
+    <Icon name="tick" size={12} label="yes" className="compare-clear" />
+  ) : (
+    <span className="dim">no</span>
+  );
 }
 
-/** The verdict score as a table column — P(yes) under the current model, drawn with the same badge
- *  the cards use so the two surfaces read as one number. Sorts big-first (most likely yes at the
- *  top) and surfaces the model/rating disagreements with the ⚡ mark, exactly as `isSurprise`
- *  defines them. A flat with no score yet (no model, or unscorable) gets a dash, never a zero —
- *  the same rule the other columns follow. */
-function scoreColumnDef(scores: Map<string, number>): Column {
-  return {
-    key: 'score',
-    label: 'Score',
-    numeric: true,
-    bigIsBetter: true,
-    value: (e) => scores.get(e.rightmoveId) ?? null,
-    render: (e) => {
-      const s = scores.get(e.rightmoveId);
-      if (s === undefined) return dash('No score for this flat yet — rerun ratings.');
-      return <ScoreBadge score={s} surprise={isSurprise(e, s)} />;
-    },
-  };
-}
+/* No score column, deliberately. The compare table is for seeing which trade you are making between
+   flats, and one blended number is exactly what hides that — the argument `Score.tsx` makes at
+   length. Triage is the opposite question ("is this worth a second look at all"), and that is where
+   the score ranks the pile and the gauge is drawn beside each candidate. */
 
 /** The quickest way to a place, by the same rules every other view uses. Which mode it is matters
  *  less in a table than how long it takes — you want to know whether this flat is far. */
@@ -781,7 +741,13 @@ function scoreColumnDef(scores: Map<string, number>): Column {
 function travelColumn(place: Place, mode: TravelMode | null): Column {
   return {
     key: mode ? `place:${place.id}:${mode}` : `place:${place.id}`,
-    label: mode ? `${place.label} ${MODE_ICON[mode]}` : place.label,
+    label: mode ? (
+      <>
+        {place.label} <ModeIcon mode={mode} size={12} label />
+      </>
+    ) : (
+      place.label
+    ),
     numeric: true,
     offByDefault: mode !== null,
     place: { label: place.label, mode },
@@ -823,7 +789,7 @@ function travelColumn(place: Place, mode: TravelMode | null): Column {
           <span className={winner.stale ? 'stale-time' : undefined}>
             {/* The header already carries the icon on a single-mode column, so repeating it down
                 every row would be the same glyph seventeen times. */}
-            {mode ? '' : `${MODE_ICON[winner.mode]} `}
+            {mode === null && <ModeIcon mode={winner.mode} size={12} />}
             {formatDuration(winner.seconds)}
           </span>
         </Hint>

@@ -3,7 +3,7 @@
 .rm-flags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
+  gap: var(--s1) var(--s1);
 }
 
 /* inline-flex so a claim can never be split from its own confidence mark by the container's gap. */
@@ -11,21 +11,75 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  padding: 2px 7px;
+  border-radius: var(--r-chip);
+  border: 1px solid transparent;
   font-size: 12px;
+  line-height: 1.5;
   white-space: nowrap;
 }
 
-/* Red is "do not bother viewing": no bath, nowhere to sit outside. */
-.rm-flag-red {
-  color: #b23a48;
-}
-
-/* Amber is "raise it at the viewing". The same amber the panel already uses for a missing
-   floorplan, so the two kinds of caution read as one thing rather than two. */
-.rm-flag-yellow {
-  color: #8a5a12;
-}
-
+/* Good news is a chip and nothing more: a white ground, a hairline, body-weight text. It has to
+   be legible without being loud, because a well-appointed flat carries eight of these and the one
+   red one beside them is the thing you are meant to see. */
 .rm-flag-good {
-  color: #1a7f5a;
+  background: var(--white);
+  border-color: var(--line);
+  color: var(--ink-soft);
+}
+
+/* A reservation you would raise at the viewing, in the same amber every other caution uses. */
+.rm-flag-yellow {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+/* A reason not to view the place at all — and always because something is missing. Dashed, and on
+   no ground of its own: the outline is a hole in the row rather than another filled chip, which is
+   what an absence should look like beside eight things that are present. */
+.rm-flag-red {
+  background: transparent;
+  border: 1.5px dashed var(--bad-line);
+  color: var(--bad-ink);
+  /* The thicker border would otherwise make a red chip a pixel taller than the ones beside it. */
+  padding: 1.5px 6.5px;
+}
+
+/* The subject's own hue, on the icon alone. Only ever set on a neutral chip — see FlagChip. */
+.rm-flag-hue-water .rm-flag-icon {
+  color: var(--subject-water);
+}
+
+.rm-flag-hue-green .rm-flag-icon {
+  color: var(--subject-green);
+}
+
+.rm-flag-hue-warm .rm-flag-icon {
+  color: var(--subject-warm);
+}
+
+.rm-flag-hue-muted .rm-flag-icon {
+  color: var(--muted);
+}
+
+/* The doubt, behind a hairline: bars, then the word. Quiet on purpose — it qualifies the claim
+   rather than replacing it, and it appears only where the model was unsure, so it does not need
+   to compete for attention with the claim it is attached to. */
+.rm-flag-doubt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.rm-flag-red .rm-flag-doubt {
+  border-left-color: var(--bad-line);
+}
+
+.rm-flag-yellow .rm-flag-doubt {
+  border-left-color: var(--warn-line);
 }

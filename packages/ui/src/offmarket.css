@@ -4,41 +4,44 @@
 .rm-offmarket {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s2);
   flex-wrap: wrap;
   margin-top: 6px;
 }
 
 .rm-offmarket-tag {
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--rm-dim, #6b7280);
-  border: 1px solid var(--rm-line, #d1d5db);
-  border-radius: 999px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
   padding: 1px 8px;
 }
 
+/* A text button rather than a filled one: it is an aside about a flat's availability, not a step
+   in the funnel, and the two must not look alike. */
 .rm-offmarket-toggle {
   appearance: none;
   background: none;
   border: none;
   padding: 0;
   font: inherit;
-  font-size: 0.85rem;
-  color: var(--rm-link, #2563eb);
+  font-size: 12px;
+  color: var(--muted);
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .rm-offmarket-toggle:hover {
+  color: var(--ink);
   text-decoration: none;
 }
 
 .rm-offmarket-toggle:disabled {
-  color: var(--rm-dim, #9ca3af);
+  color: var(--fainter);
   cursor: default;
   text-decoration: none;
 }

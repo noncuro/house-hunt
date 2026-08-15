@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Hint } from '@house-hunt/ui';
+import { Hint, Icon } from '@house-hunt/ui';
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { findCards, onPageChange } from '@/lib/cards';
 import { sweepableHubs, toSweepHub, type SweepCriteria, type SweepHub } from '@house-hunt/core';
@@ -366,7 +366,8 @@ function Progress({
     <div className="rm-sweep-finish">
       {outstanding.length === 0 ? (
         <p className="rm-sweep-done">
-          ✓ {hub.name} swept — all {page.totalPages} {page.totalPages === 1 ? 'page' : 'pages'} in.
+          <Icon name="tick" /> {hub.name} swept — all {page.totalPages}{' '}
+          {page.totalPages === 1 ? 'page' : 'pages'} in.
         </p>
       ) : (
         // The pager above says where to go next; this says how much of the hub is done, which is

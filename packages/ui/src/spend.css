@@ -1,31 +1,36 @@
-/* Money states, in both surfaces. Deliberately not the flag palette: ⛔ red and ⚠️ amber mean
+/* Money states, in both surfaces. Deliberately not the flag palette: an absence or a caution means
    something specific about a *flat* (don't bother viewing / raise it at the viewing), and a spent
-   budget is not a fact about the property. It reads as a notice, not as a verdict. */
+   budget is not a fact about the property. It reads as a notice, not as a verdict.
+
+   The warning takes the amber ground because it is a caution and there is only one amber; what
+   keeps it from reading as a flag is where it sits and that it is a paragraph rather than a chip. */
 
 .rm-spend-warning {
-  margin: 8px 0;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: #fdf7ec;
-  border: 1px solid #ecdcbd;
-  color: #7a5c22;
+  margin: var(--s2) 0;
+  padding: 6px var(--s2);
+  border-radius: var(--r-card);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  color: var(--warn-ink);
   font-size: 11px;
   line-height: 1.45;
 }
 
+/* The cap, hit. No colour at all — it is a statement of fact about the month, and every free
+   thing on the page still works. */
 .rm-capped {
-  margin: 8px 0;
-  padding: 8px;
-  border-radius: 8px;
-  background: #f2f5f8;
-  border: 1px solid #dbe3ea;
-  color: #3d4c5a;
+  margin: var(--s2) 0;
+  padding: var(--s2);
+  border-radius: var(--r-card);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
   font-size: 12px;
   line-height: 1.45;
 }
 
 .rm-capped-rest {
-  margin-top: 4px;
+  margin-top: var(--s1);
   font-size: 11px;
-  color: #7b8a99;
+  color: var(--muted);
 }

@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { keys as shellKeys, useAuth, useProjectSettings, useSetProjectSettings } from '@/lib/queries';
-import { Hint, TRANSIT_BASIS_NOTE } from '@house-hunt/ui';
+import { Hint, Icon, TRANSIT_BASIS_NOTE, type IconName } from '@house-hunt/ui';
+import '@/app/hunt.css';
 import { attempt } from '@/lib/attempt';
 import {
   addPlace as addPlaceRow,
@@ -128,22 +129,130 @@ const GREAT_ROOM_MAX_SQFT = 2000;
  *  to a house — wider than the room bar because it is measuring a different thing. */
 const DEFAULT_MIN_SQFT = 600;
 
-/** Offered when a place is first ticked as somewhere to search. One mile is what every sweep URL
- *  this project has ever built used, so it is the radius already in force rather than a new
- *  invention — and it is a starting point on a control right beside the tick, not a value chosen
- *  behind anybody's back. */
-const DEFAULT_SWEEP_RADIUS = 1;
 const MIN_SQFT_FLOOR = 150;
 const MIN_SQFT_CEILING = 5000;
 
+/** The one control this page speaks in: a label on the left, the answers on the right, the chosen
+ *  one filled.
+ *
+ *  Every preference here is the same question — how much does this hunt care — and it was being
+ *  asked in two different grammars in the same section: a checkbox with a number for the two size
+ *  bars, a segmented group for the six amenities. Two grammars for one question reads as two kinds
+ *  of setting, so somebody sets one and assumes the other works differently. The groups are
+ *  right-aligned rather than left so the chosen segment lines up down the section and the shape of
+ *  the answers is readable without reading any of them. */
+function Segments<T>({
+  label,
+  choices,
+  value,
+  busy,
+  onPick,
+}: {
+  label: string;
+  choices: { value: T; label: string }[];
+  value: T;
+  busy: boolean;
+  onPick: (value: T) => void;
+}) {
+  return (
+    <div className="hunt-seg" role="group" aria-label={label}>
+      {choices.map((choice) => (
+        <button
+          key={choice.label}
+          type="button"
+          className={choice.value === value ? 'hunt-seg-pick hunt-seg-on' : 'hunt-seg-pick'}
+          aria-pressed={choice.value === value}
+          disabled={busy}
+          onClick={() => onPick(choice.value)}
+        >
+          {choice.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The first sentence, and the rest only if you ask for it.
+ *
+ *  Each section here opened with a paragraph about itself before showing a single control, and the
+ *  paragraphs earn their place — they are what say that a preference flags rather than filters, and
+ *  why a pasted URL beats a form. What they cannot do is stand between somebody and the thing they
+ *  came to change, five lines at a time, on every visit. */
+function Explainer({ lead, children }: { lead: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      <p className="hunt-lead">{lead}</p>
+      <details className="hunt-more">
+        <summary>
+          How this works
+          <Icon name="chevron" size={12} className="hunt-more-mark" />
+        </summary>
+        <div className="hunt-more-body">{children}</div>
+      </details>
+    </>
+  );
+}
+
+/** A menu that reads as a sentence: "searching within 1 mi", "window from the last sweep".
+ *
+ *  A place's row carries two of these and they were bare selects, which put two grey boxes of
+ *  browser furniture where the row is meant to say what this place is for. The chevron is drawn
+ *  rather than the platform's own because a select showing its own arrow cannot be made to sit
+ *  inside a pill. */
+function Pill({
+  label,
+  title,
+  value,
+  faint,
+  disabled,
+  onPick,
+  children,
+}: {
+  label: string;
+  title: string;
+  value: string;
+  /** The off state — a place nobody is searching around says so quietly. */
+  faint?: boolean;
+  disabled?: boolean;
+  onPick: (value: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <span className="hunt-pill-wrap">
+      <select
+        className={faint ? 'hunt-pill hunt-pill-off' : 'hunt-pill'}
+        aria-label={label}
+        title={title}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onPick(e.target.value)}
+      >
+        {children}
+      </select>
+      <Icon name="chevron" size={12} className="hunt-pill-mark" />
+    </span>
+  );
+}
+
 /** A bar in square feet: off, or a number. Off is `null` rather than zero, because "no opinion" and
  *  "zero square feet" are different sentences and only one of them is ever meant.
+ *
+ *  Two segments, where the amenities below get three, and the asymmetry is honest rather than
+ *  sloppy: `flagsFor` decides on its own what an unmet bar looks like. Being under `minSqft` is
+ *  always red, and `greatRoomMinSqft` never flags an absence at all — it only moves the bar at
+ *  which a room earns the good great-room mark, the small-room amber coming from a constant this
+ *  page cannot set. Neither number carries a nice/must, and `HuntPreferences` has nowhere to store
+ *  one. A third segment here would therefore claim a setting nothing reads: it would look saved and
+ *  change no flag on any flat. So each bar names the severity that is actually in force, and the row
+ *  still reads in the same language as the ones under it.
  *
  *  The number is typed into the parent's draft as you go and written once on blur — not one write
  *  per keystroke, which would also fight the disabled-while-saving guard. Clamping happens on blur
  *  too: `min`/`max` on the input do not stop a typed 1 or 30000 from reaching a write. */
 function SqftBar({
   label,
+  icon,
+  onLabel,
   suffix,
   value,
   fallback,
@@ -154,6 +263,9 @@ function SqftBar({
   onCommit,
 }: {
   label: string;
+  icon: IconName;
+  /** What setting this bar actually does to a flat that misses it — see the note above. */
+  onLabel: string;
   suffix: string;
   value: number | null;
   fallback: number;
@@ -165,43 +277,72 @@ function SqftBar({
 }) {
   const on = value != null;
   return (
-    <label className="hunt-pref-greatroom">
-      <input
-        type="checkbox"
-        checked={on}
-        disabled={busy}
-        onChange={(e) => onCommit(e.target.checked ? fallback : null)}
+    <div className="hunt-row">
+      <span className="hunt-row-label">
+        <Icon name={icon} className="hunt-ico hunt-ico-warm" />
+        <span>{label}</span>
+        {on && (
+          <span className="hunt-row-size">
+            <input
+              type="number"
+              // Nothing labels this one but the row it sits in, and a row is not a <label>.
+              aria-label={`${label} — ${suffix}`}
+              min={min}
+              max={max}
+              disabled={busy}
+              value={value ?? fallback}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (Number.isFinite(n) && n > 0) onDraft(Math.round(n));
+              }}
+              onBlur={() => onCommit(Math.min(max, Math.max(min, value ?? fallback)))}
+            />
+            <span className="hunt-unit">{suffix}</span>
+          </span>
+        )}
+      </span>
+      <Segments
+        label={label}
+        value={on}
+        busy={busy}
+        choices={[
+          { value: false, label: "Don't mind" },
+          { value: true, label: onLabel },
+        ]}
+        onPick={(next) => onCommit(next ? fallback : null)}
       />
-      <span>{label}</span>
-      {on && (
-        <span className="hunt-pref-greatroom-size">
-          <input
-            type="number"
-            // The <label> wraps two controls, so its implicit association binds to the checkbox and
-            // this one is announced as a bare spin button.
-            aria-label={`${label} — ${suffix}`}
-            min={min}
-            max={max}
-            disabled={busy}
-            value={value ?? fallback}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              if (Number.isFinite(n) && n > 0) onDraft(Math.round(n));
-            }}
-            onBlur={() => onCommit(Math.min(max, Math.max(min, value ?? fallback)))}
-          />
-          <span className="dim">{suffix}</span>
-        </span>
-      )}
-    </label>
+    </div>
   );
 }
 
+/** Shorter than the sentences they replace ("Must have", "Nice to have"), because three of these
+ *  sit side by side in one group and the words that differ are the first ones. */
 const WANT_CHOICES: { value: AmenityWant | null; label: string }[] = [
   { value: null, label: "Don't mind" },
-  { value: 'nice', label: 'Nice to have' },
-  { value: 'must', label: 'Must have' },
+  { value: 'nice', label: 'Nice' },
+  { value: 'must', label: 'Must' },
 ];
+
+/** The glyph and the hue each amenity wears, keyed off `AMENITIES` rather than restating it — the
+ *  list, its names and its flag keys stay in core. The hue says what the icon is a picture of and
+ *  never how much it matters; severity is the verdict's colour and belongs to the flags. */
+const AMENITY_ICON: Record<AmenityKey, IconName> = {
+  outdoor: 'outdoor',
+  dishwasher: 'dishwasher',
+  bathtub: 'bathtub',
+  inUnitLaundry: 'laundry',
+  brightLight: 'light',
+  billsIncluded: 'bills',
+};
+
+const AMENITY_HUE: Record<AmenityKey, 'water' | 'green' | 'warm'> = {
+  outdoor: 'green',
+  dishwasher: 'water',
+  bathtub: 'water',
+  inUnitLaundry: 'water',
+  brightLight: 'warm',
+  billsIncluded: 'warm',
+};
 
 function HuntSettings({ notify }: { notify: Notify }) {
   const settings = useProjectSettings();
@@ -229,7 +370,7 @@ function HuntSettings({ notify }: { notify: Notify }) {
   if (settings.isError) {
     return (
       <section className="setting">
-        <h2>What you&rsquo;re looking for</h2>
+        <h2 className="hunt-h">What you&rsquo;re looking for</h2>
         <p className="error">Could not read this hunt&rsquo;s preferences.</p>
       </section>
     );
@@ -239,7 +380,7 @@ function HuntSettings({ notify }: { notify: Notify }) {
   if (!draft) {
     return (
       <section className="setting">
-        <h2>What you&rsquo;re looking for</h2>
+        <h2 className="hunt-h">What you&rsquo;re looking for</h2>
         <p className="working">Working…</p>
       </section>
     );
@@ -257,67 +398,69 @@ function HuntSettings({ notify }: { notify: Notify }) {
 
   return (
     <section className="setting">
-      <h2>What you&rsquo;re looking for</h2>
-      <p className="dim">
-        Shared by the whole hunt. These change how flats are flagged on the shortlist and compare
-        table — a must-have you&rsquo;re missing shows red, a nice-to-have amber — and set the bars for
-        how big a flat and how big its main room have to be. Nothing here hides a flat; it only
-        changes the emphasis. They reach the listing panel on Rightmove too.
-      </p>
+      <h2 className="hunt-h">What you&rsquo;re looking for</h2>
+      <Explainer lead="Shared by the whole hunt.">
+        These change how flats are flagged on the shortlist and compare table — a must-have
+        you&rsquo;re missing shows red, a nice-to-have amber — and set the bars for how big a flat
+        and how big its main room have to be. Nothing here hides a flat; it only changes the
+        emphasis. They reach the listing panel on Rightmove too.
+      </Explainer>
 
-      {/* Two bars, one control. They are the same interaction down to the clamp-on-blur — a
-          checkbox that turns a number on — and writing it twice is how the second one ends up
-          without the clamp. */}
-      <SqftBar
-        label="Has a great room"
-        suffix="sq ft or bigger"
-        value={draft.greatRoomMinSqft ?? null}
-        fallback={DEFAULT_GREAT_ROOM_SQFT}
-        min={GREAT_ROOM_MIN_SQFT}
-        max={GREAT_ROOM_MAX_SQFT}
-        busy={busy}
-        onDraft={(v) => setDraft({ ...draft, greatRoomMinSqft: v })}
-        onCommit={(v) => commit({ ...draft, greatRoomMinSqft: v })}
-      />
+      <div className="hunt-rows">
+        {/* Two bars, one control. They are the same interaction down to the clamp-on-blur — an
+            answer that turns a number on — and writing it twice is how the second one ends up
+            without the clamp. What differs is only what missing the bar does to a flat, which is
+            the word on the filled segment. */}
+        <SqftBar
+          label="Has a great room"
+          icon="room"
+          // Not "Must": missing this bar flags nothing. It moves where the good great-room mark
+          // starts, and that is the whole of what setting it does.
+          onLabel="Mark it"
+          suffix="sq ft or bigger"
+          value={draft.greatRoomMinSqft ?? null}
+          fallback={DEFAULT_GREAT_ROOM_SQFT}
+          min={GREAT_ROOM_MIN_SQFT}
+          max={GREAT_ROOM_MAX_SQFT}
+          busy={busy}
+          onDraft={(v) => setDraft({ ...draft, greatRoomMinSqft: v })}
+          onCommit={(v) => commit({ ...draft, greatRoomMinSqft: v })}
+        />
 
-      <SqftBar
-        label="Big enough overall"
-        suffix="sq ft or bigger"
-        value={draft.minSqft ?? null}
-        fallback={DEFAULT_MIN_SQFT}
-        min={MIN_SQFT_FLOOR}
-        max={MIN_SQFT_CEILING}
-        busy={busy}
-        onDraft={(v) => setDraft({ ...draft, minSqft: v })}
-        onCommit={(v) => commit({ ...draft, minSqft: v })}
-      />
+        <SqftBar
+          label="Big enough overall"
+          icon="size"
+          // Under this bar is red in `flagsFor`, with no amber reading available — which is exactly
+          // what a must-have amenity does, so it wears the same word.
+          onLabel="Must"
+          suffix="sq ft or bigger"
+          value={draft.minSqft ?? null}
+          fallback={DEFAULT_MIN_SQFT}
+          min={MIN_SQFT_FLOOR}
+          max={MIN_SQFT_CEILING}
+          busy={busy}
+          onDraft={(v) => setDraft({ ...draft, minSqft: v })}
+          onCommit={(v) => commit({ ...draft, minSqft: v })}
+        />
 
-      <div className="hunt-pref-amenities">
         {/* From `AMENITIES` in core rather than a list of its own: this page, the flags and
             triage's filters all ask what a flat has, and three copies of the list is three chances
             to disagree about what "in-unit laundry" means. */}
-        {AMENITIES.map(({ key, name }) => {
-          const want = draft.amenities?.[key] ?? null;
-          return (
-            <div className="hunt-pref-row" key={key}>
-              <span className="hunt-pref-name">{name}</span>
-              <div className="hunt-pref-choice" role="group" aria-label={name}>
-                {WANT_CHOICES.map((choice) => (
-                  <button
-                    key={choice.label}
-                    type="button"
-                    className={want === choice.value ? 'key key-on' : 'key'}
-                    aria-pressed={want === choice.value}
-                    disabled={busy}
-                    onClick={() => setAmenity(key, choice.value)}
-                  >
-                    {choice.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-        })}
+        {AMENITIES.map(({ key, name }) => (
+          <div className="hunt-row" key={key}>
+            <span className="hunt-row-label">
+              <Icon name={AMENITY_ICON[key]} className={`hunt-ico hunt-ico-${AMENITY_HUE[key]}`} />
+              <span>{name}</span>
+            </span>
+            <Segments
+              label={name}
+              choices={WANT_CHOICES}
+              value={draft.amenities?.[key] ?? null}
+              busy={busy}
+              onPick={(want) => setAmenity(key, want)}
+            />
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -340,7 +483,7 @@ export function ProjectPicker() {
   return (
     <div className="settings">
       <section className="setting">
-        <h2>Which house hunt</h2>
+        <h2 className="hunt-h">Which house hunt</h2>
         {projects.length === 0 ? (
           // Not an error and not a loading state: an account exists only because somebody invited
           // it, and consuming that invite is what produces the first project. Say which of those
@@ -371,7 +514,7 @@ function Members({ projectId }: { projectId: string }) {
 
   return (
     <section className="setting">
-      <h2>Who is in it</h2>
+      <h2 className="hunt-h">Who is in it</h2>
       {members.isPending && <p className="working">Working…</p>}
       {members.isError && <p className="error">{(members.error as Error).message}</p>}
       {(members.data ?? []).map((m) => (
@@ -464,7 +607,7 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
 
   return (
     <section className="setting">
-      <h2>Invite someone</h2>
+      <h2 className="hunt-h">Invite someone</h2>
       <p className="dim">
         {headcount.isPending && 'Counting who is in…'}
         {headcount.isError && 'Could not count who is in — the limit is still enforced when you invite.'}
@@ -645,7 +788,7 @@ function Outcome({ result }: { result: InviteResult }) {
 function YourProjects({ projects, activeId }: { projects: ProjectSummary[]; activeId: string }) {
   return (
     <section className="setting">
-      <h2>Your hunts</h2>
+      <h2 className="hunt-h">Your hunts</h2>
       <p className="dim">
         {projects.length === 1
           ? 'The one you are in. Leaving it takes its shortlist, verdicts and sweeps off this laptop — the hunt itself carries on without you.'
@@ -661,46 +804,6 @@ function YourProjects({ projects, activeId }: { projects: ProjectSummary[]; acti
  *  Failures are printed here rather than pushed as toasts: the picker is mounted by the shell in
  *  the no-project state, which has no toast host, and a switch that silently did nothing is the
  *  worst reading of this list. */
-/** Which hunt you are looking at, in the one place you are always looking.
- *
- *  It was a list of rows on the Your Hunt page, three clicks from anywhere — which is a long way
- *  for the control that decides what every other screen is showing. A plain select beside the
- *  account, and it is not rendered at all when there is only one hunt, because a picker with one
- *  option is a question with one answer. */
-export function HuntSwitch({ projects, activeId }: { projects: ProjectSummary[]; activeId: string }) {
-  const client = useQueryClient();
-  const setActive = useMutation({
-    mutationFn: async (projectId: string) => {
-      await setActiveProject(projectId);
-      return await authState();
-    },
-    // Same two lines, and the same reasoning, as `ProjectRows.reload` — see the long note there
-    // about why this writes the auth query and resets the rest rather than clearing the cache.
-    onSuccess: (state) => {
-      client.setQueryData<AuthState>(shellKeys.auth, state);
-      void client.resetQueries({ predicate: (query) => query.queryKey[0] !== shellKeys.auth[0] });
-    },
-  });
-
-  if (projects.length < 2) return null;
-
-  return (
-    <select
-      className="hunt-switch"
-      aria-label="Which house hunt"
-      value={activeId}
-      disabled={setActive.isPending}
-      onChange={(e) => setActive.mutate(e.target.value)}
-    >
-      {projects.map((p) => (
-        <option key={p.id} value={p.id}>
-          {p.name}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 function ProjectRows({ projects, activeId }: { projects: ProjectSummary[]; activeId: string | null }) {
   const client = useQueryClient();
   const [leaving, setLeaving] = useState<string | null>(null);
@@ -869,13 +972,11 @@ function SearchCriteria({ notify }: { notify: Notify }) {
 
   return (
     <section className="hunt-search">
-      <h3>What we search for</h3>
-      <p className="dim">
-        Set the filters you want on Rightmove — any of them, including ones this app has never heard
-        of — then copy the address bar and paste it here. Every place you search around is swept with
-        these, so the area and the date range in what you paste are ignored: those are what a sweep
-        works out for itself.
-      </p>
+      <h3 className="hunt-h3">What we search for</h3>
+      <Explainer lead="Set the filters you want on Rightmove — any of them, including ones this app has never heard of — then copy the address bar and paste it here.">
+        Every place you search around is swept with these, so the area and the date range in what
+        you paste are ignored: those are what a sweep works out for itself.
+      </Explainer>
 
       <div className="hunt-search-paste">
         <input
@@ -921,7 +1022,7 @@ function SearchCriteria({ notify }: { notify: Notify }) {
         </div>
       )}
 
-      <h4>Sweeping for</h4>
+      <h4 className="hunt-label">Sweeping for</h4>
       {current === null ? (
         <p className="dim" data-testid="criteria-summary">
           Nothing yet — so there is nothing to sweep, and the places below have
@@ -1075,67 +1176,62 @@ function Places({
     });
   }
 
-  /** Turning sweeping on is one act with two halves: give the place a radius, and — the first time
-   *  — find out what Rightmove calls it. Doing the second automatically is the difference between
-   *  a tickbox and a two-step setup where the tick appears to do nothing. */
-  async function setSweeping(place: Place, on: boolean) {
-    const saved = await patch(place, { sweepRadiusMiles: on ? DEFAULT_SWEEP_RADIUS : null });
-    if (saved && on && saved.locationIdentifier === null) await resolve(saved);
+  /** Starting to sweep a place is one act with two halves: give it a radius, and — the first time —
+   *  find out what Rightmove calls it. Doing the second automatically is the difference between one
+   *  choice and a two-step setup where the first step appears to do nothing.
+   *
+   *  A radius and "search around this at all" were a tick and a menu; they are one menu now, whose
+   *  off state is a sentence rather than an empty box. The tick's hidden 1-mile default goes with
+   *  it: the radius is named at the moment it is chosen, which is what the default was standing in
+   *  for. */
+  async function setSweeping(place: Place, miles: number | null) {
+    const saved = await patch(place, { sweepRadiusMiles: miles });
+    if (saved && miles !== null && saved.locationIdentifier === null) await resolve(saved);
   }
 
   return (
     <section className="setting">
-      <h2>Places</h2>
-      <p className="dim">
-        The office, the in-laws, the neighbourhoods you are looking in. Every one is timed by
-        walking, bike and public transport, and fixes each listing on the compass — &ldquo;0.4 mi NE
-        of Angel&rdquo;. Tick <em>search around</em> and it also becomes somewhere the sweep goes
-        looking. {TRANSIT_BASIS_NOTE}
-      </p>
+      <h2 className="hunt-h">Places</h2>
+      <Explainer lead="The office, the in-laws, the neighbourhoods you are looking in.">
+        Every one is timed by walking, bike and public transport, and fixes each listing on the
+        compass — &ldquo;0.4 mi NE of Angel&rdquo;. Give one a radius and it also becomes somewhere
+        the sweep goes looking. {TRANSIT_BASIS_NOTE}
+      </Explainer>
       {places.length === 0 && (
         <p className="dim">Nothing yet — add the office, the in-laws, the areas you are searching.</p>
       )}
       {places.map((place) => (
-        <div className="place place-row" key={place.id}>
-          <span className="place-what">
-            <strong>{place.label}</strong>{' '}
-            <span className="dim">
+        <div className="hunt-place" key={place.id}>
+          <div className="hunt-place-head">
+            <span className="hunt-place-name">{place.label}</span>
+            <span className="hunt-place-where">
               {place.postcode ?? (place.lat === null ? 'no location' : 'no postcode — not timed')}
             </span>
-            {located[place.id] && <LocationNote result={located[place.id]!} place={place} />}
-          </span>
 
-          <span className="fields place-sweep">
-            <label>
-              <input
-                type="checkbox"
-                checked={place.sweepRadiusMiles !== null}
-                disabled={busy}
-                onChange={(e) => void setSweeping(place, e.target.checked)}
-              />{' '}
-              search around
-            </label>
+            <Pill
+              label={`Search around ${place.label}`}
+              title="How far around this place Rightmove searches. The same steps its own radius control offers."
+              faint={place.sweepRadiusMiles === null}
+              disabled={busy}
+              value={place.sweepRadiusMiles === null ? '' : String(place.sweepRadiusMiles)}
+              onPick={(v) => void setSweeping(place, v === '' ? null : Number(v))}
+            >
+              <option value="">not searching around</option>
+              {SWEEP_RADII.map((miles) => (
+                <option key={miles} value={miles}>
+                  searching within {miles} mi
+                </option>
+              ))}
+            </Pill>
 
             {place.sweepRadiusMiles !== null && (
               <>
-                <select
-                  value={place.sweepRadiusMiles}
-                  title="How far around this place Rightmove searches. The same steps its own radius control offers."
-                  onChange={(e) => void patch(place, { sweepRadiusMiles: Number(e.target.value) })}
-                >
-                  {SWEEP_RADII.map((miles) => (
-                    <option key={miles} value={miles}>
-                      within {miles} mi
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={place.maxDaysSinceAdded ?? ''}
+                <Pill
+                  label={`How far back sweeps of ${place.label} look`}
                   title="A floor on how far back this sweep looks. It can only widen the window — a setting that narrowed it would drop listings and still report the page fully recorded."
-                  onChange={(e) =>
-                    void patch(place, {
-                      maxDaysSinceAdded: e.target.value === '' ? null : Number(e.target.value),
-                    })
+                  value={place.maxDaysSinceAdded === null ? '' : String(place.maxDaysSinceAdded)}
+                  onPick={(v) =>
+                    void patch(place, { maxDaysSinceAdded: v === '' ? null : Number(v) })
                   }
                 >
                   <option value="">window from the last sweep</option>
@@ -1144,14 +1240,22 @@ function Places({
                       at least {days} {days === 1 ? 'day' : 'days'}
                     </option>
                   ))}
-                </select>
-                {/* Rightmove's own id for the area. Shown rather than hidden because it is what a
-                    sweep actually searches, and the thing to check when a sweep brings back the
-                    wrong neighbourhood — unexplained it looks like a fault. */}
-                <Hint text="Rightmove's own id for this area. It is what a sweep searches — if the results look like the wrong place, re-resolve it.">
-                  <span className="dim">{place.locationIdentifier ?? 'not searchable yet'}</span>
+                </Pill>
+                {/* Whether this place can be swept at all, rather than the identifier that decides
+                    it: `REGION^1486` is a string nobody but a debugger reads, and it was the widest
+                    thing on the row. It is still the thing to check when a sweep brings back the
+                    wrong neighbourhood, so it survives in the hint beside the name it resolved
+                    from — one hover away rather than always on screen. */}
+                <Hint
+                  text={`Rightmove calls this ${place.displayLocationIdentifier ?? 'nothing yet'}${
+                    place.locationIdentifier ? ` (${place.locationIdentifier})` : ''
+                  }. It is what a sweep searches — if the results look like the wrong place, re-resolve it.`}
+                >
+                  <span className="hunt-place-state">
+                    {place.locationIdentifier ? 'searchable' : 'not searchable yet'}
+                  </span>
                 </Hint>
-                <button disabled={busy} onClick={() => void resolve(place)}>
+                <button className="key" disabled={busy} onClick={() => void resolve(place)}>
                   {place.locationIdentifier ? 'Re-resolve' : 'Resolve'}
                 </button>
               </>
@@ -1165,10 +1269,15 @@ function Places({
             >
               ×
             </button>
-          </span>
+          </div>
+          {located[place.id] && (
+            <div className="hunt-place-note">
+              <LocationNote result={located[place.id]!} place={place} />
+            </div>
+          )}
         </div>
       ))}
-      <div className="fields">
+      <div className="fields hunt-place-add">
         <input value={label} placeholder="Label" onChange={(e) => setLabel(e.target.value)} />
         <input
           value={postcode}

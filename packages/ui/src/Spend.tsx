@@ -59,7 +59,9 @@ export function SpendWarning({ summary }: { summary: SpendSummary | null }) {
   const left = Math.max(0, spend.capUsd - spend.spentUsd);
   return (
     <div className="rm-spend-warning" data-testid="spend-warning">
-      💷 {money(spend.spentUsd)} of {SCOPE_WORD[scope]} {money(spend.capUsd)} monthly photo-analysis
+      {/* No glyph. The one emoji left in this package was a coin here, and there is no icon of
+          money in the set — the sentence starts with a figure, which says it already. */}
+      {money(spend.spentUsd)} of {SCOPE_WORD[scope]} {money(spend.capUsd)} monthly photo-analysis
       budget is spent — {money(left)} left until {resetLabel(spend.resetsAt)}.
     </div>
   );

@@ -1,8 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { helloExtension, signInExtension, type ExtensionState } from '@/lib/bridge';
+import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Icon } from '@house-hunt/ui';
+import { signInExtension, type ExtensionState } from '@/lib/bridge';
 import { EXPECTED_EXTENSION_VERSION, extensionBehind } from '@/lib/extension-version';
+import { keys, useExtension } from '@/lib/queries';
 
 /** Whether the Rightmove half of this is installed and signed in, and the one way to fix it if not.
  *
@@ -20,24 +23,25 @@ import { EXPECTED_EXTENSION_VERSION, extensionBehind } from '@/lib/extension-ver
  *  Absent gets a line and no link. The install is load-unpacked on a handful of laptops; a "click
  *  here to install" button that cannot install anything is worse than the sentence. */
 export function ExtensionNotice({ email }: { email: string }) {
-  const [state, setState] = useState<ExtensionState | null>(null);
+  const client = useQueryClient();
+  // One probe for the page. This and the Install screen each ran their own, each racing the
+  // handshake's own two-second deadline, so the banner could say "not installed" directly above
+  // Install's green "already installed (v0.3.1)" — the same question, asked twice, answered
+  // differently, on one screen.
+  const { data: state } = useExtension();
   const [connecting, setConnecting] = useState(false);
+  // For this visit only, and deliberately not stored: the two states it covers are "you have not
+  // installed it yet" and "you are signed in as somebody else", and both are things a reload should
+  // put back in front of you.
+  const [dismissed, setDismissed] = useState(false);
 
-  useEffect(() => {
-    let live = true;
-    void helloExtension().then((next) => {
-      if (live) setState(next);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
+  const settle = (next: ExtensionState) => client.setQueryData<ExtensionState>(keys.extension, next);
 
   // Nothing to say while the question is outstanding — half a second of "checking for the
   // extension…" above the shortlist is half a second of noise about something almost always fine —
   // but the space it might need is held from the first paint. Returning nothing here is what made
   // the page jump when the answer arrived, which is the whole point of the slot.
-  if (!state) return <div className="notice-slot" />;
+  if (!state || dismissed) return <div className="notice-slot" />;
 
   // Staleness is orthogonal to sign-in — an out-of-date extension can be signed in, signed out, or
   // on the wrong account — so it renders as its own banner above whatever else this component has to
@@ -83,7 +87,10 @@ export function ExtensionNotice({ email }: { email: string }) {
       <Connect
         email={email}
         version={installedVersion}
-        onDone={(next) => { setConnecting(false); if (next) setState(next); }}
+        onDone={(next) => {
+          setConnecting(false);
+          if (next) settle(next);
+        }}
       />
     ) : (
       <p className="notice notice-warn">
@@ -104,6 +111,18 @@ export function ExtensionNotice({ email }: { email: string }) {
     <div className="notice-slot">
       {outOfDate}
       {primary}
+      {/* Dismissable, because every one of these is a sentence you have already read by the second
+          time you see it, and it sits above the thing you came to the page for. It is not a setting
+          — a reload brings it back, which is right for a fault that is still true. */}
+      <button
+        type="button"
+        className="notice-hush"
+        aria-label="Hide this"
+        data-testid="notice-hush"
+        onClick={() => setDismissed(true)}
+      >
+        <Icon name="close" size={12} />
+      </button>
     </div>
   );
 }

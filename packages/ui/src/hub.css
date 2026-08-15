@@ -20,24 +20,24 @@
 
 .rm-hub-ring {
   fill: none;
-  stroke: #c3ccd5;
+  stroke: var(--line);
   stroke-width: 1.4;
 }
 
 .rm-hub-north {
-  stroke: #93a1af;
+  stroke: var(--faint);
   stroke-width: 1.4;
   stroke-linecap: round;
 }
 
 .rm-hub-needle {
-  fill: #4a7fb5;
+  fill: var(--subject-water);
 }
 
 /* The blunt end of the needle, kept faint: it says which way is "from" without competing with
    the point, which is the thing being read. */
 .rm-hub-tail {
-  fill: #c3ccd5;
+  fill: var(--line);
 }
 
 .rm-hub-name {
@@ -45,7 +45,7 @@
 }
 
 .rm-hub-none {
-  color: #93a1af;
+  color: var(--faint);
 }
 
 /* A still "placing…" is indistinguishable from a stuck one, and the panel's own pulse is defined
@@ -68,10 +68,10 @@
    nearby" — they render in the same slot and mean opposite things. Same red the panel and the
    shortlist both use for a broken read, spelled here because neither stylesheet reaches both. */
 .rm-hub-failed {
-  color: #b23a48;
+  color: var(--bad-ink);
 }
 
 /* Marks a fix taken from Rightmove's deliberately fuzzed pin rather than from the postcode. */
 .rm-hub-approx {
-  border-bottom: 1px dotted #93a1af;
+  border-bottom: 1px dotted var(--faint);
 }

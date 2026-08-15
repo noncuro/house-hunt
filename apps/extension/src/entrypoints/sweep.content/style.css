@@ -4,23 +4,27 @@
    It sits bottom-left rather than top-right, which is where the listing panel goes. That is not
    an aesthetic choice: on a search page the right-hand column is Rightmove's map and filters, and
    the two panels are never on screen together anyway, so the corner is free and the muscle memory
-   stays unambiguous. */
+   stays unambiguous.
+
+   Tokens, like every other surface — `index.tsx` imports `tokens.css` into this shadow root ahead
+   of this file, so `:host` carries the palette. A literal here is a value that has escaped it. */
 
 .rm-sweep {
   position: fixed;
-  left: 16px;
-  bottom: 16px;
+  left: var(--s4);
+  bottom: var(--s4);
   z-index: 2147483000;
   width: 300px;
   max-height: 80vh;
   overflow-y: auto;
   box-sizing: border-box;
-  padding: 12px 14px 14px;
-  border-radius: 12px;
-  background: #fff;
-  color: #12263a;
-  box-shadow: 0 12px 34px rgb(18 38 58 / 30%);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: var(--s3) 14px 14px;
+  border-radius: var(--r-panel);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-sans);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -33,14 +37,16 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--s2);
 }
 
 .rm-sweep-head h2 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .rm-sweep-hide {
@@ -49,27 +55,33 @@
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
-  color: #5b6b7b;
+  color: var(--faint);
+}
+
+.rm-sweep-hide:hover {
+  color: var(--ink);
 }
 
 .rm-sweep-collapsed {
   position: fixed;
-  left: 16px;
-  bottom: 16px;
+  left: var(--s4);
+  bottom: var(--s4);
   z-index: 2147483000;
 }
 
+/* Collapsed, it is the one thing of ours left on Rightmove's page, so it stays a dark slab rather
+   than paper: it has to read over a map, a photo grid or their own header. */
 .rm-sweep-collapsed button {
   border: none;
-  border-radius: 999px;
-  padding: 8px 14px;
-  background: #12263a;
-  color: #fff;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  border-radius: var(--r-pill);
+  padding: var(--s2) 14px;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 650;
   cursor: pointer;
-  box-shadow: 0 8px 22px rgb(18 38 58 / 32%);
+  box-shadow: var(--shadow-pop);
 }
 
 /* --- the readiness signal -------------------------------------------------------------- */
@@ -79,7 +91,7 @@
 .rm-sweep-ready {
   margin: 10px 0;
   padding: 9px 11px;
-  border-radius: 9px;
+  border-radius: var(--r-card);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -91,20 +103,20 @@
 }
 
 .rm-sweep-ready-yes {
-  background: #e6f6ef;
-  color: #115c43;
-  box-shadow: inset 0 0 0 1px #1a7f5a;
+  background: var(--good-bg);
+  color: var(--good-ink);
+  box-shadow: inset 0 0 0 1px var(--good-line);
 }
 
 .rm-sweep-ready-wait {
-  background: #f1f4f7;
-  color: #5b6b7b;
+  background: var(--line-3);
+  color: var(--muted);
 }
 
 .rm-sweep-ready-no {
-  background: #fdecee;
-  color: #8d2733;
-  box-shadow: inset 0 0 0 1px #b23a48;
+  background: var(--bad-bg);
+  color: var(--bad-ink);
+  box-shadow: inset 0 0 0 1px var(--bad-line);
   font-weight: 650;
 }
 
@@ -113,14 +125,14 @@
 .rm-sweep-counts {
   display: flex;
   gap: 10px;
-  margin: 0 0 8px;
+  margin: 0 0 var(--s2);
   padding: 0;
   list-style: none;
-  color: #5b6b7b;
+  color: var(--muted);
 }
 
 .rm-sweep-counts strong {
-  color: #12263a;
+  color: var(--ink);
   font-size: 14px;
 }
 
@@ -130,7 +142,7 @@
   gap: 6px;
   margin-bottom: 10px;
   cursor: pointer;
-  color: #35485c;
+  color: var(--ink-soft);
 }
 
 /* --- the paced opener ------------------------------------------------------------------- */
@@ -141,10 +153,10 @@
   gap: 2px;
   width: 100%;
   border: none;
-  border-radius: 9px;
+  border-radius: var(--r-card);
   padding: 9px 11px;
-  background: #12263a;
-  color: #fff;
+  background: var(--ink);
+  color: var(--paper);
   font-family: inherit;
   font-size: 12px;
   font-weight: 650;
@@ -153,7 +165,7 @@
 }
 
 .rm-sweep-go:hover {
-  background: #1c3c5a;
+  background: var(--ink-soft);
 }
 
 .rm-sweep-go small {
@@ -162,8 +174,8 @@
 }
 
 .rm-sweep-note {
-  margin: 0 0 8px;
-  color: #5b6b7b;
+  margin: 0 0 var(--s2);
+  color: var(--muted);
 }
 
 /* Still waiting on an answer, and saying so. A still line is indistinguishable from a stuck one,
@@ -187,18 +199,18 @@
 .rm-sweep-finish {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--s1);
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #e3e9ee;
+  border-top: 1px solid var(--line-2);
 }
 
 .rm-sweep-finish button {
-  border: 1px solid #12263a;
-  border-radius: 9px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-card);
   padding: 7px 11px;
-  background: #fff;
-  color: #12263a;
+  background: var(--white);
+  color: var(--ink);
   font-family: inherit;
   font-size: 12px;
   font-weight: 650;
@@ -206,34 +218,34 @@
 }
 
 .rm-sweep-finish button:disabled {
-  border-color: #d3dbe2;
-  color: #9aa8b5;
+  border-color: var(--line);
+  color: var(--fainter);
   cursor: not-allowed;
 }
 
 .rm-sweep-finish small {
-  color: #5b6b7b;
+  color: var(--muted);
 }
 
 .rm-sweep-done {
   margin: 10px 0 0;
-  color: #115c43;
+  color: var(--good-ink);
   font-weight: 650;
 }
 
 /* --- warnings and errors ---------------------------------------------------------------- */
 
 .rm-sweep-warn {
-  margin: 8px 0;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #fff6e5;
-  color: #6b4c07;
-  box-shadow: inset 0 0 0 1px #e0b155;
+  margin: var(--s2) 0;
+  padding: var(--s2) 10px;
+  border-radius: var(--r-card);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  box-shadow: inset 0 0 0 1px var(--warn-line);
 }
 
 .rm-sweep-broken {
-  box-shadow: 0 12px 34px rgb(18 38 58 / 30%), inset 0 0 0 2px #b23a48;
+  box-shadow: var(--shadow-pop), inset 0 0 0 2px var(--bad-line);
 }
 
 .rm-sweep-broken p {
@@ -245,12 +257,12 @@
 .rm-sweep-hubs {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #e3e9ee;
+  border-top: 1px solid var(--line-2);
 }
 
 .rm-sweep-hubs summary {
   cursor: pointer;
-  color: #5b6b7b;
+  color: var(--muted);
   font-weight: 650;
 }
 
@@ -260,39 +272,39 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--s1);
 }
 
 .rm-sweep-hubs li {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--s2);
 }
 
 .rm-sweep-hubs a {
-  color: #12263a;
+  color: var(--ink);
   font-weight: 650;
 }
 
 .rm-sweep-hubs small {
-  color: #7d8b98;
+  color: var(--faint);
   white-space: nowrap;
 }
 
 .rm-sweep-here a {
-  color: #1a7f5a;
+  color: var(--good-ink);
 }
 
 .rm-sweep-nourl {
-  color: #9aa8b5;
+  color: var(--fainter);
 }
 
-/* Where the toast stack sits. The look of a toast itself is shared — components/toast.css. */
+/* Where the toast stack sits. The look of a toast itself is shared — packages/ui/src/toast.css. */
 .rm-toasts {
   position: fixed;
-  left: 16px;
-  bottom: 16px;
+  left: var(--s4);
+  bottom: var(--s4);
   z-index: 2147483002;
   display: flex;
   flex-direction: column;
@@ -308,16 +320,16 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 10px 12px;
-  background: #12263a;
-  border-radius: 8px;
-  color: #fff;
+  padding: 10px var(--s3);
+  background: var(--ink);
+  border-radius: var(--r-card);
+  color: var(--paper);
   font-weight: 650;
   text-decoration: none;
 }
 
 .rm-sweep-next:hover {
-  background: #1c3a56;
+  background: var(--ink-soft);
 }
 
 .rm-sweep-next small {

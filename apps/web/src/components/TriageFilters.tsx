@@ -14,7 +14,6 @@ import {
   type TravelBar,
   type TriageFilter,
 } from '@house-hunt/core';
-import { MODE_ICON } from '@house-hunt/ui';
 
 /** The bars a flat has to clear to stay in the triage pile.
  *
@@ -236,7 +235,7 @@ function TravelRow({
       >
         {modes.map((mode) => (
           <option key={mode} value={mode}>
-            {BAR_ICON[mode]} {BAR_LABEL[mode]}
+            {BAR_LABEL[mode]}
           </option>
         ))}
       </select>
@@ -247,16 +246,14 @@ function TravelRow({
   );
 }
 
-/** The modes in words. `MODE_ICON` is the shared symbol both surfaces draw; a picker needs the
- *  name as well, since an emoji alone in a dropdown is a guess. */
+/** The modes in words. An `<option>` can hold text and nothing else — no drawn icon fits in one —
+ *  and the word was always the half that could be acted on. */
 const BAR_LABEL: Record<BarMode, string> = {
   walking: 'walk',
   cycling: 'cycle',
   transit: 'public transport',
   [CROW]: 'straight line',
 };
-
-const BAR_ICON: Record<BarMode, string> = { ...MODE_ICON, [CROW]: '📏' };
 
 
 

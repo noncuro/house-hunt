@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Hint } from './Hint';
-import { formatDuration, MODE_ICON } from './Journey';
+import { formatDuration, ModeIcon } from './Journey';
 import { stationDistance } from '@house-hunt/core';
 import { useHost } from './host';
 import { FALLBACK_LINE_COLOUR, LINE_COLOURS, textOn } from '@house-hunt/core';
@@ -78,7 +78,7 @@ export function Stations({
               {/* The walk is the number that decides anything; the miles are context beside it. */}
               {info?.seconds !== undefined && (
                 <span className="rm-mode">
-                  {MODE_ICON.walking} {formatDuration(info.seconds)}
+                  <ModeIcon mode="walking" size={12} /> {formatDuration(info.seconds)}
                 </span>
               )}
               <span className="rm-dim">{stationDistance(s.distance, s.unit)}</span>

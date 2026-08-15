@@ -1,6 +1,7 @@
 import './journey.css';
 import { Hint } from './Hint';
-import { BUS_COLOUR, FALLBACK_LINE_COLOUR, LINE_COLOURS, textOn } from '@house-hunt/core';
+import { Icon } from './Icon';
+import { BUS_COLOUR, FALLBACK_LINE_COLOUR, LINE_COLOURS, textOn, travelDestinations, TRAVEL_MODES } from '@house-hunt/core';
 import { WALKING_LIMIT_SECONDS, type JourneyOption, type Leg, type Place, type TravelMode, type TravelTime } from '@house-hunt/core';
 
 /** How a journey is drawn — shared by the panel on Rightmove and the shortlist page.
@@ -40,9 +41,28 @@ export interface TravelVerdict {
  *  carried a Sunday-evening commute forever, and the compare table ranked it against one measured
  *  on a Tuesday morning as though they answered the same question. Pinning it makes the numbers
  *  comparable, and saying so is what stops "17m to work" being read as "17m, whenever". */
-/** Written down once. It was three identical literals — Panel, Detail and Compare — which is
- *  three chances for the shortlist to caption a number differently from the panel. */
-export const MODE_ICON: Record<TravelMode, string> = { walking: '🚶', cycling: '🚲', transit: '🚇' };
+/** Written down once. It was three identical emoji literals — Panel, Detail and Compare — which is
+ *  three chances for the shortlist to caption a number differently from the panel, and three
+ *  glyphs that rendered as a different picture on every operating system. */
+export const MODE_LABEL: Record<TravelMode, string> = {
+  walking: 'walk',
+  cycling: 'cycle',
+  transit: 'public transport',
+};
+
+/** The mode, as a picture. `label` names it for a screen reader, and is for the one place these
+ *  stand alone: the travel grid's column heads, where there are no words beside them. */
+export function ModeIcon({
+  mode,
+  size = 14,
+  label = false,
+}: {
+  mode: TravelMode;
+  size?: number;
+  label?: boolean;
+}) {
+  return <Icon name={mode} size={size} label={label ? MODE_LABEL[mode] : undefined} />;
+}
 
 /** Why the transit numbers are comparable at all, as an affordance rather than a paragraph.
  *
@@ -147,8 +167,15 @@ export function Routes({ options }: { options: JourneyOption[] }) {
 }
 
 export function LegChip({ leg }: { leg: Leg }) {
-  if (leg.mode === 'walking') return <span className="rm-leg-walk">🚶{leg.minutes}</span>;
-  if (leg.mode === 'cycle') return <span className="rm-leg-walk">🚲{leg.minutes}</span>;
+  // TfL's own leg modes, which are not our `TravelMode` — 'cycle' rather than 'cycling'.
+  if (leg.mode === 'walking' || leg.mode === 'cycle') {
+    return (
+      <span className="rm-leg-walk">
+        <Icon name={leg.mode === 'cycle' ? 'cycling' : 'walking'} size={12} />
+        {leg.minutes}
+      </span>
+    );
+  }
 
   // Buses are numbered rather than named, so they never match a line id and take bus red.
   const colour = leg.lineId
@@ -218,4 +245,121 @@ export function mapsUrl(postcode: string | null, place: Place, mode: TravelMode)
     travelmode: MAPS_MODE[mode],
   });
   return `https://www.google.com/maps/dir/?${params}`;
+}
+
+/** Every destination against every mode, on a fixed grid.
+ *
+ *  The rows this replaces drew only the modes that had an answer, so each place showed a different
+ *  number of figures in a different order — one row read "12m 34m", the next "48m", and the eye had
+ *  to re-read the icons on every line to find out which was which. Nothing lined up, so the one
+ *  comparison anybody actually makes — is work further than the shops, and by how much — could not
+ *  be made down a column. Worse, a mode that was missing looked exactly like a mode we had not
+ *  thought worth showing.
+ *
+ *  Three columns, always, headed once. A cell with no number gets an em dash in `--dash` and says
+ *  why on hover, because the four ways a number can be missing are genuinely different facts: TfL
+ *  was asked and says there is no such journey; TfL was asked and did not answer; nobody has asked
+ *  yet; or the answer exists and is not a real option (an hour and a half on foot). Only the second
+ *  is worth retrying and only the third will fill itself in, and a blank cell says none of that. */
+export function TravelGrid({
+  places,
+  travel,
+  postcode,
+}: {
+  places: Place[];
+  /** Every travel row we hold for this flat's postcode. Null while they are still being read —
+   *  which is not the same as an empty list, and must not draw a grid of dashes. */
+  travel: TravelTime[] | null;
+  postcode: string | null;
+}) {
+  // Routing is postcode to postcode, so a place without one has no journey rather than a failed
+  // one — see `travelDestinations`.
+  const destinations = travelDestinations(places);
+
+  if (destinations.length === 0) {
+    return <div className="rm-empty">Nowhere to measure to — add somewhere with a postcode, on the website</div>;
+  }
+  if (!postcode) return <div className="rm-empty">No postcode on this listing, so nothing can be routed from it</div>;
+  if (travel === null) return <div className="rm-empty rm-working">Working…</div>;
+
+  return (
+    <div className="rm-travel">
+      <div className="rm-travel-head">
+        <span className="rm-travel-label">
+          Travel · <TransitBasis />
+        </span>
+        {TRAVEL_MODES.map((mode) => (
+          <span className="rm-travel-mode" key={mode}>
+            <ModeIcon mode={mode} label />
+          </span>
+        ))}
+      </div>
+
+      {destinations.map((place) => {
+        const rows = travel.filter((t) => t.placeId === place.id);
+        const verdict = readTravel(rows);
+        return (
+          <div className="rm-travel-row" key={place.id}>
+            <span className="rm-travel-place">{place.label}</span>
+            {TRAVEL_MODES.map((mode) => (
+              <TravelCell
+                key={mode}
+                mode={mode}
+                row={rows.find((t) => t.mode === mode)}
+                fastest={verdict.best?.mode === mode}
+              />
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** One number, or one honest dash. */
+function TravelCell({
+  mode,
+  row,
+  fastest,
+}: {
+  mode: TravelMode;
+  row: TravelTime | undefined;
+  fastest: boolean;
+}) {
+  if (row === undefined) {
+    return <Dash why={`Nobody has looked up the ${MODE_LABEL[mode]} time to here yet — the backfill fills these in.`} />;
+  }
+  if (row.error) {
+    return (
+      <Dash
+        why={
+          row.transient
+            ? `TfL did not answer when we asked for the ${MODE_LABEL[mode]} time: ${row.error}`
+            : `TfL says there is no ${MODE_LABEL[mode]} journey between these two points: ${row.error}`
+        }
+      />
+    );
+  }
+  if (mode === 'walking' && row.seconds > WALKING_LIMIT_SECONDS) {
+    return <Dash why={`${formatDuration(row.seconds)} on foot — over an hour, so not a real way of making this trip.`} />;
+  }
+  // A zero is not a journey; it is a lookup that came back with nothing in it, which the error
+  // path above did not catch. Saying so beats printing "0m".
+  if (row.seconds <= 0) {
+    return <Dash why={`The ${MODE_LABEL[mode]} lookup came back with no duration at all.`} />;
+  }
+
+  return (
+    <span className={fastest ? 'rm-travel-time rm-travel-best' : 'rm-travel-time'}>
+      {formatDuration(row.seconds)}
+    </span>
+  );
+}
+
+function Dash({ why }: { why: string }) {
+  return (
+    <Hint className="rm-travel-time rm-travel-dash" underline={false} text={why}>
+      —
+    </Hint>
+  );
 }

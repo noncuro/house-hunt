@@ -80,7 +80,10 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 | ext `entrypoints/{panel,search,sweep}.content/` | Listing panel (Shadow DOM), search-card badges, sweep panel |
 | ext `entrypoints/bridge.content.ts` | On the website's origin only; relays three messages so the two sessions stay in step |
 | ext `entrypoints/background.ts` | All network + the only Supabase client in the extension |
-| web `screens/*.tsx` | Shortlist, Compare, Map, Detail, Settings, Sweep, SignIn, Project, Admin |
+| web `components/Shell.tsx` | The one header row, the hunt switcher, the account menu, the phone's tab bar |
+| web `screens/Places.tsx` | Everything the hunt has looked at, drawn four ways — Cards, Table (`Compare.tsx`), Board, Map — under one filter (`lib/lens.ts`) |
+| web `screens/*.tsx` | Triage, HeadToHead, FirstRun, Settings, Sweep, SignIn, Project, Install, Admin |
+| web `components/Flat*.tsx` | One flat: the card in a grid, the whole of it (`FlatDetail`), and the panel it opens in over any screen |
 | `packages/core/` | Facts, hubs, stage (the funnel), sweep, travel, analysis, db, bridge contract |
 | `supabase/functions/` | `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `invite`, `resolve-location`, `password` |
 
@@ -129,8 +132,8 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   opened, which is how adding a place left a column of dashes that filled in only by hand.
 
 **Every other decision is documented as a comment on the code that owns it** (`TRAVEL_BASIS` in
-`tfl.ts`, `SWEEP_MARGIN_HOURS` in `sweep.ts`, `DEFAULT_SHOWING` and `duplicateIds` in
-`shortlist.ts`, `FLAG_ICON` in `facts.ts`, `claim_analysis` in the migrations) — including new
+`tfl.ts`, `SWEEP_MARGIN_HOURS` in `sweep.ts`, `duplicateIds` in `shortlist.ts`, `Lens` in
+`apps/web/src/lib/lens.ts`, `claim_analysis` in the migrations) — including new
 ones. This file holds only cross-cutting rules and the decisions an agent working elsewhere
 could silently violate. Accepted gaps live in `TODO.md`.
 

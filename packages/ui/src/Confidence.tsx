@@ -26,14 +26,19 @@ import type { Confidence as Level } from '@house-hunt/core';
  *  taught what they mean: ascending bars are already how everyone reads signal strength, which is
  *  what made the LOW MED HIGH legend unnecessary rather than merely unwelcome.
  *
- *  The mark appears on every model-read claim including the confident ones, because its presence
- *  is what says "a model worked this out" — the second thing you need to know, and the one no
- *  wording carried at all. A confident inference is still an inference.
+ *  It used to appear on every model-read claim including the confident ones, on the reasoning that
+ *  its presence was what said "a model worked this out". That reasoning was sound and the result
+ *  was not: on a fully analysed flat every single claim carried three full bars, and a mark that
+ *  appears beside everything is a mark the eye stops seeing — including on the two claims where it
+ *  was the whole point. So it is drawn only at low and medium now, where it has stopped meaning
+ *  "this was inferred" and started meaning "treat this one carefully", which is the reading that
+ *  changes what somebody does. That a claim came off the photographs at all is said by the words
+ *  themselves, which `claimLabel` hedges.
  *
- *  Colour is deliberately not the signal. These claims sit in red warning text and green positive
- *  text, and a red/amber/green confidence ramp beside them would read as a second verdict on the
- *  flat — low confidence in a good thing is not bad news. One steel-blue hue that belongs to
- *  neither, and grey for what it has not reached. */
+ *  Colour is deliberately not the signal. These claims sit inside amber and red chips, and a
+ *  red/amber/green confidence ramp beside them would read as a second verdict on the flat — low
+ *  confidence in a good thing is not bad news. One hue that belongs to neither, and a paler one
+ *  for what it has not reached. */
 const BARS: Record<Level, number> = { low: 1, medium: 2, high: 3 };
 
 /** x, and height, in the 24-unit viewBox. Ascending left to right, all sitting on the same
@@ -52,8 +57,8 @@ const BAR = [
  *  to need one. What is left is the one thing the shape cannot say on its own: which level it is,
  *  for anyone who would rather read it than count. */
 const MEANING: Record<Level, string> = {
-  low: 'Low confidence',
-  medium: 'Medium confidence',
+  low: 'Low confidence — read from the photos, and the model was not sure',
+  medium: 'Medium confidence — read from the photos',
   high: 'High confidence',
 };
 
@@ -65,6 +70,9 @@ export function Confidence({
   level: Level | null | undefined;
 }) {
   const reached = level ?? 'high';
+  // Nothing at all when the model was sure. See the note above: this is the whole reason the mark
+  // is worth looking at when it does appear.
+  if (reached === 'high') return null;
   const count = BARS[reached];
 
   return (
@@ -78,7 +86,7 @@ export function Confidence({
     >
       {/* Inline SVG because MV3 forbids remote assets, and because it scales to the panel's 13px
           without the blur a bitmap would pick up. */}
-      <svg className="rm-cf-bars" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+      <svg className="rm-cf-bars" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
         {BAR.map((bar, i) => (
           <rect
             x={bar.x}

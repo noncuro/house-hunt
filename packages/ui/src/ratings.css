@@ -2,16 +2,66 @@
    the component rather than in either surface's stylesheet, because the two of them drifted apart
    on the wording of a verdict once already and the styling drifted with it. */
 
+/* ---- the stamp: a card's whole verdict, in one mark --------------------------------------- */
+
+/* Filled rather than outlined, and the only filled colour on a card. A card carries a dozen small
+   grey facts; the one thing you want to read across a grid of them from a metre away is which pile
+   this flat is in, and an outline at 11px does not carry that far. */
+.rm-stamp {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.rm-stamp-word {
+  font-weight: 650;
+}
+
+.rm-stamp-dot,
+.rm-stamp-by {
+  /* Who set it, in the stamp's own ink at reduced weight rather than in grey: the attribution is
+     the whole mitigation for one shared verdict, and greying it out of a coloured pill is how it
+     stops being read. */
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.rm-stamp-love {
+  background: var(--good-bg);
+  border-color: var(--good-line);
+  color: var(--good-ink);
+}
+
+.rm-stamp-maybe {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.rm-stamp-no {
+  background: var(--bad-bg);
+  border-color: var(--bad-line);
+  color: var(--bad-ink);
+}
+
+/* ---- the line: the verdict where it is the subject rather than a mark --------------------- */
+
 .rm-verdict-line {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--s2);
   flex-wrap: wrap;
   font-size: 12px;
 }
 
 .rm-verdict-none {
-  color: #93a1af;
+  color: var(--fainter);
 }
 
 .rm-verdict-rating {
@@ -19,39 +69,46 @@
 }
 
 .rm-rating-no {
-  color: #b23a48;
+  color: var(--bad-ink);
 }
 
 .rm-rating-maybe {
-  color: #8a6d2f;
+  color: var(--warn-ink);
 }
 
 .rm-rating-love {
-  color: #1a7f5a;
+  color: var(--good-ink);
 }
 
-/* Who set it, and when. Quieter than the rating but never absent — the attribution is the whole
-   mitigation for one shared verdict, so it is not allowed to be a hover-only fact. */
 .rm-verdict-by {
-  color: #93a1af;
+  color: var(--faint);
   font-size: 11px;
 }
 
+/* ---- the buttons -------------------------------------------------------------------------- */
+
 .rm-ratings {
   display: flex;
-  gap: 4px;
+  gap: var(--s1);
 }
 
 .rm-rate {
   flex: 1;
-  border: 1px solid #d8e0e8;
-  background: #fff;
-  border-radius: 8px;
-  padding: 6px 4px;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--white);
+  border-radius: var(--r-control);
+  padding: 7px 8px;
+  font-size: 12px;
   font-family: inherit;
   cursor: pointer;
-  color: inherit;
+  color: var(--ink-soft);
+  /* Every tap target on a phone is at least 44px (audit rule 6). Three of these across a card is
+     the most-tapped control in the app. */
+  min-height: 36px;
 }
 
 /* In a row shared with the note field the buttons keep their own width; stretched to a third of
@@ -66,18 +123,59 @@
 }
 
 .rm-rate:hover:not(:disabled) {
-  background: #f5f8fa;
+  background: var(--paper);
+  border-color: var(--fainter);
 }
 
 .rm-rate:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  color: var(--fainter);
+  opacity: 0.65;
 }
 
-.rm-rate-on {
-  background: #12263a;
-  border-color: #12263a;
-  color: #fff;
+/* The selected button is the stamp: the same three grounds a card's verdict takes, so pressing
+   "Love it" and then seeing a green stamp on the card afterwards is plainly the same fact and not
+   two coincidentally coloured things. Not one dark ink for all three, which is what it was —
+   that made the choice legible and the *answer* not. */
+.rm-rate-on.rm-rate-love {
+  background: var(--good-bg);
+  border-color: var(--good-line);
+  color: var(--good-ink);
+  font-weight: 650;
+}
+
+.rm-rate-on.rm-rate-maybe {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+  font-weight: 650;
+}
+
+.rm-rate-on.rm-rate-no {
+  background: var(--bad-bg);
+  border-color: var(--bad-line);
+  color: var(--bad-ink);
+  font-weight: 650;
+}
+
+/* The keyboard shortcut, drawn as the key it is. Mono because a keycap that is not monospaced
+   reads as a number in the label rather than as a thing to press. */
+.rm-rate-key {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--faint);
+}
+
+.rm-rate-on .rm-rate-key {
+  border-color: currentcolor;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
 }
 
 /* A rating that has been clicked but not yet acknowledged by the database. It reads as pressed
@@ -86,7 +184,7 @@
 .rm-rate-pending {
   background-image: repeating-linear-gradient(
     -45deg,
-    rgb(255 255 255 / 22%) 0 6px,
+    rgb(255 255 255 / 55%) 0 6px,
     transparent 6px 12px
   );
   animation: rm-pending 700ms linear infinite;
