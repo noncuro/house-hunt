@@ -33,6 +33,7 @@ import {
   forgetSightings,
   getAnalysis,
   getProjectModel,
+  getProjectSettings,
   getSweepKnowledge,
   headcount,
   leaveProject,
@@ -402,6 +403,10 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
 
     case 'sweep:hubs':
       return await listHubSweeps();
+
+    case 'settings:get':
+      await requireSession();
+      return await getProjectSettings();
 
     case 'sweep:pending':
       return await pendingSightings();

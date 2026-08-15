@@ -94,6 +94,14 @@ create policy stage_needs_a_like on property_stage as restrictive for insert to 
 
 grant select, insert, update, delete on table property_stage to authenticated;
 
+-- `anon` holds nothing, and saying so has to be explicit: the project's default privileges hand the
+-- anon role full DML on every new public table, so the grant above is an addition to that rather
+-- than the whole of it. Left alone, this is the one table where an unauthenticated request is
+-- answered — with `[]` rather than a refusal, because the policies above are `to authenticated` and
+-- RLS returns no rows. Nothing leaks either way; what differs is the distance to a leak, which
+-- becomes one mistyped policy rather than two.
+revoke all on table property_stage from anon;
+
 -- Liking a place is what enters it into the funnel, and the database does it rather than each
 -- client, for the same reason `archive_verdict` is a trigger: a client-side follow-up write is one
 -- a client can forget, and the two surfaces that rate flats (the panel on Rightmove, and triage in

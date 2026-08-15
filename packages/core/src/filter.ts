@@ -12,10 +12,30 @@
  *  it invisibly, since a filtered-out row leaves nothing behind to notice. `unknowns` counts them,
  *  so the screen can say how many are still there only because we do not know.
  */
-import { amenityPresent, resolveSize, type AmenityKey } from './facts';
+import { AMENITIES, amenityPresent, resolveSize, type AmenityKey } from './facts';
 import { parseMonthlyPrice } from './predict';
 import type { ShortlistEntry } from './db/supabase';
 import { sizeOf } from './shortlist';
+import { TRAVEL_MODES, type TravelMode, type TravelTime } from './types';
+
+/** "No more than twenty minutes to the office, on the tube."
+ *
+ *  A place and a mode together, because neither answers on its own: forty minutes to work is a
+ *  different flat depending on whether it is forty minutes of walking or forty on the Victoria
+ *  line, and a hunt that cycles has no use for a bar measured on foot. Both surfaces already show
+ *  the numbers per place *and* per mode, so a filter that collapsed either would be asking a
+ *  question the screen cannot show you the answer to. */
+export interface TravelBar {
+  /** The saved place, by id — `place.id`, the same key the compare table's columns use. */
+  placeId: string;
+  mode: TravelMode;
+  maxMinutes: number;
+}
+
+/** Every travel time we have, keyed by the flat's own postcode — `cachedTravelTimes`' shape,
+ *  handed in rather than fetched here because the pile is filtered on every keystroke and the
+ *  cache read belongs to the screen. */
+export type TravelIndex = Record<string, TravelTime[]>;
 
 export interface TriageFilter {
   /** Monthly rent in pounds. A flat whose price cannot be parsed is unknown, not free. */
@@ -30,6 +50,9 @@ export interface TriageFilter {
   /** Amenities the flat must be *known* to have. Absent from the list means "don't mind" — there is
    *  deliberately no "must not have": nothing here is something a hunt wants less of. */
   amenities: AmenityKey[];
+  /** How far it may be from the places this hunt saved. Several, because "twenty minutes to work
+   *  *and* a walk to the park" is one hunt's actual requirement rather than two alternatives. */
+  travel: TravelBar[];
 }
 
 export const NO_FILTER: TriageFilter = {
@@ -38,6 +61,7 @@ export const NO_FILTER: TriageFilter = {
   minSqft: null,
   minGreatRoomSqft: null,
   amenities: [],
+  travel: [],
 };
 
 export function filterIsOn(filter: TriageFilter): boolean {
@@ -46,12 +70,17 @@ export function filterIsOn(filter: TriageFilter): boolean {
     filter.minBedrooms !== null ||
     filter.minSqft !== null ||
     filter.minGreatRoomSqft !== null ||
-    filter.amenities.length > 0
+    filter.amenities.length > 0 ||
+    filter.travel.length > 0
   );
 }
 
 /** Does this flat clear every bar the filter sets? Unknown clears them all — see the note above. */
-export function matchesFilter(entry: ShortlistEntry, filter: TriageFilter): boolean {
+export function matchesFilter(
+  entry: ShortlistEntry,
+  filter: TriageFilter,
+  travel?: TravelIndex,
+): boolean {
   if (filter.maxPrice !== null) {
     const price = parseMonthlyPrice(entry.price);
     if (price !== null && price > filter.maxPrice) return false;
@@ -73,8 +102,39 @@ export function matchesFilter(entry: ShortlistEntry, filter: TriageFilter): bool
     // to say the filter would hide precisely the listings nobody has looked at.
     if (amenityPresent(key, entry.analysis) === false) return false;
   }
+  for (const bar of filter.travel) {
+    if (reach(entry, bar, travel) === 'beyond') return false;
+  }
   return true;
 }
+
+/** Where this flat sits against one travel bar, in the same three answers everything else here
+ *  deals in.
+ *
+ *  Read off the raw rows rather than through `readTravel`, which is what draws these numbers on
+ *  screen, and the difference is deliberate. `readTravel` answers "what is the best way of making
+ *  this trip", and to do that it discards a walk of over an hour as not a real option — correct for
+ *  a headline number, and the wrong reading here, because a ninety-minute walk is precisely a known
+ *  failure of "walk to the park in twenty" rather than something we could not tell. A filter asks a
+ *  narrower question than a renderer does. */
+function reach(entry: ShortlistEntry, bar: TravelBar, travel: TravelIndex | undefined): Reach {
+  if (!entry.postcode) return 'unknown';
+  const rows = (travel?.[entry.postcode] ?? []).filter(
+    (t) => t.placeId === bar.placeId && t.mode === bar.mode,
+  );
+  const measured = rows.find((t) => !t.error && t.seconds > 0);
+  // Rounded, because the rounded figure is the one on the card. Comparing raw seconds would drop a
+  // flat that says "20m" against a bar of twenty, which reads as the filter being broken — and on
+  // this screen you cannot check, since a dropped row leaves nothing behind.
+  if (measured) return Math.round(measured.seconds / 60) <= bar.maxMinutes ? 'within' : 'beyond';
+  // TfL was asked and said there is no such journey: settled, not missing. A place you cannot reach
+  // by this mode at all is not within twenty minutes of it. A transient failure is a different
+  // thing — that is us not having asked successfully yet, and it stays unknown.
+  if (rows.some((t) => t.error && !t.transient)) return 'beyond';
+  return 'unknown';
+}
+
+type Reach = 'within' | 'beyond' | 'unknown';
 
 /** What the filter left, and how much of that is only there because we could not tell.
  *
@@ -83,19 +143,72 @@ export function matchesFilter(entry: ShortlistEntry, filter: TriageFilter): bool
 export function applyFilter(
   entries: ShortlistEntry[],
   filter: TriageFilter,
+  travel?: TravelIndex,
 ): { kept: ShortlistEntry[]; unknowns: number } {
-  const kept = entries.filter((entry) => matchesFilter(entry, filter));
+  const kept = entries.filter((entry) => matchesFilter(entry, filter, travel));
   if (!filterIsOn(filter)) return { kept, unknowns: 0 };
-  const unknowns = kept.filter((entry) => unknownTo(entry, filter)).length;
+  const unknowns = kept.filter((entry) => unknownTo(entry, filter, travel)).length;
   return { kept, unknowns };
 }
 
 /** True when this flat clears the filter with a shrug rather than an answer — at least one bar it
  *  was measured against has no measurement. */
-function unknownTo(entry: ShortlistEntry, filter: TriageFilter): boolean {
+function unknownTo(entry: ShortlistEntry, filter: TriageFilter, travel?: TravelIndex): boolean {
   if (filter.maxPrice !== null && parseMonthlyPrice(entry.price) === null) return true;
   if (filter.minBedrooms !== null && entry.bedrooms === null) return true;
   if (filter.minSqft !== null && !resolveSize(sizeOf(entry))) return true;
   if (filter.minGreatRoomSqft !== null && (entry.analysis?.biggestRoomSqft ?? null) === null) return true;
-  return filter.amenities.some((key) => amenityPresent(key, entry.analysis) === null);
+  if (filter.amenities.some((key) => amenityPresent(key, entry.analysis) === null)) return true;
+  // The commonest unknown of the lot, and the one most worth counting. The travel cache only holds
+  // pairings somebody has already looked up, so on a fresh sweep almost the whole pile is unmeasured
+  // — a travel bar that dropped those would empty the screen and look like a hunt with nowhere to
+  // live in it.
+  return filter.travel.some((bar) => reach(entry, bar, travel) === 'unknown');
+}
+
+/** A filter as it comes back out of storage: anything unrecognised falls back to "don't mind".
+ *
+ *  Stored preferences outlive the code that wrote them. This has already gained a field once, and a
+ *  filter saved before that has to keep working; so does one left behind by a half-finished edit, or
+ *  by a browser that truncated the value. Every bar is validated on its own and a bad one is simply
+ *  dropped, which fails in the safe direction — a filter that forgot something shows too many flats,
+ *  and that is visible. Reviving a malformed bar as a number would hide them. */
+export function parseFilter(raw: unknown): TriageFilter {
+  if (!raw || typeof raw !== 'object') return NO_FILTER;
+  const source = raw as Record<string, unknown>;
+  const amenityKeys = new Set<string>(AMENITIES.map((a) => a.key));
+  return {
+    maxPrice: bar(source.maxPrice),
+    minBedrooms: bar(source.minBedrooms),
+    minSqft: bar(source.minSqft),
+    minGreatRoomSqft: bar(source.minGreatRoomSqft),
+    amenities: (Array.isArray(source.amenities) ? source.amenities : []).filter(
+      (key): key is AmenityKey => typeof key === 'string' && amenityKeys.has(key),
+    ),
+    travel: (Array.isArray(source.travel) ? source.travel : []).flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const { placeId, mode, maxMinutes } = entry as Record<string, unknown>;
+      const minutes = bar(maxMinutes);
+      if (typeof placeId !== 'string' || !placeId) return [];
+      if (!TRAVEL_MODES.includes(mode as TravelMode) || minutes === null) return [];
+      return [{ placeId, mode: mode as TravelMode, maxMinutes: minutes }];
+    }),
+  };
+}
+
+/** One stored numeric bar, or "don't mind". Nought is not a bar — see the note on the input. */
+function bar(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** The filter with any bar naming a place this project no longer has thrown away.
+ *
+ *  A saved place can be deleted, and a travel bar pointing at one that is gone is a bar the panel
+ *  cannot draw and nobody can clear — it would sit there narrowing the pile with no control on
+ *  screen to say so. Dropping it widens the filter, which is the direction that shows you more
+ *  rather than less. */
+export function withKnownPlaces(filter: TriageFilter, placeIds: Iterable<string>): TriageFilter {
+  const known = new Set(placeIds);
+  const travel = filter.travel.filter((t) => known.has(t.placeId));
+  return travel.length === filter.travel.length ? filter : { ...filter, travel };
 }

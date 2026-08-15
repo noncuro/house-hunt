@@ -15,7 +15,11 @@ import {
   revokeInvite,
   setActiveProject,
 } from '@house-hunt/core/db';
-import { AMENITIES } from '@house-hunt/core';
+import {
+  AMENITIES,
+  criteriaFromUrl,
+  describeCriteria,
+} from '@house-hunt/core';
 import type {
   AmenityKey,
   AmenityWant,
@@ -25,6 +29,7 @@ import type {
   Invite,
   InviteResult,
   ProjectSummary,
+  SweepCriteria,
 } from '@house-hunt/core';
 
 /** The house hunt you are in: who else is in it, who has been asked, and which one you are looking
@@ -67,6 +72,7 @@ export function Project({ notify }: { notify: Notify }) {
     <div className="settings">
       <ActiveProject project={activeProject} notify={notify} />
       <HuntSettings notify={notify} />
+      <SearchCriteria notify={notify} />
       <Members projectId={activeProject.id} />
       {/* Keyed on the project so switching hunts starts the invite form empty. Without it the
           sentence under the field — "they are already in this hunt" — would still be on screen,
@@ -721,4 +727,125 @@ function expiry(iso: string): string {
   const days = Math.round((Date.parse(iso) - Date.now()) / 86_400_000);
   if (days <= 0) return 'today';
   return days === 1 ? 'tomorrow' : `in ${days} days`;
+}
+
+/** What a sweep actually searches for, set by pasting a Rightmove search.
+ *
+ *  This was six numbers compiled into `SWEEP_CRITERIA` — one to three bedrooms, four to six
+ *  thousand a month, a mile of radius — which every hunt using this app shared whether they were
+ *  looking in Hampstead or Hull. The reason it stayed that way is that the obvious alternative is
+ *  worse: a form with a control per Rightmove filter is a dozen fields to build and to keep in step
+ *  with a site nobody here controls, and it still cannot express the filter they add next month.
+ *
+ *  A pasted URL is better than a form on every count that matters here. The filters already exist,
+ *  on Rightmove, with their own names and their own explanations; you can see the results before
+ *  committing to them; and what comes back works for every filter the site has, including the ones
+ *  this app has never heard of. What it costs is that the thing you paste is opaque — so nothing is
+ *  saved without saying, in words, what it will search for and which parts of it were ignored.
+ *
+ *  See `criteriaFromUrl` for why the location and the time window are never taken from the paste. */
+function SearchCriteria({ notify }: { notify: Notify }) {
+  const settings = useProjectSettings();
+  const save = useSetProjectSettings();
+  const [pasted, setPasted] = useState('');
+  const [rejected, setRejected] = useState(false);
+
+  // Null, not a fallback. There is no sensible default price band for a hunt we know nothing about,
+  // and the old constant meant every project swept one household's budget — see `RENTAL_SEARCH`.
+  const current = settings.data?.search ?? null;
+
+  const apply = (criteria: SweepCriteria | undefined) => {
+    // The whole preferences object, like every other control here: a partial write would drop the
+    // amenity wants somebody set thirty seconds ago.
+    save.mutate(
+      { ...(settings.data ?? {}), search: criteria },
+      {
+        onSuccess: () => {
+          setPasted('');
+          setRejected(false);
+          notify(criteria ? 'Search filters saved.' : 'Search filters cleared — nothing to sweep until you set them again.', 'info');
+        },
+        onError: (e) => notify(`Couldn't save the filters — ${(e as Error).message}`, 'error'),
+      },
+    );
+  };
+
+  const read = criteriaFromUrl(pasted);
+
+  return (
+    <section className="hunt-search">
+      <h3>What we search for</h3>
+      <p className="dim">
+        Set the filters you want on Rightmove — any of them, including ones this app has never heard
+        of — then copy the address bar and paste it here. Every neighbourhood below is swept with
+        these, so the area and the date range in what you paste are ignored: those are what a sweep
+        works out for itself.
+      </p>
+
+      <div className="hunt-search-paste">
+        <input
+          type="url"
+          value={pasted}
+          placeholder="https://www.rightmove.co.uk/property-to-rent/find.html?..."
+          aria-label="Rightmove search URL"
+          data-testid="criteria-url"
+          onChange={(e) => {
+            setPasted(e.target.value);
+            setRejected(false);
+          }}
+        />
+        <button
+          className="primary"
+          disabled={save.isPending || !pasted.trim()}
+          data-testid="criteria-save"
+          onClick={() => {
+            if (!read) return setRejected(true);
+            apply(read.criteria);
+          }}
+        >
+          Use these filters
+        </button>
+      </div>
+
+      {/* Refused rather than accepted-and-empty. An empty set of criteria is a valid search — every
+          flat in the country — so taking a pasted tweet as one would quietly widen every sweep. */}
+      {rejected && (
+        <div className="error">
+          That is not a Rightmove search. Go to Rightmove, set the filters, and copy the whole
+          address — it should start{' '}
+          <code>https://www.rightmove.co.uk/property-to-rent/find.html?</code>
+        </div>
+      )}
+
+      {read && pasted.trim() !== '' && (
+        <div className="dim">
+          Ready to save. {read.ignored.length > 0 && (
+            <>Ignoring {read.ignored.join(', ')} — the neighbourhood, the date range and the sort
+            order are the sweep&rsquo;s own.</>
+          )}
+        </div>
+      )}
+
+      <h4>Sweeping for</h4>
+      {current === null ? (
+        <p className="dim" data-testid="criteria-summary">
+          Nothing yet — so there is nothing to sweep, and the neighbourhoods on the Sweep page have
+          no links. That is deliberate: the alternative is a built-in price band, which every hunt
+          using this app would search whether or not it was theirs, and a search that returns
+          results always looks like it worked.
+        </p>
+      ) : (
+        <>
+          <ul className="hunt-search-summary" data-testid="criteria-summary">
+            {describeCriteria(current).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <button className="key" disabled={save.isPending} onClick={() => apply(undefined)}>
+            Clear these filters
+          </button>
+        </>
+      )}
+    </section>
+  );
 }

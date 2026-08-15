@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Hint } from '@house-hunt/ui';
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { findCards, onPageChange } from '@/lib/cards';
-import { sweepableHubs, toSweepHub, type SweepHub } from '@house-hunt/core';
+import { sweepableHubs, toSweepHub, type SweepCriteria, type SweepHub } from '@house-hunt/core';
 import { send } from '@/lib/messages';
 import { readSearchPage, staleAgainst, type SearchPage } from '@/lib/search-page';
 import {
@@ -38,6 +38,9 @@ export function Sweep() {
    *  is not the same as "this project has none", and not the same as "this search is not one of
    *  ours". All three used to be one silence (design D11). */
   const [hubs, setHubs] = useState<SweepHub[] | null>(null);
+  /** The Rightmove filters this hunt sweeps with. Undefined while reading, null once we know it has
+   *  chosen none — the two are different sentences and only the second is worth saying out loud. */
+  const [criteria, setCriteria] = useState<SweepCriteria | null | undefined>(undefined);
   const [stale, setStale] = useState<string[]>([]);
   const [hiding, setHiding] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -55,11 +58,17 @@ export function Sweep() {
     void (async () => {
       // The neighbourhoods are the active project's rows now, not a compile-time list: a second
       // project searching Manchester must not be offered another project's five (design D11).
-      const [history, list] = await Promise.all([send({ type: 'sweep:hubs' }), send({ type: 'hubs:list' })]);
+      const [history, list, prefs] = await Promise.all([
+        send({ type: 'sweep:hubs' }),
+        send({ type: 'hubs:list' }),
+        send({ type: 'settings:get' }),
+      ]);
       if (history.ok) setSweeps(history.data);
       else push(`Couldn't read the sweep history: ${history.error}`);
       if (list.ok) setHubs(sweepableHubs(list.data).map(toSweepHub));
       else push(`Couldn't read this project's neighbourhoods: ${list.error}`);
+      if (prefs.ok) setCriteria(prefs.data.search ?? null);
+      else push(`Couldn't read what this hunt is looking for: ${prefs.error}`);
     })();
     // `push` is recreated every render; depending on it would re-read forever.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
@@ -255,7 +264,7 @@ export function Sweep() {
         </>
       )}
 
-      <HubList hubs={hubs} sweeps={sweeps} current={hub} />
+      <HubList hubs={hubs} sweeps={sweeps} current={hub} criteria={criteria} />
       <Toasts toasts={toasts} dismiss={dismiss} />
     </div>
   );
@@ -389,12 +398,29 @@ function HubList({
   hubs,
   sweeps,
   current,
+  criteria,
 }: {
   hubs: SweepHub[] | null;
   sweeps: HubSweep[] | null;
   current: SweepHub | null;
+  /** The Rightmove filters this hunt searches with. Null until it has chosen any, and there is no
+   *  default to fall back on — see `RENTAL_SEARCH`. Every link below is unbuildable without it. */
+  criteria: SweepCriteria | null | undefined;
 }) {
-  if (hubs === null) return null; // the panel above already says they are being read
+  if (hubs === null || criteria === undefined) return null; // still reading; the panel says so
+  // No filters chosen, no links — a sweep with no price and no bedroom bar returns every rental
+  // within a mile, and a hunt that never set its own used to get somebody else's budget instead.
+  if (criteria === null) {
+    return (
+      <details className="rm-sweep-hubs" open>
+        <summary>All sweeps</summary>
+        <p className="rm-sweep-note">
+          This house hunt has not said what it is looking for yet. Set the Rightmove filters on the
+          Your Hunt page — paste a search you have already set up — and the sweeps appear here.
+        </p>
+      </details>
+    );
+  }
   if (hubs.length === 0) {
     return (
       <details className="rm-sweep-hubs" open>
@@ -413,7 +439,7 @@ function HubList({
         {hubs.map((hub) => {
           const last = sweeps?.find((s) => s.hub === hub.name)?.lastSweptAt ?? null;
           const choice = sweepWindow(last);
-          const url = sweepSearchUrl({ hub, days: choice.days });
+          const url = sweepSearchUrl({ hub, days: choice.days, criteria });
           return (
             <li key={hub.name} className={hub.name === current?.name ? 'rm-sweep-here' : undefined}>
               {url ? (

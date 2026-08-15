@@ -13,7 +13,8 @@ import {
   duplicateIds,
   enthusiasm,
   groupOf,
-  NO_FILTER,
+  parseFilter,
+  withKnownPlaces,
   sizeOf,
   FILTER_LABEL,
   funnelCounts,
@@ -25,7 +26,7 @@ import {
   type StageFilter,
 } from '@house-hunt/core';
 import { NoActiveProject, spendSummary, Unauthenticated, type ShortlistEntry } from '@house-hunt/core/db';
-import type { ArchiveReason, HuntPreferences, Place, Rating, Stage, TriageFilter } from '@house-hunt/core';
+import type { ArchiveReason, HuntPreferences, Place, PricePoint, Rating, Stage, TriageFilter } from '@house-hunt/core';
 import { HubFact } from '@house-hunt/ui';
 import { Hint } from '@house-hunt/ui';
 import { Flags } from '@house-hunt/ui';
@@ -34,6 +35,7 @@ import { SpendWarning } from '@house-hunt/ui';
 import { RATINGS, ratingOf } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
 import { OffMarketRow } from '@house-hunt/ui';
+import { PriceMove } from '@house-hunt/ui';
 import { scoreEntries, sortForTriage, isSurprise, NEEDS_MODEL, SORT_LABEL, type SortMode } from '@/lib/score';
 import type { StoredModel } from '@house-hunt/core/db';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
@@ -41,6 +43,7 @@ import { ExtensionNotice } from '@/screens/Extension';
 import { Tick, useRangePick, type Selection } from '@/components/Tick';
 import { Pager, usePaging } from '@/components/Pager';
 import { TriageFilters } from '@/components/TriageFilters';
+import { useStoredState } from '@/lib/stored';
 import { Install } from '@/screens/Install';
 import { Compare } from '@/screens/Compare';
 import { Detail } from '@/screens/Detail';
@@ -66,6 +69,8 @@ import {
   useSetStage,
   useShortlist,
   useSignOut,
+  useCachedTravel,
+  usePrices,
 } from '@/lib/queries';
 
 /** What the page is at all is decided here, and by one question: who is signed in.
@@ -175,14 +180,21 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   // happens below, at render, so a score is always the current model's — never stored, never stale.
   const modelQuery = useModel();
   const offMarketQuery = useOffMarket();
+  // Price history for the whole list in one read — see `usePrices`.
+  const pricesQuery = usePrices((shortlist.data ?? []).map((e) => e.rightmoveId));
   const settingsQuery = useProjectSettings();
   const retrain = useRetrain();
   const offMarketMutation = useSetOffMarket();
   const stageMutation = useSetStage();
   const [sortMode, setSortMode] = useState<SortMode>('default');
+  // The flat a jump from elsewhere has asked to see. Held here because the pile that holds it is
+  // decided by its verdict, and only that pile can page to it — see `openCard`.
+  const [reveal, setReveal] = useState<string | null>(null);
   // Held here rather than inside Triage so that going to the map and back does not throw away the
-  // narrowing you set up to work through.
-  const [triageFilter, setTriageFilter] = useState<TriageFilter>(NO_FILTER);
+  // narrowing you set up to work through — and stored, so neither does closing the tab. Working a
+  // pile of two hundred takes more than one sitting, and setting the same four bars up again each
+  // time is the friction that stops the second sitting happening.
+  const [triageFilter, setTriageFilter] = useStoredState<TriageFilter>('triage:filter', parseFilter);
 
   // The neighbourhoods every card places its flat against (design D11). Same hook the Sweep view
   // reads, so switching between them costs nothing and the two cannot disagree about which
@@ -206,6 +218,17 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     [all, stageFilter],
   );
   const places = placesQuery.data ?? [];
+  // A stored filter can name a place somebody has since deleted, and a bar with no place is one the
+  // panel cannot draw and nobody can clear. Pruned on the way in rather than on the way out of
+  // storage, because which places exist is a query that has not answered yet when the filter is
+  // read — and pruning against an empty list would throw away every bar on the first frame.
+  // Keyed off the query's own array rather than the `?? []` above, which is a new empty array on
+  // every render and would make this memo do the work every time regardless.
+  const placeIds = useMemo(() => (placesQuery.data ?? []).map((p) => p.id), [placesQuery.data]);
+  const triageFilterNow = useMemo(
+    () => withKnownPlaces(triageFilter, placeIds),
+    [triageFilter, placeIds],
+  );
   // Three states, and the difference matters: still reading, read and failed, read. `HubFact`
   // renders each as itself rather than letting a failure read as "nothing near this flat".
   const hubs: Hub[] | null | undefined = hubsQuery.isError
@@ -234,6 +257,16 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     if (group === 'maybe') setShowMaybes(true);
     if (group === 'unrated') setShowUnrated(true);
     if (group === 'rejected') setShowRejected(true);
+    // Three things can hide the card you asked for, and all three have to be undone or the scroll
+    // below lands on nothing and the jump reads as "it just opened the shortlist".
+    //
+    // The pile being collapsed is the one this always knew about. The other two arrived later: the
+    // funnel filter, which can exclude the flat outright, and paging, which renders twenty-five of
+    // two hundred — so a map pin for anything below the first page scrolled to an element that was
+    // never in the document.
+    const entry = byId.get(id);
+    if (entry && !matchesStage(entry.stage, stageFilter)) setStageFilter('all');
+    setReveal(id);
     // Wait for the card, rather than for one frame. Revealing the unrated pile renders two hundred
     // cards, which does not fit in the frame after the state change — so the single rAF scrolled
     // to nothing at all and left you at the top of a page with the flat you asked for thirteen
@@ -337,6 +370,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     rate,
     scores,
     offMarket,
+    prices: pricesQuery.data,
     setOffMarket: setEntryOffMarket,
     setStage: setEntryStage,
     // react-query holds the variables of the mutation in flight, which is exactly the "which flat,
@@ -516,7 +550,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
 
       {view === 'admin' && <Admin />}
 
-      {view === 'sweep' && <Sweep />}
+      {view === 'sweep' && <Sweep notify={push} />}
 
       {view === 'triage' && (
         <Triage
@@ -529,7 +563,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           retrain={retrain}
           sortMode={sortMode}
           setSortMode={setSortMode}
-          filter={triageFilter}
+          filter={triageFilterNow}
           setFilter={(next) => {
             setTriageFilter(next);
             // Anything ticked and then filtered away would still be rated by the bulk buttons —
@@ -564,6 +598,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         title={GROUP_LABEL.excited}
         entries={grouped.excited}
         empty="Nothing yet — mark a place “Love it” in the panel and it lands here."
+        reveal={reveal}
         {...cardProps}
       />
 
@@ -572,7 +607,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         open={showMaybes}
         onToggle={() => setShowMaybes((v) => !v)}
       />
-      {showMaybes && <Pile entries={grouped.maybe} empty="Nothing liked." {...cardProps} />}
+      {showMaybes && <Pile entries={grouped.maybe} empty="Nothing liked." reveal={reveal} {...cardProps} />}
 
       <Toggle
         label={`${GROUP_LABEL.unrated} (${grouped.unrated.length})`}
@@ -580,7 +615,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         onToggle={() => setShowUnrated((v) => !v)}
       />
       {showUnrated && (
-        <Pile entries={grouped.unrated} empty="Everything you've opened has a verdict." {...cardProps} />
+        <Pile entries={grouped.unrated} empty="Everything you've opened has a verdict." reveal={reveal} {...cardProps} />
       )}
 
       {/* A count, not a list. Seeing them again is the thing rejecting was meant to prevent —
@@ -590,7 +625,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         open={showRejected}
         onToggle={() => setShowRejected((v) => !v)}
       />
-      {showRejected && <Pile entries={grouped.rejected} empty="Nothing rejected." {...cardProps} />}
+      {showRejected && <Pile entries={grouped.rejected} empty="Nothing rejected." reveal={reveal} {...cardProps} />}
       </div>
 
       <Toasts toasts={toasts} dismiss={dismiss} />
@@ -713,10 +748,16 @@ function Triage({
     setSelected(on ? [...new Set([...selected, ...ids])] : selected.filter((s) => !run.has(s)));
   };
 
+  // The cache and nothing else, for the same reason the compare table reads it that way: a
+  // read-through here would fire a journey-planner request for every gap in a pile of two hundred,
+  // on every keystroke in the minutes box. A pairing nobody has looked up is unknown, and a travel
+  // bar keeps the unknowns — which on a fresh sweep is most of them, and is what the count says.
+  const travel = useCachedTravel(entries.map((e) => e.postcode));
+
   // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave
   // the ranking meaning something about flats that are no longer on screen. `unknowns` is what the
   // filter kept without an answer either way, which the bar says out loud.
-  const { kept, unknowns } = applyFilter(entries, filter);
+  const { kept, unknowns } = applyFilter(entries, filter, travel.data);
   const shown = sortForTriage(kept, cardProps.scores, sortMode);
   const metrics = storedModel?.model.metrics;
 
@@ -794,6 +835,7 @@ function Triage({
       kept={kept.length}
       unknowns={unknowns}
       total={entries.length}
+      places={cardProps.places}
     />
   );
 
@@ -938,6 +980,9 @@ interface CardProps {
    *  love — this only keeps the model from learning it. */
   offMarket: Set<string>;
   setOffMarket: (entry: ShortlistEntry, off: boolean) => void;
+  /** What each flat has cost over time, keyed by listing. Undefined while the read is outstanding,
+   *  which renders as no note rather than as "no change" — see `PriceMove`. */
+  prices: Map<string, PricePoint[]> | undefined;
   /** Move a place along the funnel. Never touches its rating — the two are separate facts, which is
    *  the point of the funnel existing at all (`packages/core/src/stage.ts`). */
   setStage: (entry: ShortlistEntry, stage: Stage, archiveReason: ArchiveReason | null) => void;
@@ -953,11 +998,22 @@ function Pile({
   title,
   entries,
   empty,
+  reveal,
   ...cardProps
-}: { title?: string; entries: ShortlistEntry[]; empty: string } & CardProps) {
+}: {
+  title?: string;
+  entries: ShortlistEntry[];
+  empty: string;
+  /** A flat something outside this pile has asked to see — a map pin, a compare row, a link. Only
+   *  the pile actually holding it responds; for every other pile this is an id it does not have. */
+  reveal?: string | null;
+} & CardProps) {
   // A page at a time. Two hundred cards, each with a photo strip and a travel-time block, is both
   // slow and unreadable — see `Pager`.
-  const paging = usePaging(entries);
+  const paging = usePaging(
+    entries,
+    reveal ? entries.findIndex((e) => e.rightmoveId === reveal) : undefined,
+  );
   // Cards get the same shift-pick the table has. They were the one layout of triage where a run
   // could only be ticked one at a time, and `setMany` was handed down and never called.
   //
@@ -1010,6 +1066,7 @@ function Card({
   rate,
   scores,
   offMarket,
+  prices,
   setOffMarket,
   setStage,
   stageSaving,
@@ -1054,6 +1111,9 @@ function Card({
           a place is, the shortlist stopped being a view of the same data. */}
       <div className="facts">
         {entry.price && <span className="price">{entry.price}</span>}
+        {/* What it used to cost, when that is a thing we have watched change. Nothing at all for a
+            flat seen once — see `PriceMove`. */}
+        <PriceMove history={prices?.get(entry.rightmoveId)} />
         {/* "3 weeks ago" is the useful form and Rightmove's own sentence is the fact behind it, so
             the sentence is a hint rather than a `title` — reachable by keyboard, and on a schedule
             we control. */}

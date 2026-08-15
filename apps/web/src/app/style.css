@@ -1442,6 +1442,51 @@ h2 {
   font-size: 12px;
 }
 
+/* Tighter than the row it sits in: each travel bar is one sentence made of four controls, and at
+   the row's own 18px they read as four separate settings rather than "20 min of Work by tube". */
+.triage-filter-travel {
+  gap: 8px 10px;
+}
+
+.triage-travel-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  padding: 3px 4px 3px 6px;
+  border: 1px solid #cdd8e0;
+  border-radius: 999px;
+  background: #f7fafc;
+}
+
+.triage-travel-bar select {
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 4px;
+  border: 1px solid #cdd8e0;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+}
+
+/* Three digits of minutes. Sized like the bars above rather than to its content, so a row of them
+   does not jitter as the number changes. */
+.triage-travel-minutes {
+  width: 3.6em;
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 6px;
+  border: 1px solid #cdd8e0;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+}
+
+.triage-travel-remove {
+  padding: 2px 7px;
+  line-height: 1;
+}
+
 .triage-score-bar {
   display: flex;
   align-items: center;
@@ -1605,4 +1650,31 @@ h2 {
   .card {
     padding: 12px;
   }
+}
+
+/* The pasted-URL control. A search URL is long and unreadable, so the box takes the width and the
+   summary underneath is what anybody actually reads back. */
+.hunt-search-paste {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.hunt-search-paste input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid #cdd8e0;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+.hunt-search-summary {
+  margin: 6px 0 10px;
+  padding-left: 18px;
+  font-size: 13px;
 }

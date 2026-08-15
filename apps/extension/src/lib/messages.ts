@@ -5,7 +5,8 @@
  *  layer in `@house-hunt/core/db` directly, which is most of what moving the app out of the
  *  extension bought. What is left here is what a script running inside somebody else's page
  *  needs, and it stays typed end to end because that is the part of this design that works. */
-import type { Point, SearchCard } from '@house-hunt/core';
+import type {
+  HuntPreferences, Point, SearchCard } from '@house-hunt/core';
 import type { HubSweep, PendingSighting, StoredModel, SweepKnowledge } from '@house-hunt/core/db';
 import type {
   AnalysisRequest,
@@ -176,6 +177,10 @@ export type Request =
       };
     }
   | { type: 'sweep:hubs' }
+  /** This hunt's preferences, which the sweep panel needs for the Rightmove filters to search
+   *  with. There is no default for those (see `RENTAL_SEARCH`), so a panel that could not ask
+   *  would have to invent a price band or refuse to link. */
+  | { type: 'settings:get' }
   | { type: 'sweep:pending' }
   /** Open a listing in a background tab. A content script can only `window.open`, which steals
    *  focus — unbearable when the paced opener does it a dozen times over several minutes. */
@@ -252,6 +257,7 @@ export interface ResponseMap {
    *  page completed the sweep. */
   'sweep:record': { knowledge: Record<string, SweepKnowledge>; sweep: HubSweep | null };
   'sweep:hubs': HubSweep[];
+  'settings:get': HuntPreferences;
   'sweep:pending': PendingSighting[];
   'tab:open': null;
 }

@@ -28,6 +28,18 @@ import { chromium, type ConsoleMessage } from 'playwright';
 import { SEED_HUBS } from '../packages/core/src/hubs';
 import { readSearchPage } from '../apps/extension/src/lib/search-page';
 import { sweepSearchUrl, WIDEST_WINDOW } from '../packages/core/src/sweep';
+
+/** The filters this harness searches with. A hunt's criteria are project data now and there is no
+ *  built-in band to fall back on (see `RENTAL_SEARCH`), so a harness has to state its own — the
+ *  same standing as its use of `SEED_HUBS`, and it must never be read by a surface. */
+const HARNESS_CRITERIA = {
+  minPrice: '4000',
+  maxPrice: '6000',
+  minBedrooms: '1',
+  maxBedrooms: '3',
+  radius: '1.0',
+  _includeLetAgreed: 'on',
+};
 import { fixtureHubs, plantSession, seedFixture, smokeBuild } from './fixture-session';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 
@@ -55,7 +67,7 @@ const hub = SEED_HUBS.find((h) => h.rightmove?.locationIdentifier === saved.page
 if (!hub) {
   throw new Error(`${savedPage} is a search for ${saved.page.locationIdentifier}, which is not one of the seeded hubs`);
 }
-const url = sweepSearchUrl({ hub, days: WIDEST_WINDOW })!;
+const url = sweepSearchUrl({ hub, days: WIDEST_WINDOW, criteria: HARNESS_CRITERIA })!;
 
 mkdirSync(SHOTS, { recursive: true });
 

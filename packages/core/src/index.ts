@@ -19,6 +19,7 @@ export * from './shortlist';
 export * from './stage';
 export * from './sweep';
 export * from './predict';
+export * from './recheck';
 
 // `postcode` and `tfl` each define a `Point`, and `tfl` also has its own `Journey`/`Leg`/
 // `JourneyOption` — the shapes TfL answers in, as opposed to the ones we store, which are in

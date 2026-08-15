@@ -77,8 +77,20 @@ check('two words', searchLocationFor('Belsize-Park-Station.html'), 'Belsize Park
 check('a region, which has no "Station" to lose', searchLocationFor('Primrose-Hill.html'), 'Primrose Hill');
 
 console.log('sweepSearchUrl');
+/** A hunt's filters, for the checks only — the same standing as `SEED_HUBS` itself, and for the
+ *  same reason it is written down here rather than in core: a price band that ships in the source
+ *  is one project's budget applied to every project. `sweepSearchUrl` now refuses without one, and
+ *  these are the cases that prove it. */
+const CRITERIA = {
+  minPrice: '4000',
+  maxPrice: '6000',
+  minBedrooms: '1',
+  maxBedrooms: '3',
+  radius: '1.0',
+  _includeLetAgreed: 'on',
+};
 const hampstead = SEED_HUBS.find((h) => h.name === 'Hampstead')!;
-const url = new URL(sweepSearchUrl({ hub: hampstead, days: 14 })!);
+const url = new URL(sweepSearchUrl({ hub: hampstead, days: 14, criteria: CRITERIA })!);
 check('points at the search page', url.origin + url.pathname, 'https://www.rightmove.co.uk/property-to-rent/find.html');
 check('carries the verified identifier', url.searchParams.get('locationIdentifier'), 'STATION^4187');
 check('and tells Rightmove to use it', url.searchParams.get('useLocationIdentifier'), 'true');
@@ -91,27 +103,72 @@ check('the price ceiling', url.searchParams.get('maxPrice'), '6000');
 check('page one starts at index zero', url.searchParams.get('index'), '0');
 check(
   'page three starts a page-size in from page two',
-  new URL(sweepSearchUrl({ hub: hampstead, days: 7, page: 3 })!).searchParams.get('index'),
+  new URL(sweepSearchUrl({ hub: hampstead, days: 7, page: 3, criteria: CRITERIA })!).searchParams.get('index'),
   String(RESULTS_PER_PAGE * 2),
 );
 
 const primrose = SEED_HUBS.find((h) => h.name === 'Primrose Hill')!;
 check(
   'Primrose Hill is a region, and the URL says so',
-  new URL(sweepSearchUrl({ hub: primrose, days: 14 })!).searchParams.get('locationIdentifier'),
+  new URL(sweepSearchUrl({ hub: primrose, days: 14, criteria: CRITERIA })!).searchParams.get('locationIdentifier'),
   'REGION^87390',
 );
 check(
   'a hub with no verified identifier gets no URL at all',
-  sweepSearchUrl({ hub: { name: 'Nowhere', rightmove: null }, days: 14 }),
+  sweepSearchUrl({ hub: { name: 'Nowhere', rightmove: null }, days: 14, criteria: CRITERIA }),
   null,
+);
+
+// The change this refusal exists for: there is no built-in price band any more, so a hunt that has
+// chosen nothing gets no link rather than somebody else's budget. Both empty shapes count, since a
+// stored `{}` and an absent row mean the same thing to whoever set neither.
+check(
+  'no criteria at all, no URL',
+  sweepSearchUrl({ hub: hampstead, days: 14, criteria: null }),
+  null,
+);
+check(
+  'and an empty set is the same answer',
+  sweepSearchUrl({ hub: hampstead, days: 14, criteria: {} }),
+  null,
+);
+// Whatever the hunt saved wins over nothing, but never over the parameters a sweep owns: a pasted
+// URL carrying its own location must not pin every neighbourhood to that one.
+check(
+  'a location in the saved criteria cannot override the hub',
+  new URL(sweepSearchUrl({
+    hub: hampstead,
+    days: 14,
+    criteria: { ...CRITERIA, locationIdentifier: 'STATION^9999', sortType: '1' },
+  })!).searchParams.get('locationIdentifier'),
+  'STATION^4187',
+);
+check(
+  'and neither can it change the sort that makes a sweep terminate',
+  new URL(sweepSearchUrl({
+    hub: hampstead,
+    days: 14,
+    criteria: { ...CRITERIA, sortType: '1' },
+  })!).searchParams.get('sortType'),
+  '6',
+);
+// Filters this app has never heard of ride along untouched — the whole point of storing the query
+// rather than modelling each one.
+check(
+  'a filter we do not model is passed straight through',
+  new URL(sweepSearchUrl({
+    hub: hampstead,
+    days: 14,
+    criteria: { ...CRITERIA, mustHave: 'garden,parking' },
+  })!).searchParams.get('mustHave'),
+  'garden,parking',
 );
 
 console.log('every sweep hub is usable');
 for (const hub of SEED_HUBS) {
   // A null here is legitimate in the type and must be legitimate on screen too, but if one of
   // the five we verified goes null it is a regression, not a design decision.
-  check(`${hub.name} has a search URL`, sweepSearchUrl({ hub, days: 14 }) !== null, true);
+  check(`${hub.name} has a search URL`, sweepSearchUrl({ hub, days: 14, criteria: CRITERIA }) !== null, true);
 }
 
 console.log('the seeded rows resolve to the same searches as the old constant');
@@ -140,8 +197,8 @@ for (const seeded of seededRows) {
   check(`${seeded.name} keeps its exact coordinates`, [seeded.lat, seeded.lon], [constant.lat, constant.lon]);
   check(
     `${seeded.name} builds the identical search URL from the database`,
-    sweepSearchUrl({ hub: toSweepHub(seeded), days: 14 }),
-    sweepSearchUrl({ hub: constant, days: 14 }),
+    sweepSearchUrl({ hub: toSweepHub(seeded), days: 14, criteria: CRITERIA }),
+    sweepSearchUrl({ hub: constant, days: 14, criteria: CRITERIA }),
   );
 }
 

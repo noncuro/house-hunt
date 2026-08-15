@@ -43,6 +43,7 @@ import type { HuntPreferences } from '../facts';
 // works on both surfaces. (The Edge Function still calls `../postcode` itself, server-side.)
 import { locatePostcode, locatePostcodes } from './travel';
 import { MODEL_VERSION, type LabelMode, type Model, type ModelMetrics } from '../predict';
+import type { PricePoint } from '../recheck';
 import type { SearchCard } from '../search-card';
 import { sweepProgress } from '../sweep';
 import { type StationInfo } from '../tfl';
@@ -729,6 +730,36 @@ export async function getCachedTravel(postcode: string): Promise<CachedTravel[]>
     .eq('origin_postcode', postcode);
   fail('reading travel cache', error);
   return (data ?? []).map(toCachedTravel);
+}
+
+/** What each of these flats has cost, newest first, keyed by listing.
+ *
+ *  One query for the whole shortlist rather than one per card, for the same reason the travel cache
+ *  is read in a batch: the list view renders two hundred rows and a request each would be two
+ *  hundred round trips to answer a question that is four words on the card.
+ *
+ *  A listing with one row has never moved; one with none has never been priced. Both come back
+ *  absent from the map, and `latestChange` reads either as "no change to report" — which is the
+ *  honest answer, since a flat we have only ever seen once has not been observed changing. */
+export async function getPriceHistoryFor(
+  rightmoveIds: string[],
+): Promise<Map<string, PricePoint[]>> {
+  const by = new Map<string, PricePoint[]>();
+  if (rightmoveIds.length === 0) return by;
+
+  const { data, error } = await db()
+    .from('property_price')
+    .select('rightmove_id, price, seen_at')
+    .in('rightmove_id', [...new Set(rightmoveIds)])
+    .order('seen_at', { ascending: false });
+  fail('reading price history', error);
+
+  for (const r of (data ?? []) as any[]) {
+    const list = by.get(r.rightmove_id) ?? [];
+    list.push({ price: r.price, seenAt: r.seen_at });
+    by.set(r.rightmove_id, list);
+  }
+  return by;
 }
 
 /** Every cached travel time for a set of origin postcodes, in one query, keyed by origin.

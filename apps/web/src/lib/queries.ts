@@ -12,6 +12,7 @@ import {
   readAuthState,
   cachedTravelTimes,
   getShortlist,
+  getPriceHistoryFor,
   listHubs,
   listPlaces,
   getProjectModel,
@@ -92,10 +93,24 @@ export const keys = {
   model: ['model'] as const,
   offMarket: ['off-market'] as const,
   settings: ['settings'] as const,
+  prices: ['prices'] as const,
 };
 
 export function useShortlist() {
   return useQuery({ queryKey: keys.shortlist, queryFn: getShortlist });
+}
+
+/** What each flat on the shortlist has cost over time, as one query for the whole list.
+ *
+ *  Keyed on the listing ids so adding a flat refetches and reordering does not — the same rule the
+ *  travel cache is keyed by, and for the same reason: these lists are re-sorted constantly. */
+export function usePrices(rightmoveIds: string[]) {
+  const wanted = [...new Set(rightmoveIds)].sort();
+  return useQuery({
+    queryKey: [...keys.prices, wanted],
+    queryFn: () => getPriceHistoryFor(wanted),
+    enabled: wanted.length > 0,
+  });
 }
 
 /** The project's fitted verdict-score model, or null if it has never been trained. Realtime keeps
