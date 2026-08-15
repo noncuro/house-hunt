@@ -36,11 +36,19 @@ const sql = `
 select json_build_object(
   'project_id',:'project_id',
   'generated_note','frozen fixture for check:predict — no PII, ids/numbers/booleans only',
-  'hubs', (select coalesce(json_agg(json_build_object('name',label,'lat',lat,'lon',lon) order by sort_order),'[]')
+  -- Coordinates without their labels. \`HubPoint\` is lat/lon, so the label was never a model input,
+  -- and it was the one identifying field left: a saved place called "Work" at six decimal places is
+  -- an address for the person whose hunt this is, which is exactly what this file promises not to
+  -- carry.
+  'hubs', (select coalesce(json_agg(json_build_object('lat',lat,'lon',lon) order by sort_order),'[]')
            from place where project_id=:'project_id'),
+  -- What the hunt says it is looking for. A model input since v2 — the bars become features and
+  -- the amenity wants become the prior the weights are shrunk toward — so a fixture without them
+  -- would check a different model from the one that runs. Bars and enum choices only, no free text.
+  'preferences', (select preferences from project_setting where project_id=:'project_id'),
   'rows', (select coalesce(json_agg(row_to_json(t) order by t.rightmove_id),'[]') from (
     select v.rightmove_id, v.rating, p.price, p.bedrooms, p.bathrooms, p.floor_area_sqft,
-           p.furnish_type,
+           p.floor_area_source, p.furnish_type,
            coalesce(p.postcode_lat, p.latitude)  as lat,
            coalesce(p.postcode_lon, p.longitude) as lon,
            -- Miles, as the Edge Function and both client adapters read it. An unconverted km would
@@ -48,7 +56,9 @@ select json_build_object(
            (select min(case when s->>'unit' = 'km' then (s->>'distance')::float * 0.621371
                             else (s->>'distance')::float end)
               from jsonb_array_elements(p.nearest_stations) s) as nearest_station_dist,
-           a.natural_light, a.has_outdoor_space, a.has_dishwasher, a.laundry, a.has_bathtub
+           a.natural_light, a.has_outdoor_space, a.has_dishwasher, a.laundry, a.has_bathtub,
+           a.outdoor_sqft, a.biggest_room_sqft, a.floorplan_sqft, a.floorplan_legible,
+           a.is_house_share, a.sleeping_separation, a.utilities_included
     from verdict v
     join property p on p.rightmove_id = v.rightmove_id
     left join property_analysis a on a.rightmove_id = v.rightmove_id

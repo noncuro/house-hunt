@@ -24,7 +24,9 @@ import {
   scoreFeatures,
   type Example,
   type HubPoint,
+  type PredictInput,
 } from '../packages/core/src/predict';
+import type { HuntPreferences } from '../packages/core/src/facts';
 
 function env(name: string): string {
   const line = readFileSync('.env', 'utf8').split('\n').find((l) => l.startsWith(`${name}=`));
@@ -58,8 +60,12 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(proj
 const sql = `
 select json_build_object(
   'hubs', (select coalesce(json_agg(json_build_object('lat',lat,'lon',lon) order by sort_order),'[]') from place where project_id=:'project_id'),
+  -- The hunt's stated preferences, which the model reads as features and as its prior. Seeding
+  -- without them would fit a different model from the one the predict function fits on these rows.
+  'preferences', (select preferences from project_setting where project_id=:'project_id'),
   'rows', (select coalesce(json_agg(row_to_json(t) order by t.rightmove_id),'[]') from (
-    select v.rightmove_id, v.rating, p.price, p.bedrooms, p.bathrooms, p.floor_area_sqft, p.furnish_type,
+    select v.rightmove_id, v.rating, p.price, p.bedrooms, p.bathrooms, p.floor_area_sqft,
+           p.floor_area_source, p.furnish_type,
            coalesce(p.postcode_lat, p.latitude) as lat, coalesce(p.postcode_lon, p.longitude) as lon,
            -- Miles, matching the Edge Function. Rightmove gives miles but a stray km unit would
            -- otherwise read as a much closer station, and a model seeded here would then differ
@@ -67,7 +73,9 @@ select json_build_object(
            (select min(case when s->>'unit' = 'km' then (s->>'distance')::float * 0.621371
                             else (s->>'distance')::float end)
               from jsonb_array_elements(p.nearest_stations) s) as nearest_station_dist,
-           a.natural_light, a.has_outdoor_space, a.has_dishwasher, a.laundry, a.has_bathtub
+           a.natural_light, a.has_outdoor_space, a.has_dishwasher, a.laundry, a.has_bathtub,
+           a.outdoor_sqft, a.biggest_room_sqft, a.floorplan_sqft, a.floorplan_legible,
+           a.is_house_share, a.sleeping_separation, a.utilities_included
     from verdict v
     join property p on p.rightmove_id = v.rightmove_id
     left join property_analysis a on a.rightmove_id = v.rightmove_id
@@ -77,6 +85,7 @@ select json_build_object(
 )`;
 const data = JSON.parse(psql(['-v', `project_id=${projectId}`, '-At', '-c', sql])) as {
   hubs: HubPoint[];
+  preferences: HuntPreferences | null;
   rows: any[];
 };
 
@@ -84,22 +93,32 @@ const examples: Example[] = [];
 for (const r of data.rows) {
   const label = labelFor(r.rating, DEFAULT_LABEL_MODE);
   if (label == null) continue;
-  const input = {
+  const input: PredictInput = {
     price: r.price,
     bedrooms: r.bedrooms,
     bathrooms: r.bathrooms,
-    floorAreaSqft: r.floor_area_sqft,
+    listedSqft: r.floor_area_sqft,
+    listedSource: r.floor_area_source,
     lat: r.lat,
     lon: r.lon,
     nearestStationMiles: r.nearest_station_dist,
     furnishType: r.furnish_type,
-    naturalLight: r.natural_light,
-    hasOutdoorSpace: r.has_outdoor_space,
-    hasDishwasher: r.has_dishwasher,
-    laundry: r.laundry,
-    hasBathtub: r.has_bathtub,
+    analysis: {
+      naturalLight: r.natural_light,
+      hasOutdoorSpace: r.has_outdoor_space,
+      outdoorSqft: r.outdoor_sqft,
+      hasDishwasher: r.has_dishwasher,
+      laundry: r.laundry,
+      hasBathtub: r.has_bathtub,
+      biggestRoomSqft: r.biggest_room_sqft,
+      floorplanSqft: r.floorplan_sqft,
+      floorplanLegible: r.floorplan_legible,
+      isHouseShare: r.is_house_share,
+      sleepingSeparation: r.sleeping_separation,
+      utilitiesIncluded: r.utilities_included,
+    } as PredictInput['analysis'],
   };
-  examples.push({ raw: featuresFor(input, data.hubs), label });
+  examples.push({ raw: featuresFor(input, data.hubs, data.preferences ?? undefined), label });
 }
 
 const model = fitProjectModel(examples, DEFAULT_LABEL_MODE);

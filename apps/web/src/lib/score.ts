@@ -16,6 +16,7 @@ import {
   sizeOf,
   type Hub,
   type Model,
+  type HuntPreferences,
   type PredictInput,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
@@ -30,29 +31,37 @@ function nearestStationMiles(entry: ShortlistEntry): number | null {
 }
 
 export function predictInputFrom(entry: ShortlistEntry): PredictInput {
-  const a = entry.analysis;
   return {
     price: entry.price,
     bedrooms: entry.bedrooms,
     bathrooms: entry.bathrooms,
-    floorAreaSqft: entry.floorAreaSqft,
+    // The listed area and its provenance, unresolved: `featuresFor` runs `resolveSize` over this
+    // and the floorplan, so the model reads the same size the card prints.
+    listedSqft: entry.floorAreaSqft,
+    listedSource: entry.floorAreaSource,
     lat: entry.lat,
     lon: entry.lon,
     nearestStationMiles: nearestStationMiles(entry),
     furnishType: entry.furnishType,
-    naturalLight: a?.naturalLight ?? null,
-    hasOutdoorSpace: a?.hasOutdoorSpace ?? null,
-    hasDishwasher: a?.hasDishwasher ?? null,
-    laundry: a?.laundry ?? null,
-    hasBathtub: a?.hasBathtub ?? null,
+    analysis: entry.analysis ?? null,
   };
 }
 
 /** Every entry's P(yes) under the current model, keyed by rightmove id. Built once per render and
- *  handed down, so a card, the triage sort and the mismatch check all read the same number. */
-export function scoreEntries(model: Model, entries: ShortlistEntry[], hubs: Hub[]): Map<string, number> {
+ *  handed down, so a card, the triage sort and the mismatch check all read the same number.
+ *
+ *  `prefs` are the hunt's own answers, which the model was fitted against — pass the same set the
+ *  retrain used, or the flat is scored on bars it was never trained on. */
+export function scoreEntries(
+  model: Model,
+  entries: ShortlistEntry[],
+  hubs: Hub[],
+  prefs?: HuntPreferences,
+): Map<string, number> {
   const scores = new Map<string, number>();
-  for (const entry of entries) scores.set(entry.rightmoveId, scoreModel(model, predictInputFrom(entry), hubs));
+  for (const entry of entries) {
+    scores.set(entry.rightmoveId, scoreModel(model, predictInputFrom(entry), hubs, prefs));
+  }
   return scores;
 }
 

@@ -15,6 +15,12 @@ stats.html
 # laptop. Commit it.
 !.fixtures/predict-*.json
 
+# Except the wider dumps an experiment pulls for itself — those carry whatever columns that question
+# needed, which is not a set anybody has checked for PII, and no check reads them. The un-ignore
+# above is for the one fixture `check:predict` runs on, not for scratch that happens to share its
+# prefix.
+.fixtures/predict-*-extended.json
+
 # The admin address and the project name for one deployment. Copy supabase/seed.example.sql to
 # this path and edit it; the example is what is committed.
 supabase/seed.sql

@@ -6,7 +6,7 @@ better. It is here because the answers are not obvious from the code, several of
 opposite of what we assumed, and the next person to reach for a fancier model should read what
 happened when we tried.
 
-Everything below is measured on the Daniel & Ashley project as it stood on 2026-08-15: **379 rated
+Everything below is measured on one real hunt as it stood on 2026-08-15: **379 rated
 flats, 331 no / 25 maybe / 23 love**. Every number is nested leave-one-out — hyperparameters chosen
 inside the training fold, never on the held-out flat — which is what `pnpm check:predict` already
 does, and every experiment reproduced the production baseline to four decimals before it was
@@ -20,9 +20,16 @@ trusted with anything else.
 | Better features | 0.9327 | 0.9111 |
 | \+ what the hunt said it wants, as features | 0.9461 | 0.9276 |
 | \+ what the hunt said it wants, as priors | **0.9615** | **0.9318** |
+| \+ the size resolved the way the rest of the app resolves it | **0.9653** | 0.9245 |
 
-Log-loss falls from 0.189 to 0.114 alongside, so this is a better-calibrated model and not only a
+Log-loss falls from 0.189 to 0.106 alongside, so this is a better-calibrated model and not only a
 better-ordered one.
+
+Those are leave-one-out figures, which is what the study ran on. What ships and what
+`pnpm check:predict` prints is a nested **10-fold** estimate of the same model — **0.952 and
+0.924** — a little lower because each fold trains on 90% of the data rather than 99%. Leave-one-out
+was affordable when this fixture held 49 flats; at 379, against a two-dimensional hyperparameter
+grid, it is twelve minutes a mode and 10-fold answers the same question in forty seconds.
 
 Two honesty adjustments apply to every figure. About 130 of the 379 rows are relistings of flats
 already in the set, so plain leave-one-out trains on a near-twin of the flat it is testing; collapsing
@@ -193,6 +200,6 @@ asserts the headline numbers on the committed fixture and fails if they regress.
 To regenerate the fixture after more verdicts accumulate:
 
 ```bash
-tsx tools/export-predict-fixture.ts <project_id> > .fixtures/predict-daniel-ashley.json
+tsx tools/export-predict-fixture.ts <project_id> > .fixtures/predict-project.json
 pnpm check:predict
 ```
