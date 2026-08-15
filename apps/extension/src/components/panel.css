@@ -7,3 +7,24 @@
   font-size: 11px;
   color: #93a1af;
 }
+
+/* The first-run nudge under the flags. Deliberately quiet — it is a link, not a warning, and it
+   disappears the moment anything is set. */
+.rm-prefs-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  color: inherit;
+  font-size: 12px;
+  text-decoration: none;
+}
+.rm-prefs-note:hover {
+  border-color: rgba(0, 0, 0, 0.4);
+}
+.rm-prefs-note small {
+  opacity: 0.7;
+}

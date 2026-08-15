@@ -37,7 +37,7 @@ select json_build_object(
   'project_id',:'project_id',
   'generated_note','frozen fixture for check:predict — no PII, ids/numbers/booleans only',
   'hubs', (select coalesce(json_agg(json_build_object('name',name,'lat',lat,'lon',lon) order by sort_order),'[]')
-           from project_hub where project_id=:'project_id'),
+           from place where project_id=:'project_id'),
   'rows', (select coalesce(json_agg(row_to_json(t) order by t.rightmove_id),'[]') from (
     select v.rightmove_id, v.rating, p.price, p.bedrooms, p.bathrooms, p.floor_area_sqft,
            p.furnish_type,

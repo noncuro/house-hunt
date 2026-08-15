@@ -42,16 +42,20 @@
  *  Highbury & Islington and King's Cross were both hubs briefly and were dropped — the search
  *  moved north-west. Their coordinates are in the git history if they come back. */
 
-import type { ProjectHub } from './contracts';
+import type { Place } from './types';
 import type { Point } from './postcode';
 
 export interface Hub {
   name: string;
   lat: number;
   lon: number;
-  /** True for a hub derived from a saved place rather than from the search itself. It is the
-   *  tie-break in `nearestHub`: a real neighbourhood always outranks a place, however much closer
-   *  the place is. See `hubsWithPlaces` for why. */
+  /** True for a place we only measure against, false for one we search around. It is the tie-break
+   *  in `nearestHub`: somewhere this hunt is actually looking always outranks somewhere it merely
+   *  commutes to, however much closer the second is. See `hubsFromProject` for why.
+   *
+   *  It was `fromPlace` while neighbourhoods and places were two tables. They are one now, so the
+   *  distinction is what a row *does* rather than which list it came from — which is the honest
+   *  version of the same rule. */
   fromPlace?: boolean;
 }
 
@@ -93,6 +97,9 @@ export interface RightmoveLocation {
  *  onto a row that has none, which is precisely the defaulting design D15 forbids. */
 export interface SweepHub {
   name: string;
+  /** Miles to search around. Null is not a default of any kind — it means this place is not a
+   *  sweep centre, and `sweepSearchUrl` refuses rather than picking a radius. */
+  radiusMiles: number | null;
   /** Null means we could not verify an identifier, and the sweep view is written to say so rather
    *  than build a URL that searches somewhere else. A wrong identifier returns a page full of
    *  plausible flats in the wrong neighbourhood and reports nothing new, which is the failure that
@@ -106,6 +113,10 @@ export interface SweepHub {
  *  which is why the runtime types above do not insist on both. */
 export interface SeedHub extends Hub {
   rightmove: RightmoveLocation | null;
+  /** One mile, on all five, because that is the radius every sweep URL this project ever built
+   *  used. It is a property of a place now (`place.sweep_radius_miles`); here it pins what the
+   *  constants meant so `pnpm check:sweep` still compares like with like. */
+  radiusMiles: number;
 }
 
 /** The original five, as `20260809220000_project_scope.sql` seeded them into the first project.
@@ -124,6 +135,7 @@ export const SEED_HUBS: SeedHub[] = [
     name: 'Hampstead',
     lat: 51.556239,
     lon: -0.177464,
+    radiusMiles: 1,
     // This one was supplied by hand; the page confirms it, displayName "Hampstead Station, London".
     rightmove: { locationIdentifier: 'STATION^4187', displayLocationIdentifier: 'Hampstead-Station.html' },
   },
@@ -131,6 +143,7 @@ export const SEED_HUBS: SeedHub[] = [
     name: 'Primrose Hill',
     lat: 51.54086,
     lon: -0.15772,
+    radiusMiles: 1,
     // A REGION rather than a STATION, for the same reason the coordinate above needed its own
     // source: there has been no Primrose Hill station since 1992, so Rightmove files it as an
     // area. displayName "Primrose Hill, North West London". Its polygon's centroid is 51.53868,
@@ -144,6 +157,7 @@ export const SEED_HUBS: SeedHub[] = [
     name: 'Belsize Park',
     lat: 51.550311,
     lon: -0.164648,
+    radiusMiles: 1,
     // displayName "Belsize Park Station, London"; polygon centroid 51.55024, -0.16442.
     rightmove: { locationIdentifier: 'STATION^824', displayLocationIdentifier: 'Belsize-Park-Station.html' },
   },
@@ -151,6 +165,7 @@ export const SEED_HUBS: SeedHub[] = [
     name: 'Angel',
     lat: 51.531788,
     lon: -0.105919,
+    radiusMiles: 1,
     // displayName "Angel Station, London"; polygon centroid 51.53249, -0.10573.
     rightmove: { locationIdentifier: 'STATION^245', displayLocationIdentifier: 'Angel-Station.html' },
   },
@@ -158,6 +173,7 @@ export const SEED_HUBS: SeedHub[] = [
     name: 'Old Street',
     lat: 51.526065,
     lon: -0.088193,
+    radiusMiles: 1,
     // displayName "Old Street Station, London"; polygon centroid 51.52554, -0.08757.
     rightmove: { locationIdentifier: 'STATION^6881', displayLocationIdentifier: 'Old-Street-Station.html' },
   },
@@ -170,38 +186,74 @@ export const SEED_HUBS: SeedHub[] = [
  *  under its own name. Delete this once they do. */
 export const SWEEP_HUBS: SeedHub[] = SEED_HUBS;
 
-/** The hubs a listing can be *near*, from a project's rows.
+/** The places a listing can be fixed against, from a project's rows.
  *
  *  A row with no coordinate is skipped rather than defaulted. That is not an edge case invented
- *  for the type system: King's Cross and Highbury & Islington were hubs, were dropped, and the
- *  migration deliberately keeps coordinate-less rows for them so their real `hub_sweep` history is
- *  not thrown away. Giving one a plausible point would rotate every bearing computed from it and
- *  nothing on screen would look wrong — the same rule `hubsWithPlaces` already applies to a place
- *  whose postcode was never resolved. */
-export function hubsFromProject(hubs: ProjectHub[]): Hub[] {
-  return hubs.flatMap((h) => (h.lat === null || h.lon === null ? [] : [{ name: h.name, lat: h.lat, lon: h.lon }]));
-}
-
-/** The hubs a project can *go looking through*: the ones carrying a Rightmove location identifier.
+ *  for the type system: a place saved before postcodes were resolved on entry has none, and a
+ *  neighbourhood that was dropped keeps its `hub_sweep` history without its point. Giving one a
+ *  plausible coordinate would rotate every bearing computed from it and nothing on screen would
+ *  look wrong.
  *
- *  A hub with no identifier is not a broken hub, it is a hub that only names things, so it is left
- *  out here rather than shown as a dead link. The sweep view still lists it, and says why. */
-export function sweepableHubs(hubs: ProjectHub[]): ProjectHub[] {
-  return hubs.filter((h) => h.locationIdentifier !== null);
+ *  Somewhere the hunt sweeps around outranks somewhere it only measures to — see `Hub.fromPlace`
+ *  and `nearestHub`. "0.3 mi NW of Work" tells you how long the commute is and nothing whatever
+ *  about where the flat is, and where the flat is, is the entire question the compass answers. */
+export function hubsFromProject(places: Place[]): Hub[] {
+  return places.flatMap((p) =>
+    p.lat === null || p.lon === null
+      ? []
+      : [{ name: p.label, lat: p.lat, lon: p.lon, fromPlace: !isSwept(p) }],
+  );
 }
 
-/** The `SweepHub` a `project_hub` row stands for. `rightmove` is null unless *both* halves of the
- *  identifier are present: a `locationIdentifier` with no SEO path would build a URL missing the
- *  parameter Rightmove echoes back into its own search box, and half an identifier is not a
- *  verified one. */
-export function toSweepHub(hub: ProjectHub): SweepHub {
-  const verified = hub.locationIdentifier !== null && hub.displayLocationIdentifier !== null;
+/** Whether this place is one the hunt goes looking around. Both halves of the identifier and a
+ *  radius: a `locationIdentifier` with no SEO path builds a URL missing the parameter Rightmove
+ *  echoes into its own search box, and half an identifier is not a verified one. */
+export function isSwept(place: Place): boolean {
+  return (
+    place.locationIdentifier !== null &&
+    place.displayLocationIdentifier !== null &&
+    place.sweepRadiusMiles !== null
+  );
+}
+
+/** The places a journey can actually be timed to: the ones with a postcode.
+ *
+ *  Routing is postcode to postcode (see `TRAVEL_BASIS` in tfl.ts), so a place without one has no
+ *  journey — which is the normal state for somewhere the hunt searches around rather than commutes
+ *  to, and for every neighbourhood the `places_are_hubs` migration folded in.
+ *
+ *  It matters that the travel views ask for this rather than iterating every place. They read an
+ *  absent row as "no route", which is TfL saying the journey is impossible — so listing a
+ *  postcode-less place would put a red "no route to Hampstead" on every listing in the hunt, a
+ *  confident claim about a journey nobody asked for. */
+export function travelDestinations<T extends { postcode: string | null }>(places: T[]): T[] {
+  return places.filter((p) => p.postcode !== null);
+}
+
+/** The places a project goes looking through — everywhere somebody has said to search around,
+ *  whether or not Rightmove's own name for it has been resolved yet.
+ *
+ *  A radius is the statement of intent, so a place with one belongs on the sweep list even with no
+ *  identifier: that is a place whose resolve has not been run or did not work, and it needs a row
+ *  saying so. Filtering on the identifier instead made it vanish between ticking the box and the
+ *  lookup coming back — no link, no error, no row, which reads as the tick having done nothing.
+ *
+ *  `sweepSearchUrl` still refuses to build a URL for it. The list is what to show; the URL is what
+ *  is safe to open, and they are different questions. */
+export function sweepableHubs(places: Place[]): Place[] {
+  return places.filter((p) => p.sweepRadiusMiles !== null || p.locationIdentifier !== null);
+}
+
+/** The `SweepHub` a `place` row stands for. `rightmove` is null unless the place is fully
+ *  searchable — see `isSwept`. */
+export function toSweepHub(place: Place): SweepHub {
   return {
-    name: hub.name,
-    rightmove: verified
+    name: place.label,
+    radiusMiles: place.sweepRadiusMiles,
+    rightmove: isSwept(place)
       ? {
-          locationIdentifier: hub.locationIdentifier!,
-          displayLocationIdentifier: hub.displayLocationIdentifier!,
+          locationIdentifier: place.locationIdentifier!,
+          displayLocationIdentifier: place.displayLocationIdentifier!,
         }
       : null,
   };
@@ -314,38 +366,4 @@ export function nearestHub(
 export function hubLabel(fix: HubFix): string {
   if (fix.miles < 0.05) return `at ${fix.hub.name}`;
   return `${fix.miles.toFixed(1)} mi ${fix.compass} of ${fix.hub.name}`;
-}
-
-/** Saved places count as hubs too.
- *
- *  The answer to "should Work be a hub?" was yes, and it is obviously right: "0.2 mi N of
- *  Work" fixes a flat better than "0.6 mi E of Old Street" ever could, because the office is a
- *  place you have stood in and the station is one you have passed through. Anything already worth
- *  measuring travel time to is a landmark you can picture.
- *
- *  A place never displaces a neighbourhood, though, which is a correction to how this first
- *  shipped. Nearest-wins put "0.3 mi NW of Work" on a flat that a Chrome audit then could not
- *  place on a map at all: the office is somewhere you have stood, but it is not somewhere the
- *  flat *is*, and the name is the one part of the label a reader takes at face value. So a named
- *  hub inside the range always wins, and a place answers only when no hub does — which is exactly
- *  the case the places were added for, a flat near the office and near nothing we are searching.
- *  Places outside the range — Heathrow, the in-laws — never win at all, and cost one distance
- *  calculation to rule out.
- *
- *  A place with no resolved coordinates is skipped rather than guessed at: `addPlace` resolves the
- *  postcode on the way in, but rows saved before that did not, and a hub in the wrong location
- *  rotates every bearing computed from it with nothing on screen looking wrong.
- *
- *  `hubs` is the project's neighbourhoods, already filtered by `hubsFromProject`. It defaults to
- *  empty rather than to any list this file holds: an omitted list costs you the neighbourhood
- *  names, which is visible on every card at once, whereas a defaulted one would put another
- *  project's neighbourhood on your flat and read as a fact. */
-export function hubsWithPlaces(
-  places: Array<{ label: string; lat: number | null; lon: number | null }>,
-  hubs: Hub[] = [],
-): Hub[] {
-  const fromPlaces = places.flatMap((p) =>
-    p.lat === null || p.lon === null ? [] : [{ name: p.label, lat: p.lat, lon: p.lon, fromPlace: true }],
-  );
-  return [...hubs, ...fromPlaces];
 }

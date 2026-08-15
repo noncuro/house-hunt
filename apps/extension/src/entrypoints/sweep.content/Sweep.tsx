@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Hint } from '@house-hunt/ui';
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { findCards, onPageChange } from '@/lib/cards';
-import { sweepableHubs, toSweepHub, type SweepHub } from '@house-hunt/core';
+import { sweepableHubs, toSweepHub, type SweepCriteria, type SweepHub } from '@house-hunt/core';
 import { send } from '@/lib/messages';
 import { readSearchPage, staleAgainst, type SearchPage } from '@/lib/search-page';
 import {
@@ -38,6 +38,9 @@ export function Sweep() {
    *  is not the same as "this project has none", and not the same as "this search is not one of
    *  ours". All three used to be one silence (design D11). */
   const [hubs, setHubs] = useState<SweepHub[] | null>(null);
+  /** The Rightmove filters this hunt sweeps with. Undefined while reading, null once we know it has
+   *  chosen none — the two are different sentences and only the second is worth saying out loud. */
+  const [criteria, setCriteria] = useState<SweepCriteria | null | undefined>(undefined);
   const [stale, setStale] = useState<string[]>([]);
   const [hiding, setHiding] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -55,11 +58,17 @@ export function Sweep() {
     void (async () => {
       // The neighbourhoods are the active project's rows now, not a compile-time list: a second
       // project searching Manchester must not be offered another project's five (design D11).
-      const [history, list] = await Promise.all([send({ type: 'sweep:hubs' }), send({ type: 'hubs:list' })]);
+      const [history, list, prefs] = await Promise.all([
+        send({ type: 'sweep:hubs' }),
+        send({ type: 'places:list' }),
+        send({ type: 'settings:get' }),
+      ]);
       if (history.ok) setSweeps(history.data);
       else push(`Couldn't read the sweep history: ${history.error}`);
       if (list.ok) setHubs(sweepableHubs(list.data).map(toSweepHub));
-      else push(`Couldn't read this project's neighbourhoods: ${list.error}`);
+      else push(`Couldn't read this project's places: ${list.error}`);
+      if (prefs.ok) setCriteria(prefs.data.search ?? null);
+      else push(`Couldn't read what this hunt is looking for: ${prefs.error}`);
     })();
     // `push` is recreated every render; depending on it would re-read forever.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
@@ -69,19 +78,31 @@ export function Sweep() {
   // the cheap, safe half — it writes down what Rightmove already showed us — and making it a
   // button would mean the common case is a page that was looked at and never captured.
   useEffect(() => {
-    if (!page || !hub) return;
+    // `hubs === null` is still reading, not "no neighbourhoods". Recording before that answer lands
+    // would file the page under the search's own name and then, a moment later, file it again under
+    // the neighbourhood it turns out to be — two sightings rows for one page, differing only in a
+    // column nothing displays, and one of them permanently wrong.
+    if (!page || hubs === null) return;
     void (async () => {
       const reply = await send({
         type: 'sweep:record',
-        hub: hub.name,
+        // A search that is not one of this project's neighbourhoods is recorded under its own name.
+        // It used to be refused outright, which threw away the cards on the grounds that nobody had
+        // added the area first — but the cards are the same cards, the sightings are the same
+        // sightings, and "I found somewhere worth looking while browsing" is how a neighbourhood
+        // gets added in the first place. Requiring the setup before the thing it is for is exactly
+        // backwards. What an unadopted search does not get is sweep progress: see `progress` below.
+        hub: hub?.name ?? page.locationName,
         cards: page.cards,
-        progress: {
-          page: page.page,
-          totalPages: page.totalPages,
-          resultCount: page.resultCount,
-          windowDays: page.maxDaysSinceAdded ?? WIDEST_WINDOW,
-          locationIdentifier: page.locationIdentifier,
-        },
+        progress: hub
+          ? {
+              page: page.page,
+              totalPages: page.totalPages,
+              resultCount: page.resultCount,
+              windowDays: page.maxDaysSinceAdded ?? WIDEST_WINDOW,
+              locationIdentifier: page.locationIdentifier,
+            }
+          : null,
       });
       if (reply.ok) {
         setKnowledge(reply.data.knowledge);
@@ -89,7 +110,7 @@ export function Sweep() {
       } else push(`Couldn't record this page: ${reply.error}`);
     })();
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, hub]);
+  }, [page, hub, hubs]);
 
   // Rightmove pages between results without reloading the document, which leaves __NEXT_DATA__
   // describing the page you are no longer on. Watching for ids we have never heard of is how that
@@ -151,32 +172,11 @@ export function Sweep() {
   return (
     <div className="rm-sweep">
       <header className="rm-sweep-head">
-        <h2>{hub ? `Sweeping ${hub.name}` : 'Sweep'}</h2>
+        <h2>{hub ? `Sweeping ${hub.name}` : `Scanning ${page!.locationName}`}</h2>
         <button type="button" className="rm-sweep-hide" onClick={() => setCollapsed(true)} aria-label="Collapse">
           –
         </button>
       </header>
-
-      {/* Three different silences, said as three different sentences. Collapsed into one they
-          read as "not one of our hubs" — which is a claim, and two thirds of the time a false
-          one. */}
-      {hubs === null && <p className="rm-sweep-note rm-sweep-working">Reading this project's neighbourhoods…</p>}
-
-      {hubs?.length === 0 && (
-        <p className="rm-sweep-warn">
-          This house hunt has no searchable neighbourhoods yet, so nothing here has been recorded.
-          Add one in the extension's Settings — it needs a Rightmove location before it can be
-          swept.
-        </p>
-      )}
-
-      {hubs !== null && hubs.length > 0 && !hub && (
-        <p className="rm-sweep-warn">
-          This search is <strong>{page!.locationName}</strong> ({page!.locationIdentifier}), which is
-          not one of this project's neighbourhoods, so nothing here has been recorded. Open one of
-          the sweeps below.
-        </p>
-      )}
 
       {stale.length > 0 && (
         <p className="rm-sweep-warn">
@@ -189,59 +189,74 @@ export function Sweep() {
         </p>
       )}
 
-      {hub && (
-        <>
-          <Ready
-            recorded={recorded}
-            stale={stale.length > 0}
-            counted={counts.total}
-            page={page!}
-            lastPage={lastPage}
-          />
+      {/* Scanning, and everything that serves it, runs on any search page.
+       *
+       *  All of this used to be behind `hub &&`, so a search that was not one of the project's
+       *  neighbourhoods showed three apologies and no controls — while the cards were being
+       *  recorded the whole time, three sentences above. Paging through a search and writing down
+       *  what is on it needs a page, not a neighbourhood; only the sweep *window* underneath needs
+       *  one, and that is the single thing still gated below. */}
+      <Ready
+        recorded={recorded}
+        stale={stale.length > 0}
+        counted={counts.total}
+        page={page!}
+        lastPage={lastPage}
+      />
 
-          <NextPage page={page!} recorded={recorded && stale.length === 0} />
+      <NextPage page={page!} recorded={recorded && stale.length === 0} />
 
-          <ul className="rm-sweep-counts">
-            <li>
-              <Hint text="Never opened — we hold only this search card.">
-                <strong>{counts.new}</strong> new
-              </Hint>
-            </li>
-            <li>
-              <Hint text="Opened, but something is still missing — usually the tab was closed too early.">
-                <strong>{counts.partial}</strong> part-filled
-              </Hint>
-            </li>
-            <li>
-              <Hint text="Located and analysed — nothing left to fetch.">
-                <strong>{counts.complete}</strong> done
-              </Hint>
-            </li>
-          </ul>
+      <ul className="rm-sweep-counts">
+        <li>
+          <Hint text="Never opened — we hold only this search card.">
+            <strong>{counts.new}</strong> new
+          </Hint>
+        </li>
+        <li>
+          <Hint text="Opened, but something is still missing — usually the tab was closed too early.">
+            <strong>{counts.partial}</strong> part-filled
+          </Hint>
+        </li>
+        <li>
+          <Hint text="Located and analysed — nothing left to fetch.">
+            <strong>{counts.complete}</strong> done
+          </Hint>
+        </li>
+      </ul>
 
-          <label className="rm-sweep-toggle">
-            <input type="checkbox" checked={hiding} onChange={(e) => setHiding(e.target.checked)} />
-            Hide the {counts.complete} we already have
-          </label>
+      <label className="rm-sweep-toggle">
+        <input type="checkbox" checked={hiding} onChange={(e) => setHiding(e.target.checked)} />
+        Hide the {counts.complete} we already have
+      </label>
 
-          {/* No opener here any more. Filling in is one long run over everything scanned, and
-              bolted onto this page it could only ever see the cards in front of it and died the
-              moment you paged on — twenty separate unattended runs to sweep five hubs. It lives
-              on the website now (design D5); this page's job is to scan and to say when it is safe
-              to move on. */}
-          {incomplete > 0 && (
-            <p className="rm-sweep-note">
-              {incomplete} on this page {incomplete === 1 ? 'is' : 'are'} not filled in. Open them
-              from the Sweep tab on the website once you have finished scanning — click the
-              extension's icon to get there — it works through every hub at once.
-            </p>
-          )}
-
-          <Progress hub={hub} page={page!} choice={choice} sweep={progress} />
-        </>
+      {/* No opener here any more. Filling in is one long run over everything scanned, and
+          bolted onto this page it could only ever see the cards in front of it and died the
+          moment you paged on — twenty separate unattended runs to sweep five hubs. It lives
+          on the website now (design D5); this page's job is to scan and to say when it is safe
+          to move on. */}
+      {incomplete > 0 && (
+        <p className="rm-sweep-note">
+          {incomplete} on this page {incomplete === 1 ? 'is' : 'are'} not filled in. Open them from
+          Triage on the website once you have finished scanning — click the extension's icon to get
+          there — it works through everything scanned at once.
+        </p>
       )}
 
-      <HubList hubs={hubs} sweeps={sweeps} current={hub} />
+      {/* The one thing that genuinely needs a neighbourhood: a window is measured from the last
+          time this place was swept, and a one-off search has no last time. */}
+      {hub ? (
+        <Progress hub={hub} page={page!} choice={choice} sweep={progress} />
+      ) : hubs === null ? (
+        <p className="rm-sweep-note rm-sweep-working">Checking whether this is a saved neighbourhood…</p>
+      ) : (
+        <p className="rm-sweep-note">
+          Filed under <strong>{page!.locationName}</strong>, which isn't a saved neighbourhood — so
+          there's no sweep window here, just this search. Add it on Your Hunt if you mean to come
+          back to it.
+        </p>
+      )}
+
+      <HubList hubs={hubs} sweeps={sweeps} current={hub} criteria={criteria} />
       <Toasts toasts={toasts} dismiss={dismiss} />
     </div>
   );
@@ -369,18 +384,35 @@ function Progress({
 }
 
 /** The other hubs, so an unrecognised search has somewhere to go. Deliberately a shorter list
- *  than the website's Sweep view, which is the proper home for choosing what to sweep next —
+ *  than the website's Triage tab, which is the proper home for choosing what to sweep next —
  *  this one exists for the case where you have landed on a search that is not one of ours. */
 function HubList({
   hubs,
   sweeps,
   current,
+  criteria,
 }: {
   hubs: SweepHub[] | null;
   sweeps: HubSweep[] | null;
   current: SweepHub | null;
+  /** The Rightmove filters this hunt searches with. Null until it has chosen any, and there is no
+   *  default to fall back on — see `RENTAL_SEARCH`. Every link below is unbuildable without it. */
+  criteria: SweepCriteria | null | undefined;
 }) {
-  if (hubs === null) return null; // the panel above already says they are being read
+  if (hubs === null || criteria === undefined) return null; // still reading; the panel says so
+  // No filters chosen, no links — a sweep with no price and no bedroom bar returns every rental
+  // within a mile, and a hunt that never set its own used to get somebody else's budget instead.
+  if (criteria === null) {
+    return (
+      <details className="rm-sweep-hubs" open>
+        <summary>All sweeps</summary>
+        <p className="rm-sweep-note">
+          This house hunt has not said what it is looking for yet. Set the Rightmove filters on the
+          Your Hunt page — paste a search you have already set up — and the sweeps appear here.
+        </p>
+      </details>
+    );
+  }
   if (hubs.length === 0) {
     return (
       <details className="rm-sweep-hubs" open>
@@ -399,7 +431,7 @@ function HubList({
         {hubs.map((hub) => {
           const last = sweeps?.find((s) => s.hub === hub.name)?.lastSweptAt ?? null;
           const choice = sweepWindow(last);
-          const url = sweepSearchUrl({ hub, days: choice.days });
+          const url = sweepSearchUrl({ hub, days: choice.days, criteria });
           return (
             <li key={hub.name} className={hub.name === current?.name ? 'rm-sweep-here' : undefined}>
               {url ? (

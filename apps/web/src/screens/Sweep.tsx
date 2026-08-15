@@ -3,11 +3,11 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Opener } from '@house-hunt/ui';
-import { toSweepHub } from '@house-hunt/core';
+import { toSweepHub, recheckTargets, RECHECK_AFTER_DAYS } from '@house-hunt/core';
 import { listHubSweeps, locateProperties, pendingSightings, type HubSweep } from '@house-hunt/core/db';
-import { keys, useHubs } from '@/lib/queries';
+import { keys, useHubs, useProjectSettings, useShortlist } from '@/lib/queries';
 import { helloExtension } from '@/lib/bridge';
-import type { ProjectHub } from '@house-hunt/core';
+import type { Place, SweepCriteria } from '@house-hunt/core';
 import { sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
 
 /** Going looking, in two separate halves.
@@ -33,6 +33,10 @@ export function Sweep() {
   // The same key the shell's card view reads, through the same hook, so switching between them
   // costs nothing and the two cannot disagree about which neighbourhoods this house hunt has.
   const hubs = useHubs();
+  // What this hunt searches for. There is no default (see `RENTAL_SEARCH`), so a project that has
+  // not chosen gets no sweep links and a sentence saying where to choose.
+  const settings = useProjectSettings();
+  const criteria = settings.data?.search ?? null;
 
   const sweeps = useQuery({
     queryKey: ['sweeps'],
@@ -49,23 +53,23 @@ export function Sweep() {
     refetchOnWindowFocus: true,
   });
 
-  // Keyed on the hub's id rather than its name: `hub_sweep` re-keyed onto `project_hub.id`, and a
-  // renamed neighbourhood must keep the sweep history that dates its next window.
-  const byHubId = new Map((sweeps.data ?? []).map((s) => [s.hubId, s]));
+  // Keyed on the place's id rather than its name: a renamed place must keep the sweep history that
+  // dates its next window.
+  const byPlaceId = new Map((sweeps.data ?? []).map((s) => [s.placeId, s]));
   const projectHubs = hubs.data ?? [];
 
   return (
     <section className="sweep">
-      <h2>Scan</h2>
+      <h2 className="sweep-fill-heading">Scan</h2>
       <p className="dim">
-        Each link opens Rightmove's own search for that neighbourhood, filtered to what has
+        Each link opens Rightmove's own search around one of your places, filtered to what has
         appeared or changed since it was last swept. The panel on that page records every card and
-        says when it is safe to page on. Scan as many hubs and pages as you like — filling them in
-        is the separate step below, and it works through everything you have scanned.
+        says when it is safe to page on. Scan as many places and pages as you like — filling them
+        in is the separate step below, and it works through everything you have scanned.
       </p>
 
       {(hubs.isPending || sweeps.isPending) && <p className="working">Working…</p>}
-      {hubs.isError && <p className="error">Could not read this project's neighbourhoods.</p>}
+      {hubs.isError && <p className="error">Could not read this project's places.</p>}
       {sweeps.isError && <p className="error">Could not read when each hub was last swept.</p>}
 
       {/* A project with no neighbourhoods gets this rather than an empty grid or, worse, the five
@@ -73,15 +77,24 @@ export function Sweep() {
           is not a friendlier first run, it is a wrong one. */}
       {hubs.isSuccess && projectHubs.length === 0 && (
         <p className="dim">
-          No neighbourhoods yet. A sweep works one neighbourhood's search results to the end, so
-          there is nothing to sweep until you add one — Settings → Neighbourhoods, by name or
-          postcode.
+          Nowhere to sweep yet. A sweep works one place's search results to the end, so there is
+          nothing to do until you tick <em>search around</em> on one of your places — Your Hunt →
+          Places.
+        </p>
+      )}
+
+      {settings.isSuccess && criteria === null && (
+        <p className="dim">
+          Nothing to sweep for yet — this hunt has not said what it is looking for. Set the
+          Rightmove filters on Your Hunt and every place below becomes a link. There is
+          deliberately no default: a price band nobody chose returns a search that looks like it
+          worked and is somebody else&rsquo;s.
         </p>
       )}
 
       <div className="sweep-hubs">
         {projectHubs.map((hub) => (
-          <HubRow key={hub.id} hub={hub} sweep={byHubId.get(hub.id) ?? null} />
+          <HubRow key={hub.id} hub={hub} sweep={byPlaceId.get(hub.id) ?? null} criteria={criteria} />
         ))}
       </div>
 
@@ -92,18 +105,88 @@ export function Sweep() {
         failed={pending.isError}
         refresh={() => void pending.refetch()}
       />
+
+      <h2 className="sweep-fill-heading">Re-check</h2>
+      <Recheck />
     </section>
   );
 }
 
-/** One neighbourhood: the link to go looking with, how far back that search reaches, and how much
+/** Going back over what we already have, which is the half of a sweep that was missing.
+ *
+ *  Everything above finds flats we have never seen. Nothing found out whether the ones we *had*
+ *  seen were still true — so a shortlist could show a place at a price it no longer asks, on a
+ *  market it has already left, with no sign of either. Opening a listing again is the only way to
+ *  ask: the price and the withdrawal both live on Rightmove's page and nothing on our side may go
+ *  and read it (AGENTS.md), so this is the same act as a first look, driven from the same opener.
+ *
+ *  What comes back is written down by paths that already exist. A live page updates the property
+ *  row, and the `property_price` trigger records the price if it has moved; a withdrawn one is
+ *  recognised by the extractor and marks the flat off the market. Neither needed anything new here,
+ *  which is why this screen is a worklist and a button rather than a feature. */
+function Recheck() {
+  const shortlist = useShortlist();
+  const extension = useQuery({ queryKey: ['extension'], queryFn: helloExtension });
+  const client = useQueryClient();
+
+  if (shortlist.isPending) return <p className="working">Working…</p>;
+  if (shortlist.isError) return <p className="error">Could not read the shortlist.</p>;
+
+  const targets = recheckTargets(shortlist.data ?? []);
+  const present = extension.data?.status === 'signed-in' || extension.data?.status === 'signed-out';
+
+  if (targets.length === 0) {
+    return (
+      <p className="dim">
+        Everything on the shortlist was last read within {RECHECK_AFTER_DAYS} days, so there is
+        nothing worth reopening yet.
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <p className="dim">
+        {targets.length} {targets.length === 1 ? 'place has' : 'places have'} not been read for{' '}
+        {RECHECK_AFTER_DAYS} days or more. Reopening tells us what they cost now and which have
+        gone — the ones you love go first, so stopping halfway costs you the least.
+      </p>
+      <div className="sweep-fill">
+        {extension.isPending ? null : present ? (
+          <Opener
+            targets={targets.map((row) => ({
+              rightmoveId: row.rightmoveId,
+              label: row.displayAddress || row.rightmoveId,
+            }))}
+            what="that may have changed"
+            onFinished={() => {
+              // The run rewrites property rows, price history and the off-market set, and every one
+              // of those is on screen somewhere else. Refetching the lot is cheaper to reason about
+              // than naming which of them a given listing happened to touch.
+              void client.invalidateQueries({ queryKey: keys.shortlist });
+              void client.invalidateQueries({ queryKey: keys.offMarket });
+              void client.invalidateQueries({ queryKey: keys.prices });
+            }}
+          />
+        ) : (
+          <p className="dim">
+            Re-checking opens listing pages in the background, which only the extension can do.
+            Install it and sign in there, and this run appears.
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** One place we search around: the link to go looking with, how far back that search reaches, and how much
  *  of a sweep already in progress is still outstanding. */
-function HubRow({ hub, sweep }: { hub: ProjectHub; sweep: HubSweep | null }) {
+function HubRow({ hub, sweep, criteria }: { hub: Place; sweep: HubSweep | null; criteria: SweepCriteria | null }) {
   // From `hub_sweep` and nowhere else. `project_hub` briefly carried a copy and the migration
   // dropped it — two homes for this one date is how they come to disagree, and a disagreement here
   // narrows the next window past listings nobody looked at.
   const choice = sweepWindow(sweep?.lastSweptAt ?? null, new Date(), hub.maxDaysSinceAdded);
-  const url = sweepSearchUrl({ hub: toSweepHub(hub), days: choice.days });
+  const url = sweepSearchUrl({ hub: toSweepHub(hub), days: choice.days, criteria });
 
   // Which pages of a sweep in progress are still outstanding. This is the cross-tab answer to
   // "where did I get to" — the panel on the search page only ever knew about the tab it was in, so
@@ -117,30 +200,45 @@ function HubRow({ hub, sweep }: { hub: ProjectHub; sweep: HubSweep | null }) {
   return (
     <div className="sweep-hub">
       <div className="sweep-hub-head">
-        {/* A hub whose Rightmove identifier we could not verify gets no link at all. A search URL
-            with the wrong identifier still returns a page full of plausible flats somewhere else,
-            which is the failure that looks like success. */}
+        {/* No link unless there is a real search behind it. A URL built from an unverified
+            identifier returns a page full of plausible flats somewhere else, which is the failure
+            that looks like success — and one built with no criteria returns every rental in the
+            radius. The line underneath says which of the three is missing. */}
         {url ? (
           <a className="sweep-go" href={url} target="_blank" rel="noopener">
-            {hub.name} ↗
+            {hub.label} ↗
           </a>
         ) : (
-          <span className="sweep-go sweep-go-off">{hub.name}</span>
+          <span className="sweep-go sweep-go-off">{hub.label}</span>
         )}
         {sweep?.lastResultCount !== null && sweep?.lastResultCount !== undefined && (
           <span className="dim">{sweep.lastResultCount} last time</span>
         )}
       </div>
       <div className={choice.covered ? 'dim sweep-window' : 'sweep-window sweep-gap'}>
+        {/* A null URL has three causes and they need three different things doing about them.
+            Collapsed into "no verified Rightmove location" they read as a fault with this place,
+            and two thirds of the time that is wrong and the advice is to redo something already
+            done. */}
         {url ? (
           windowLabel(choice)
+        ) : criteria === null ? (
+          <>
+            Nothing to search for yet — this hunt has not said what it is looking for. Set the
+            Rightmove filters on Your Hunt and this becomes a link.
+          </>
+        ) : hub.sweepRadiusMiles === null ? (
+          <>
+            Not swept: nobody has said how far around {hub.label} to look. Tick{' '}
+            <em>search around</em> on Your Hunt → Places.
+          </>
         ) : (
           <>
-            Not searchable: this neighbourhood has no verified Rightmove location, so there is no
-            search to open.{' '}
+            Not searchable: this place has no verified Rightmove location, so there is no search to
+            open.{' '}
             {hub.lat === null
               ? 'It has no coordinates either — it is carrying old sweep history and nothing else.'
-              : 'It can still say what a listing is near. Resolve it in Settings to sweep it.'}
+              : 'It can still say what a listing is near. Resolve it on Your Hunt to sweep it.'}
           </>
         )}
       </div>

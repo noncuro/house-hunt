@@ -1,7 +1,9 @@
 /** Cases for the fact-resolution logic: which source wins, what counts as a conflict, and how
  *  a listing date reads back as elapsed time. These are pure functions, so they are cheap to
  *  pin down — and both are places where being quietly wrong looks exactly like being right. */
-import { claimLabel, relativeUpdate, resolveReading } from '../packages/core/src/facts';
+import { claimLabel, flagsFor, relativeUpdate, resolveReading } from '../packages/core/src/facts';
+import { galleryFor } from '../packages/core/src/shortlist';
+import type { Analysis } from '../packages/core/src/types';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -81,6 +83,105 @@ check('a present bath hedges the same way', claimLabel('bathtub-present', 'low')
 check('rooms hedge too', claimLabel('rooms-small', 'medium'), 'rooms look small');
 // Analyses predating the confidence field return null, and those were mostly floorplan reads.
 check('no confidence reads as high', claimLabel('outdoor-absent', null), 'no outdoor space');
+
+// ------------------------------------------------------------------------------------------- //
+console.log('\namenity flags follow what the hunt actually said');
+
+/** An analysis with everything unknown but the one field a case is about. */
+function analysis(fields: Partial<Analysis>): Analysis {
+  return {
+    model: 'test', analysedAt: '', imageCount: 0,
+    hasFloorplan: true, floorplanLegible: null, floorplanSqft: null, floorplanSqftSource: null,
+    floorplanConfidence: null, bedrooms: null, bathrooms: null,
+    biggestRoomLabel: null, biggestRoomSqft: null, biggestRoomConfidence: null,
+    hasBathtub: null, bathtubConfidence: null,
+    hasOutdoorSpace: null, outdoorKind: null, outdoorSqft: null, outdoorIsEstimate: null,
+    outdoorConfidence: null, isHouseShare: null, houseShareConfidence: null,
+    laundry: null, laundryConfidence: null, hasDishwasher: null, dishwasherConfidence: null,
+    bedInKitchen: null, bedInKitchenConfidence: null, utilitiesIncluded: null, utilitiesConfidence: null,
+    naturalLight: null, naturalLightConfidence: null, summary: null,
+    ...fields,
+  };
+}
+
+const noBath = { analysis: analysis({ hasBathtub: false }), floorplanUrl: 'plan.png' };
+const keys = (prefs?: Parameters<typeof flagsFor>[1]) => flagsFor(noBath, prefs).map((f) => f.key);
+
+// The complaint this exists for: the Your Hunt page offers "Don't mind" and it used to do nothing,
+// so a hunt that had said it did not care still got "no bathtub" on every panel.
+check('an amenity nobody minds is not flagged', keys({ amenities: {} }).includes('bathtub'), false);
+check(
+  'and neither is one on a hunt that has set no preferences at all',
+  keys(undefined).includes('bathtub'),
+  false,
+);
+check('"nice to have" brings it back', keys({ amenities: { bathtub: 'nice' } }).includes('bathtub'), true);
+check('so does "must have"', keys({ amenities: { bathtub: 'must' } }).includes('bathtub'), true);
+check(
+  'and a must-have absence is red',
+  flagsFor(noBath, { amenities: { bathtub: 'must' } }).find((f) => f.key === 'bathtub')?.severity,
+  'red',
+);
+// Saying you want a bathtub must not silence everything else you did not mention.
+check(
+  'one preference does not turn the others on',
+  keys({ amenities: { bathtub: 'must' } }).includes('outdoor'),
+  false,
+);
+// The flags that are not a matter of taste stay regardless — a missing floorplan is missing
+// whatever anybody prefers.
+check(
+  'a missing floorplan is not a preference',
+  flagsFor({ analysis: analysis({ hasFloorplan: false }), floorplanUrl: null }, undefined).map((f) => f.key),
+  ['floorplan'],
+);
+
+// The whole-flat bar. Absent means no opinion — the commonest state, and the one where a red flag
+// would be an invention rather than a judgement.
+const small = { analysis: null, floorplanUrl: null, size: { listedSqft: 400, listedSource: 'sizings' as const } };
+const sizeKeys = (source: Parameters<typeof flagsFor>[0], prefs?: Parameters<typeof flagsFor>[1]) =>
+  flagsFor(source, prefs)
+    .map((f) => f.key)
+    .filter((k) => k === 'size');
+check('no bar, no size flag', sizeKeys(small, {}), []);
+check(
+  'under the bar is red',
+  flagsFor(small, { minSqft: 600 }).find((f) => f.key === 'size')?.severity,
+  'red',
+);
+check(
+  'at the bar is not under it',
+  sizeKeys({ ...small, size: { listedSqft: 600, listedSource: 'sizings' } }, { minSqft: 600 }),
+  [],
+);
+// An unmeasured flat is not a small one — the same rule triage's filters follow.
+check(
+  'no measurement, no size flag',
+  sizeKeys({ analysis: null, floorplanUrl: null }, { minSqft: 600 }),
+  [],
+);
+
+console.log('galleryFor');
+// The floorplan leads and is not repeated further down the set.
+check(
+  'the floorplan is first, and only once',
+  galleryFor({ floorplanUrl: 'plan.jpg', imageUrls: ['a.jpg', 'plan.jpg', 'b.jpg'] }),
+  ['plan.jpg', 'a.jpg', 'b.jpg'],
+);
+// Rightmove repeats the hero shot at the end of the set often enough, and the URL is what every
+// view keys its thumbnails on — two identical keys is a React warning and a thumbnail that can go
+// missing.
+check(
+  'a photo listed twice appears once',
+  galleryFor({ floorplanUrl: null, imageUrls: ['a.jpg', 'b.jpg', 'a.jpg'] }),
+  ['a.jpg', 'b.jpg'],
+);
+check(
+  'and the first occurrence keeps its place',
+  galleryFor({ floorplanUrl: null, imageUrls: ['a.jpg', 'b.jpg', 'a.jpg', 'c.jpg'] })[1],
+  'b.jpg',
+);
+check('no floorplan is not a blank first frame', galleryFor({ imageUrls: ['a.jpg'] }), ['a.jpg']);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

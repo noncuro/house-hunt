@@ -12,7 +12,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SEED_HUBS, toSweepHub } from '../packages/core/src/hubs';
-import type { ProjectHub } from '../apps/extension/src/lib/messages';
+import type { Place } from '../packages/core/src/types';
 import { readSearchPage, staleAgainst, type SearchPage } from '../apps/extension/src/lib/search-page';
 import {
   RESULTS_PER_PAGE,
@@ -77,8 +77,20 @@ check('two words', searchLocationFor('Belsize-Park-Station.html'), 'Belsize Park
 check('a region, which has no "Station" to lose', searchLocationFor('Primrose-Hill.html'), 'Primrose Hill');
 
 console.log('sweepSearchUrl');
+/** A hunt's filters, for the checks only — the same standing as `SEED_HUBS` itself, and for the
+ *  same reason it is written down here rather than in core: a price band that ships in the source
+ *  is one project's budget applied to every project. `sweepSearchUrl` now refuses without one, and
+ *  these are the cases that prove it. */
+const CRITERIA = {
+  minPrice: '4000',
+  maxPrice: '6000',
+  minBedrooms: '1',
+  maxBedrooms: '3',
+  radius: '1.0',
+  _includeLetAgreed: 'on',
+};
 const hampstead = SEED_HUBS.find((h) => h.name === 'Hampstead')!;
-const url = new URL(sweepSearchUrl({ hub: hampstead, days: 14 })!);
+const url = new URL(sweepSearchUrl({ hub: hampstead, days: 14, criteria: CRITERIA })!);
 check('points at the search page', url.origin + url.pathname, 'https://www.rightmove.co.uk/property-to-rent/find.html');
 check('carries the verified identifier', url.searchParams.get('locationIdentifier'), 'STATION^4187');
 check('and tells Rightmove to use it', url.searchParams.get('useLocationIdentifier'), 'true');
@@ -91,27 +103,73 @@ check('the price ceiling', url.searchParams.get('maxPrice'), '6000');
 check('page one starts at index zero', url.searchParams.get('index'), '0');
 check(
   'page three starts a page-size in from page two',
-  new URL(sweepSearchUrl({ hub: hampstead, days: 7, page: 3 })!).searchParams.get('index'),
+  new URL(sweepSearchUrl({ hub: hampstead, days: 7, page: 3, criteria: CRITERIA })!).searchParams.get('index'),
   String(RESULTS_PER_PAGE * 2),
 );
 
 const primrose = SEED_HUBS.find((h) => h.name === 'Primrose Hill')!;
 check(
   'Primrose Hill is a region, and the URL says so',
-  new URL(sweepSearchUrl({ hub: primrose, days: 14 })!).searchParams.get('locationIdentifier'),
+  new URL(sweepSearchUrl({ hub: primrose, days: 14, criteria: CRITERIA })!).searchParams.get('locationIdentifier'),
   'REGION^87390',
 );
 check(
   'a hub with no verified identifier gets no URL at all',
-  sweepSearchUrl({ hub: { name: 'Nowhere', rightmove: null }, days: 14 }),
+  // A radius, so the missing identifier is the only thing that can be refusing.
+  sweepSearchUrl({ hub: { name: 'Nowhere', rightmove: null, radiusMiles: 1 }, days: 14, criteria: CRITERIA }),
   null,
+);
+
+// The change this refusal exists for: there is no built-in price band any more, so a hunt that has
+// chosen nothing gets no link rather than somebody else's budget. Both empty shapes count, since a
+// stored `{}` and an absent row mean the same thing to whoever set neither.
+check(
+  'no criteria at all, no URL',
+  sweepSearchUrl({ hub: hampstead, days: 14, criteria: null }),
+  null,
+);
+check(
+  'and an empty set is the same answer',
+  sweepSearchUrl({ hub: hampstead, days: 14, criteria: {} }),
+  null,
+);
+// Whatever the hunt saved wins over nothing, but never over the parameters a sweep owns: a pasted
+// URL carrying its own location must not pin every neighbourhood to that one.
+check(
+  'a location in the saved criteria cannot override the hub',
+  new URL(sweepSearchUrl({
+    hub: hampstead,
+    days: 14,
+    criteria: { ...CRITERIA, locationIdentifier: 'STATION^9999', sortType: '1' },
+  })!).searchParams.get('locationIdentifier'),
+  'STATION^4187',
+);
+check(
+  'and neither can it change the sort that makes a sweep terminate',
+  new URL(sweepSearchUrl({
+    hub: hampstead,
+    days: 14,
+    criteria: { ...CRITERIA, sortType: '1' },
+  })!).searchParams.get('sortType'),
+  '6',
+);
+// Filters this app has never heard of ride along untouched — the whole point of storing the query
+// rather than modelling each one.
+check(
+  'a filter we do not model is passed straight through',
+  new URL(sweepSearchUrl({
+    hub: hampstead,
+    days: 14,
+    criteria: { ...CRITERIA, mustHave: 'garden,parking' },
+  })!).searchParams.get('mustHave'),
+  'garden,parking',
 );
 
 console.log('every sweep hub is usable');
 for (const hub of SEED_HUBS) {
   // A null here is legitimate in the type and must be legitimate on screen too, but if one of
   // the five we verified goes null it is a regression, not a design decision.
-  check(`${hub.name} has a search URL`, sweepSearchUrl({ hub, days: 14 }) !== null, true);
+  check(`${hub.name} has a search URL`, sweepSearchUrl({ hub, days: 14, criteria: CRITERIA }) !== null, true);
 }
 
 console.log('the seeded rows resolve to the same searches as the old constant');
@@ -129,19 +187,19 @@ const seededRows = readSeededHubs(MIGRATION);
 
 check('the migration seeds five neighbourhoods', seededRows.length, 5);
 for (const seeded of seededRows) {
-  const constant = SEED_HUBS.find((h) => h.name === seeded.name);
+  const constant = SEED_HUBS.find((h) => h.name === seeded.label);
   if (!constant) {
     failures++;
-    console.log(`  FAIL the migration seeds "${seeded.name}", which SEED_HUBS does not have`);
+    console.log(`  FAIL the migration seeds "${seeded.label}", which SEED_HUBS does not have`);
     continue;
   }
   // Coordinates first: these came from TfL's StopPoint API and were reverse-geocoded to confirm the
   // ward, and re-deriving one would rotate every bearing computed from it.
-  check(`${seeded.name} keeps its exact coordinates`, [seeded.lat, seeded.lon], [constant.lat, constant.lon]);
+  check(`${seeded.label} keeps its exact coordinates`, [seeded.lat, seeded.lon], [constant.lat, constant.lon]);
   check(
-    `${seeded.name} builds the identical search URL from the database`,
-    sweepSearchUrl({ hub: toSweepHub(seeded), days: 14 }),
-    sweepSearchUrl({ hub: constant, days: 14 }),
+    `${seeded.label} builds the identical search URL from the database`,
+    sweepSearchUrl({ hub: toSweepHub(seeded), days: 14, criteria: CRITERIA }),
+    sweepSearchUrl({ hub: constant, days: 14, criteria: CRITERIA }),
   );
 }
 
@@ -162,7 +220,47 @@ check(
 );
 // The coordinate-less rows the migration keeps for dropped hubs. They carry sweep history and
 // nothing else, and they must not produce a search.
-check('a hub kept only for its history has no search', sweepSearchUrl({ hub: toSweepHub(hubRow({ name: "King's Cross" })), days: 14 }), null);
+check(
+  'a place kept only for its history has no search',
+  sweepSearchUrl({ hub: toSweepHub(hubRow({ label: "King's Cross" })), days: 14, criteria: CRITERIA }),
+  null,
+);
+// A place with an identifier but no radius is not a sweep centre — nobody has said how far to look,
+// and picking a distance is the same class of invention as picking a price band.
+check(
+  'an identifier without a radius is not searchable',
+  sweepSearchUrl({
+    hub: toSweepHub(
+      hubRow({
+        locationIdentifier: 'STATION^4187',
+        displayLocationIdentifier: 'Hampstead-Station.html',
+        sweepRadiusMiles: null,
+      }),
+    ),
+    days: 14,
+    criteria: CRITERIA,
+  }),
+  null,
+);
+// The place's radius wins over one carried in on a pasted URL: one radius for every place is what
+// having a radius per place exists to prevent.
+check(
+  "the place's own radius, not the pasted one",
+  new URL(
+    sweepSearchUrl({
+      hub: toSweepHub(
+        hubRow({
+          locationIdentifier: 'STATION^4187',
+          displayLocationIdentifier: 'Hampstead-Station.html',
+          sweepRadiusMiles: 0.5,
+        }),
+      ),
+      days: 14,
+      criteria: CRITERIA,
+    })!,
+  ).searchParams.get('radius'),
+  '0.5',
+);
 
 console.log('sweepWindow — a hub\'s own floor');
 // `project_hub.max_days_since_added` is a floor and never a ceiling. A per-hub setting that could
@@ -237,17 +335,20 @@ if (!existsSync(fixture)) {
 }
 
 
-/** A `project_hub` row, with only the fields a case cares about spelled out. */
-function hubRow(over: Partial<ProjectHub>): ProjectHub {
+/** A `place` row, with only the fields a case cares about spelled out. A radius by default,
+ *  because these cases are about the identifier: a row missing both would be refused for the wrong
+ *  reason and the check would pass without testing anything. */
+function hubRow(over: Partial<Place>): Place {
   return {
     id: 'id',
-    name: 'Somewhere',
+    label: 'Somewhere',
+    postcode: null,
     lat: null,
     lon: null,
     locationIdentifier: null,
     displayLocationIdentifier: null,
+    sweepRadiusMiles: 1,
     maxDaysSinceAdded: null,
-    sortOrder: 0,
     ...over,
   };
 }
@@ -258,7 +359,7 @@ function hubRow(over: Partial<ProjectHub>): ProjectHub {
  *  test is "what the database holds resolves to the same search as the constant did", and a copy of
  *  the values in this file would only ever prove that a copy agrees with itself. Strict on purpose
  *  — a shape it does not recognise is a failure with a sentence, never zero rows quietly passing. */
-function readSeededHubs(path: string): ProjectHub[] {
+function readSeededHubs(path: string): Place[] {
   const sql = readFileSync(path, 'utf8');
   const block =
     /insert into project_hub \(project_id, name, lat, lon, rightmove_location_id, display_location_id, sort_order\)\s*values\s*([\s\S]*?)on conflict/.exec(
@@ -269,7 +370,7 @@ function readSeededHubs(path: string): ProjectHub[] {
     console.log(`  FAIL could not find the project_hub seed in ${path} — has the migration been reshaped?`);
     return [];
   }
-  const rows: ProjectHub[] = [];
+  const rows: Place[] = [];
   for (const line of block[1]!.split('\n')) {
     if (!line.trim().startsWith('(')) continue;
     const m = /\('([^']+)',\s*'([^']+)',\s*(-?[\d.]+),\s*(-?[\d.]+),\s*'([^']+)',\s*'([^']+)',\s*(\d+)\)/.exec(line);
@@ -281,12 +382,11 @@ function readSeededHubs(path: string): ProjectHub[] {
     rows.push(
       hubRow({
         id: m[1]!,
-        name: m[2]!,
+        label: m[2]!,
         lat: Number(m[3]),
         lon: Number(m[4]),
         locationIdentifier: m[5]!,
         displayLocationIdentifier: m[6]!,
-        sortOrder: Number(m[7]),
       }),
     );
   }

@@ -65,11 +65,32 @@ export interface Paging {
  *  The page is clamped rather than reset. Filtering the shortlist down to "viewed" while sitting on
  *  page four must land on the last page of what is left, not on an empty table that looks like a
  *  filter matching nothing. */
-export function usePaging<T>(items: T[]): Paging & { shown: T[] } {
+export function usePaging<T>(
+  items: T[],
+  /** Bring one item onto the visible page, by its index in `items` — the answer to "jump to this
+   *  flat" from somewhere that is not this list.
+   *
+   *  A list that pages is a list where most of its own contents are not in the document, and every
+   *  jump into it was written before that was true. Clicking a map pin set the view to the list and
+   *  scrolled to `#card-<id>`, which for anything past the first twenty-five is an element that
+   *  does not exist — so the scroll found nothing, gave up after its second, and left you at the
+   *  top of the shortlist looking like the click had done nothing but change tabs. Paging is state
+   *  this hook owns, so reaching it has to be something the hook offers.
+   *
+   *  Passed as an index rather than a predicate because the caller already knows where the item is
+   *  — it has just searched the list to decide whether to jump at all — and -1/undefined is the
+   *  natural "not in this list", which every pile but one will be answering. */
+  reveal?: number,
+): Paging & { shown: T[] } {
   const [size, setSize] = useState<PageSize>(() =>
     typeof window === 'undefined' ? DEFAULT_PAGE_SIZE : readStored(),
   );
   const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    if (reveal === undefined || reveal < 0) return;
+    setPage(Math.floor(reveal / size));
+  }, [reveal, size]);
 
   useEffect(() => {
     const onChange = (next: PageSize) => {

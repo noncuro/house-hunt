@@ -7,6 +7,7 @@
  *  show the most trustworthy one, mark it, and put the rest one hover away. */
 
 import type { Confidence, Laundry, LightLevel } from './types';
+import type { SweepCriteria } from './sweep';
 
 export interface Candidate {
   /** Where the number came from, in words — this is what the tooltip shows. */
@@ -277,9 +278,20 @@ export interface HuntPreferences {
   /** A biggest-room bar in sq ft: a flat whose largest room clears it earns the great-room mark.
    *  Null/absent leaves the default `BIGGEST_ROOM_BIG_SQFT`. */
   greatRoomMinSqft?: number | null;
+  /** The whole flat's floor area, in sq ft, below which it is too small for this hunt.
+   *
+   *  The obvious preference, and the one that was missing: every surface already resolves and shows
+   *  a floor area, triage can filter on it, and nothing ever said whether a given number was *bad*.
+   *  A hunt looking for 900 sq ft and a hunt looking for 450 read the identical panel on a 600 sq ft
+   *  flat. Absent means no opinion, and no flag either way — a size bar is not something to guess. */
+  minSqft?: number | null;
   /** Per amenity, whether the hunt must have it or would merely like it. Absent means "don't mind",
    *  which is the default behaviour these flags already had. */
   amenities?: Partial<Record<AmenityKey, AmenityWant>>;
+  /** The Rightmove filters a sweep runs with — see `SweepCriteria`. Absent means the criteria this
+   *  project swept with before any of them were choosable, so nothing changes for a hunt that has
+   *  never set them. */
+  search?: SweepCriteria;
 }
 
 /** A station distance in the unit Rightmove actually supplied.
@@ -344,6 +356,10 @@ export interface FlagSource {
     naturalLightConfidence?: Confidence | null;
   } | null;
   floorplanUrl?: string | null;
+  /** Where the flat's floor area can be read from — the same `SizeSource` the size on screen beside
+   *  the flags is resolved from, so the two can't disagree about which figure wins. Callers already
+   *  hold one: `sizeOf(entry)`. */
+  size?: SizeSource | null;
 }
 
 /** One glyph per severity, and never the same glyph for two of them.
@@ -357,8 +373,29 @@ export const FLAG_ICON: Record<Severity, string> = { red: '⛔', yellow: '⚠️
 const RED = FLAG_ICON.red;
 const AMBER = FLAG_ICON.yellow;
 
-export function flagsFor({ analysis, floorplanUrl }: FlagSource, prefs?: HuntPreferences): Flag[] {
+export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: HuntPreferences): Flag[] {
   const flags: Flag[] = [];
+  const floorArea = size ? resolveSize(size) : null;
+
+  // The whole flat against the hunt's own bar, before anything the photos say. Only when both
+  // numbers exist: an unmeasured flat is not a small one (the same rule triage's filters follow),
+  // and a hunt that has set no bar has no opinion for this to report.
+  //
+  // Red rather than amber, and deliberately unlike the main-room flag above it. A main room a
+  // little under target is a reservation you settle by standing in it; a flat two hundred square
+  // feet under what you need is not a viewing you were going to enjoy. The bar is the hunt's own
+  // number, so being under it is their own judgement rather than ours.
+  if (prefs?.minSqft != null && floorArea && floorArea.value < prefs.minSqft) {
+    flags.push({
+      key: 'size',
+      severity: 'red',
+      icon: RED,
+      // The caveat rides along: a figure read out of the description may be measuring the garden,
+      // and being told a flat is too small on the strength of one is worth knowing about.
+      text: `${floorArea.value} sq ft — under your ${prefs.minSqft}${floorArea.approximate ? ', and approximate' : ''}`,
+      confidence: null,
+    });
+  }
 
   if (!analysis) {
     if (!floorplanUrl) {
@@ -506,7 +543,30 @@ export function flagsFor({ analysis, floorplanUrl }: FlagSource, prefs?: HuntPre
   }
 
   applyAmenityWants(flags, analysis, prefs);
-  return flags;
+  return forgetAmenitiesNobodyMinds(flags, prefs);
+}
+
+/** Drop every flag about an amenity this hunt said it does not mind about.
+ *
+ *  The Your Hunt page offers three answers per amenity — don't mind, nice to have, must have — and
+ *  until now the first of them did nothing at all. A hunt that had explicitly said it did not care
+ *  about a bathtub still got "no bathtub" in amber on every panel, which is the settings screen and
+ *  the panel disagreeing in writing about what the hunt is looking for. Told twice a day, on a flat
+ *  you have no objection to, that it lacks a thing you said you did not want, the flags stop being
+ *  read at all — and the ones that matter go with them.
+ *
+ *  The consequence worth stating: a hunt that has never opened the preferences has every amenity at
+ *  "don't mind", so it gets no amenity flags. That is the same sentence as above and it is the
+ *  honest default — the screen says "don't mind" for all six before anyone touches it, and a panel
+ *  contradicting that was the bug. The flags this never touches are the ones that are not a matter
+ *  of preference: no floorplan, an unreadable floorplan, the size against the great-room bar.
+ */
+function forgetAmenitiesNobodyMinds(flags: Flag[], prefs: HuntPreferences | undefined): Flag[] {
+  const minded = new Set(
+    AMENITIES.filter((a) => prefs?.amenities?.[a.key]).map((a) => a.flagKey),
+  );
+  const optional = new Set(AMENITIES.map((a) => a.flagKey));
+  return flags.filter((f) => !optional.has(f.key) || minded.has(f.key));
 }
 
 /** How much each amenity the hunt named actually matters to it, layered on top of the default flags.

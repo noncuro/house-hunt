@@ -5,7 +5,8 @@
  *  layer in `@house-hunt/core/db` directly, which is most of what moving the app out of the
  *  extension bought. What is left here is what a script running inside somebody else's page
  *  needs, and it stays typed end to end because that is the part of this design that works. */
-import type { Point, SearchCard } from '@house-hunt/core';
+import type {
+  HuntPreferences, Point, SearchCard } from '@house-hunt/core';
 import type { HubSweep, PendingSighting, StoredModel, SweepKnowledge } from '@house-hunt/core/db';
 import type {
   AnalysisRequest,
@@ -14,8 +15,7 @@ import type {
   Invite,
   InviteResult,
   LocationResult,
-  ProjectHub,
-  HubDraft,
+  PlacePatch,
   ProjectMember,
   ProjectSummary,
   RedeemResult,
@@ -49,11 +49,9 @@ export type {
   AnalysisRequest,
   AuthState,
   Headcount,
-  HubDraft,
   Invite,
   InviteResult,
   LocationResult,
-  ProjectHub,
   ProjectMember,
   ProjectSummary,
   RedeemResult,
@@ -116,6 +114,7 @@ export type Request =
   | { type: 'off-market:set'; rightmoveId: string; off: boolean; reason?: string }
   | { type: 'places:list' }
   | { type: 'places:add'; label: string; postcode: string }
+  | { type: 'places:update'; id: string; patch: PlacePatch }
   | { type: 'places:remove'; id: string }
   | { type: 'travel:get'; postcode: string; refresh?: boolean }
   | { type: 'travel:cached'; postcodes: string[] }
@@ -127,11 +126,7 @@ export type Request =
    *  panel; scoring itself is pure arithmetic, done in the content script against these weights. */
   | { type: 'model:get' }
   // --- hubs --------------------------------------------------------------------------------
-  | { type: 'hubs:list' }
-  | { type: 'hubs:add'; hub: HubDraft }
-  | { type: 'hubs:update'; id: string; patch: Partial<HubDraft> }
-  | { type: 'hubs:remove'; id: string }
-  | { type: 'hubs:resolve-location'; name: string }
+  | { type: 'places:resolve-location'; name: string }
   // --- spend -------------------------------------------------------------------------------
   | { type: 'spend:summary' }
   // --- admin -------------------------------------------------------------------------------
@@ -152,15 +147,22 @@ export type Request =
    *  has to have landed before the "safe to page on" tick can be honest. */
   | {
       type: 'sweep:record';
-      /** The hub's name, as the search page was opened under. Resolved to a `project_hub` row in
-       *  the active project; `hubId` short-circuits that when the caller already has it. */
+      /** What to file these sightings under. Normally a neighbourhood's name, resolved to a
+       *  `project_hub` row in the active project (`hubId` short-circuits that when the caller
+       *  already has it) — but for a search nobody has adopted it is simply the location Rightmove
+       *  named, and no row is looked up at all. See `progress`. */
       hub: string;
       hubId?: string;
       cards: SearchCard[];
       /** Where in the sweep this page is. Carried with the cards rather than sent separately: a
        *  panel that recorded the last page and then failed to say so would leave the hub forever
-       *  one page short of swept, with nothing on screen looking wrong. */
-      progress: {
+       *  one page short of swept, with nothing on screen looking wrong.
+       *
+       *  Null for a search that is not one of this project's neighbourhoods. Those are recorded —
+       *  the cards are the same cards, and the sightings are worth having — but there is nothing to
+       *  be part-way through: sweep progress is pages-seen against a hub, and a search somebody ran
+       *  once has no hub and no next time to compare against. */
+      progress: null | {
         page: number;
         totalPages: number;
         resultCount: number;
@@ -169,6 +171,10 @@ export type Request =
       };
     }
   | { type: 'sweep:hubs' }
+  /** This hunt's preferences, which the sweep panel needs for the Rightmove filters to search
+   *  with. There is no default for those (see `RENTAL_SEARCH`), so a panel that could not ask
+   *  would have to invent a price band or refuse to link. */
+  | { type: 'settings:get' }
   | { type: 'sweep:pending' }
   /** Open a listing in a background tab. A content script can only `window.open`, which steals
    *  focus — unbearable when the paced opener does it a dozen times over several minutes. */
@@ -208,6 +214,7 @@ export interface ResponseMap {
   'off-market:set': null;
   'places:list': Place[];
   'places:add': Place;
+  'places:update': Place;
   'places:remove': null;
   'travel:get': TravelTime[];
   /** Postcode -> the times already in the cache. Never calls TfL, so a gap stays a gap. */
@@ -223,11 +230,7 @@ export interface ResponseMap {
   'analysis:request': AnalysisRequest;
   'model:get': StoredModel | null;
 
-  'hubs:list': ProjectHub[];
-  'hubs:add': ProjectHub;
-  'hubs:update': ProjectHub;
-  'hubs:remove': null;
-  'hubs:resolve-location': LocationResult;
+  'places:resolve-location': LocationResult;
 
   'spend:summary': SpendSummary;
 
@@ -245,6 +248,7 @@ export interface ResponseMap {
    *  page completed the sweep. */
   'sweep:record': { knowledge: Record<string, SweepKnowledge>; sweep: HubSweep | null };
   'sweep:hubs': HubSweep[];
+  'settings:get': HuntPreferences;
   'sweep:pending': PendingSighting[];
   'tab:open': null;
 }

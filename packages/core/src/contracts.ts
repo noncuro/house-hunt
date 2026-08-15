@@ -119,37 +119,17 @@ export type InviteResult =
    *  project, no such project. Named rather than thrown, so the view prints the sentence. */
   | { status: 'refused'; reason: string };
 
-/** A neighbourhood a project searches around. A row with no `locationIdentifier` answers only
- *  "what is this listing near"; one with it is also swept. A row with no point answers neither and
- *  must be skipped rather than defaulted — a guessed coordinate silently rotates every bearing
- *  computed from it (design D11). */
-export interface ProjectHub {
-  id: string;
-  name: string;
-  lat: number | null;
-  lon: number | null;
-  locationIdentifier: string | null;
-  displayLocationIdentifier: string | null;
-  maxDaysSinceAdded: number | null;
-  /** Deliberately absent: `lastSweptAt` belongs to the hub's `HubSweep` row, which is the only
-   *  thing that also knows which pages the claim rests on. A field here could only ever be null,
-   *  and a null that looks like "never swept" is exactly how a window gets widened or narrowed
-   *  wrongly. Read `hubs:sweeps`. */
-  sortOrder: number;
+/** What can be changed about a place *after* it exists: whether the hunt sweeps around it, how
+ *  far, and how often. The label and the postcode are what the place is, and changing either means
+ *  resolving a coordinate again — that is `addPlace`'s job, not a patch's. */
+export interface PlacePatch {
+  locationIdentifier?: string | null;
+  displayLocationIdentifier?: string | null;
+  sweepRadiusMiles?: number | null;
+  maxDaysSinceAdded?: number | null;
 }
 
-export interface HubDraft {
-  name: string;
-  /** Either a postcode to resolve, or a point already known. One of the two is required. */
-  postcode?: string;
-  lat?: number;
-  lon?: number;
-  locationIdentifier?: string;
-  displayLocationIdentifier?: string;
-  maxDaysSinceAdded?: number;
-}
-
-/** One resolution of a neighbourhood name to the identifier Rightmove searches it by.
+/** One resolution of a place's name to the identifier Rightmove searches it by.
  *
  *  This is the single hand-run lookup `pnpm find:locations` performs today, moved behind an Edge
  *  Function so adding a hub does not need a terminal. It stays inside the standing no-crawl rule

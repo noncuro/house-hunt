@@ -1,6 +1,6 @@
 import './hub.css';
 import { Hint } from './Hint';
-import { NO_HUB_NEARBY, type Hub, hubLabel, hubsWithPlaces, nearestHub } from '@house-hunt/core';
+import { NO_HUB_NEARBY, type Hub, hubLabel, nearestHub } from '@house-hunt/core';
 import type { Point } from '@house-hunt/core';
 
 /** Where a listing is, said the way you actually hold a city in your head: a neighbourhood you
@@ -53,11 +53,11 @@ export function Compass({ bearing, size = 22 }: { bearing: number; size?: number
 export function HubFact({
   point,
   hubs,
-  places = [],
   approximate = false,
 }: {
   point: Point | null | undefined;
-  /** The project's neighbourhoods, from `hubs:list` through `hubsFromProject` (design D11).
+  /** The places this hunt cares about, through `hubsFromProject` — which drops the ones with no
+   *  coordinate and marks which are searched around rather than merely commuted to.
    *
    *  Required, and threaded from whichever view is rendering this, because there is no list this
    *  component could fall back to that would be right: hubs are a project's own rows now, and a
@@ -68,11 +68,6 @@ export function HubFact({
    *  look identical on screen and mean opposite things. An empty array is a real answer: a house
    *  hunt with no neighbourhoods yet. */
   hubs: Hub[] | null | undefined;
-  /** The places travel times are measured to. They are landmarks you have actually stood in, so
-   *  they make better fixes than a station you have passed through — "0.2 mi N of Work" beats
-   *  "0.6 mi E of Old Street". Nearest still wins outright, so one only displaces a named hub when
-   *  it is genuinely closer, and a far-off place like Heathrow simply never wins. */
-  places?: Array<{ label: string; lat: number | null; lon: number | null }>;
   /** True when the position came from Rightmove's map pin, which is deliberately fuzzed
    *  (`pinType: "APPROXIMATE_POINT"`). Fine for a distance, dubious for a bearing over a few
    *  hundred yards, so it is marked rather than presented as a measurement. */
@@ -89,36 +84,34 @@ export function HubFact({
     return (
       <Hint
         className="rm-hub-none rm-hub-failed"
-        text="This house hunt's neighbourhoods could not be read, so there is nothing to measure against. It is a failed read, not a flat in the middle of nowhere — reload, and check Settings → Neighbourhoods if it persists."
+        text="This house hunt's places could not be read, so there is nothing to measure against. It is a failed read, not a flat in the middle of nowhere — reload, and check Your Hunt → Places if it persists."
       >
-        neighbourhoods unavailable
+        places unavailable
       </Hint>
     );
   }
 
-  const withPlaces = hubsWithPlaces(places, hubs);
-
   // A brand new house hunt has no neighbourhoods and may have no places either (design D11). That
   // is not "nothing is nearby", it is nothing to be near — and the fix for it is a different one.
-  if (withPlaces.length === 0) {
+  if (hubs.length === 0) {
     return (
       <Hint
         className="rm-hub-none"
-        text="This house hunt has no neighbourhoods, and no saved place with resolved coordinates, so there is nothing to fix this listing against. Add one in Settings → Neighbourhoods."
+        text="This house hunt has no places with resolved coordinates, so there is nothing to fix this listing against. Add one in Your Hunt → Places."
       >
         nothing to place this against
       </Hint>
     );
   }
 
-  const fix = nearestHub(point, withPlaces);
+  const fix = nearestHub(point, hubs);
   if (!fix) {
     // Naming the closest hub anyway is the failure mode this exists to prevent: "Angel" on
     // somewhere two miles into Hackney is read as a fact and acted on.
     return (
       <Hint
         className="rm-hub-none"
-        text={`None of ${withPlaces.map((h) => h.name).join(', ')} is within a mile of this postcode.`}
+        text={`None of ${hubs.map((h) => h.name).join(', ')} is within a mile of this postcode.`}
       >
         {NO_HUB_NEARBY}
       </Hint>

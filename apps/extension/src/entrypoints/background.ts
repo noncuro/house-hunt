@@ -15,7 +15,6 @@ import {
   type ResponseMap,
 } from '@/lib/messages';
 import {
-  addHub,
   addPlace,
   adminProjects,
   adminSetMaxMembers,
@@ -33,10 +32,10 @@ import {
   forgetSightings,
   getAnalysis,
   getProjectModel,
+  getProjectSettings,
   getSweepKnowledge,
   headcount,
   leaveProject,
-  listHubs,
   listHubSweeps,
   listInvites,
   listMembers,
@@ -51,8 +50,8 @@ import {
   recordProperty,
   redeemInvite,
   recordSightings,
-  removeHub,
   removePlace,
+  updatePlace,
   renameProject,
   resendInvite,
   resolveLocation,
@@ -63,7 +62,6 @@ import {
   setStage,
   setVerdict,
   spendSummary,
-  updateHub,
 } from '@house-hunt/core/db';
 import { logWarn } from '@house-hunt/core';
 
@@ -255,9 +253,26 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       void requestAnalysis(request.listing.rightmoveId);
       return null;
 
-    case 'listing:withdrawn':
+    case 'listing:withdrawn': {
       await forgetSightings(request.rightmoveId);
+      // And say so about the flat itself, not only about the sighting. Forgetting the sighting takes
+      // it off the fill-in worklist, which is the right answer for something nobody has opened — but
+      // a listing already on the shortlist keeps its row, its verdict and its place in the funnel,
+      // and nothing anywhere would have recorded that it is gone. That matters twice: the shortlist
+      // goes on showing it as a live option, and the model goes on training on a "love" for a flat
+      // that is no longer available, which is the definition of a label that cannot be acted on.
+      //
+      // Off the market, not archived. Archiving carries a reason — lost it, walked away — and that
+      // is somebody's account of what happened, not a background tab's to write. This records the
+      // fact and leaves the story to them — which means not writing over one they have already
+      // written. A listing somebody excluded as "lost it" keeps that sentence; this only records
+      // the fact for one nobody had excluded yet.
+      const excluded = await listOffMarket();
+      if (!excluded.includes(request.rightmoveId)) {
+        await setOffMarket(request.rightmoveId, true, 'Withdrawn from Rightmove');
+      }
       return null;
+    }
 
     case 'analysis:get':
       await requireSession();
@@ -317,21 +332,10 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
     case 'postcode:point':
       return await locatePostcode(request.postcode);
 
-    // --- hubs ------------------------------------------------------------------------------
-    case 'hubs:list':
-      return await listHubs();
+    case 'places:update':
+      return await updatePlace(request.id, request.patch);
 
-    case 'hubs:add':
-      return await addHub(request.hub);
-
-    case 'hubs:update':
-      return await updateHub(request.id, request.patch);
-
-    case 'hubs:remove':
-      await removeHub(request.id);
-      return null;
-
-    case 'hubs:resolve-location':
+    case 'places:resolve-location':
       return await resolveLocation(request.name);
 
     // --- spend and admin ---------------------------------------------------------------------
@@ -378,13 +382,23 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       // Recording the page and marking progress on it are one act, so they are one round trip.
       // Split apart, a panel that recorded the last page and then failed to say so would leave a
       // hub permanently one page short of swept, with nothing on screen looking wrong.
-      const sweep = await recordSweepPage(request.hub, request.progress, request.hubId);
+      // Only a real neighbourhood has progress to record. A one-off search still writes its
+      // sightings above — that is the half that finds flats — but `hub_sweep` is keyed on a
+      // `project_hub` row, and inventing one for a search nobody has adopted would put a
+      // neighbourhood in the list that nobody chose.
+      const sweep = request.progress
+        ? await recordSweepPage(request.hub, request.progress, request.hubId)
+        : null;
       const knowledge = await getSweepKnowledge(request.cards.map((c) => c.rightmoveId));
       return { knowledge: Object.fromEntries(knowledge), sweep };
     }
 
     case 'sweep:hubs':
       return await listHubSweeps();
+
+    case 'settings:get':
+      await requireSession();
+      return await getProjectSettings();
 
     case 'sweep:pending':
       return await pendingSightings();

@@ -17,6 +17,18 @@ import { resolve } from 'node:path';
 import { SWEEP_HUBS } from '../packages/core/src/hubs';
 import { sweepSearchUrl, WIDEST_WINDOW } from '../packages/core/src/sweep';
 
+/** The filters this harness searches with. A hunt's criteria are project data now and there is no
+ *  built-in band to fall back on (see `RENTAL_SEARCH`), so a harness has to state its own — the
+ *  same standing as its use of `SEED_HUBS`, and it must never be read by a surface. */
+const HARNESS_CRITERIA = {
+  minPrice: '4000',
+  maxPrice: '6000',
+  minBedrooms: '1',
+  maxBedrooms: '3',
+  radius: '1.0',
+  _includeLetAgreed: 'on',
+};
+
 const wanted = process.argv[2];
 if (!wanted) {
   console.error(`usage: pnpm fixture:search <hub>\n\nhubs: ${SWEEP_HUBS.map((h) => h.name).join(', ')}`);
@@ -29,7 +41,7 @@ if (!hub) {
   process.exit(1);
 }
 
-const url = sweepSearchUrl({ hub, days: WIDEST_WINDOW });
+const url = sweepSearchUrl({ hub, days: WIDEST_WINDOW, criteria: HARNESS_CRITERIA });
 if (!url) {
   console.error(`${hub.name} has no verified Rightmove location identifier, so there is no search to save`);
   process.exit(1);

@@ -24,7 +24,13 @@ import {
   type Group,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
-import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime } from '@house-hunt/core';
+import {
+  TRAVEL_MODES,
+  travelDestinations,
+  type Place,
+  type TravelMode,
+  type TravelTime,
+} from '@house-hunt/core';
 import { FlagChip } from '@house-hunt/ui';
 import { SizeValue } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
@@ -196,9 +202,14 @@ export function Compare({
   // that opens inline beneath the row, so working the pile never leaves it.
   const openRow = expand ? expand.toggle : onOpen;
   const inline = Boolean(expand);
+  // Travel columns only for places we can actually route to. A place folded in from the old
+  // neighbourhood list has no postcode, so its four columns would be blank down every row for as
+  // long as the table exists — four widths spent saying nothing, and indistinguishable from a
+  // journey nobody has looked up yet.
+  const destinations = useMemo(() => travelDestinations(places), [places]);
   const all = useMemo(
-    () => buildColumns(places, twins, openRow, scoreColumn, prefs, inline),
-    [places, twins, openRow, scoreColumn, prefs, inline],
+    () => buildColumns(destinations, twins, openRow, scoreColumn, prefs, inline),
+    [destinations, twins, openRow, scoreColumn, prefs, inline],
   );
   // The first column is the address and never hides — a row you cannot identify is not a row.
   // Before the picker has ever been touched, `chosen` is null and the defaults decide. After, the
@@ -294,7 +305,7 @@ export function Compare({
             {/* One line per place, its modes together. A place is the thing you think in — "how
                 far is Work" — and the mode is a detail within it, so the grouping matches the
                 question rather than the order the columns happen to be built in. */}
-            {places.map((place) => (
+            {destinations.map((place) => (
               <div className="columns-place" key={place.id}>
                 <span className="columns-place-name">{place.label}</span>
                 {all
@@ -843,7 +854,9 @@ function forPlace(entry: ShortlistEntry, placeId: string, travel: Record<string,
 
 /** Only the problems, from the one definition in facts.ts. */
 function problems(entry: ShortlistEntry, prefs?: HuntPreferences): Flag[] {
-  return problemsOnly(flagsFor({ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }, prefs));
+  return problemsOnly(
+    flagsFor({ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) }, prefs),
+  );
 }
 
 /** A blank cell should say "we don't know", not look like a zero. */

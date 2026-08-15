@@ -44,6 +44,30 @@ export const GROUP_LABEL: Record<Group, string> = {
   unrated: 'Not yet rated',
 };
 
+/** The photos to show, in the order to show them, with the floorplan first.
+ *
+ *  The floorplan leads because it is the single most useful image for deciding whether to view a
+ *  place, and keeping it as a separate link meant leaving the photos to look at it.
+ *
+ *  Deduplicated, which is not tidiness. Rightmove lists the same photo twice often enough — the
+ *  hero shot repeated at the end of the set, an agent uploading one image under two names — and the
+ *  URL is what every view keys its thumbnails on. Two identical keys in a React list is a warning
+ *  in the console and, in principle, a thumbnail that goes missing or gets drawn twice.
+ *
+ *  Here rather than in each of the three views that built this array by hand: they were the same
+ *  three lines with different variable names, which is how one of them ends up with the fix and the
+ *  other two do not. */
+export function galleryFor(source: { floorplanUrl?: string | null; imageUrls: string[] }): string[] {
+  const seen = new Set<string>();
+  const gallery: string[] = [];
+  for (const url of [source.floorplanUrl ?? null, ...source.imageUrls]) {
+    if (url === null || seen.has(url)) continue;
+    seen.add(url);
+    gallery.push(url);
+  }
+  return gallery;
+}
+
 /** A shortlist row, in the shape the shared size resolver wants. Here rather than in a view, so
  *  the card, the compare table and anything later all feed it the same three sources. */
 export function sizeOf(entry: ShortlistEntry): SizeSource {

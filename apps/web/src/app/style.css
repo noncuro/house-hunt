@@ -1442,6 +1442,51 @@ h2 {
   font-size: 12px;
 }
 
+/* Tighter than the row it sits in: each travel bar is one sentence made of four controls, and at
+   the row's own 18px they read as four separate settings rather than "20 min of Work by tube". */
+.triage-filter-travel {
+  gap: 8px 10px;
+}
+
+.triage-travel-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  padding: 3px 4px 3px 6px;
+  border: 1px solid #cdd8e0;
+  border-radius: 999px;
+  background: #f7fafc;
+}
+
+.triage-travel-bar select {
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 4px;
+  border: 1px solid #cdd8e0;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+}
+
+/* Three digits of minutes. Sized like the bars above rather than to its content, so a row of them
+   does not jitter as the number changes. */
+.triage-travel-minutes {
+  width: 3.6em;
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 6px;
+  border: 1px solid #cdd8e0;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+}
+
+.triage-travel-remove {
+  padding: 2px 7px;
+  line-height: 1;
+}
+
 .triage-score-bar {
   display: flex;
   align-items: center;
@@ -1605,4 +1650,128 @@ h2 {
   .card {
     padding: 12px;
   }
+}
+
+/* The pasted-URL control. A search URL is long and unreadable, so the box takes the width and the
+   summary underneath is what anybody actually reads back. */
+.hunt-search-paste {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.hunt-search-paste input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid #cdd8e0;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+.hunt-search-summary {
+  margin: 6px 0 10px;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+/* The account line sits above the tabs, right-aligned with them. It used to sit under the heading,
+   which put three stacked lines of text where the page's identity should be and made the top read
+   as a masthead rather than a title. */
+.top-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.top-right .who {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* Renaming in place. The pencil is quiet until you are near it — a control that lives inside a
+   heading has to earn its ink, and a permanently visible button beside the title reads as part of
+   the title. */
+.inline-name-edit {
+  margin-left: 0.35em;
+  padding: 0 0.25em;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 0.6em;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms;
+}
+h1:hover .inline-name-edit,
+.inline-name:hover .inline-name-edit,
+.inline-name-edit:focus-visible {
+  opacity: 0.55;
+}
+.inline-name-edit:hover {
+  opacity: 1;
+}
+.inline-name-field {
+  font: inherit;
+  color: inherit;
+  padding: 0 0.2em;
+  border: 0;
+  border-bottom: 2px solid currentcolor;
+  background: none;
+  min-width: 8ch;
+}
+.inline-name {
+  font-weight: 600;
+}
+
+/* The funnel in the header. Middle dots between the counts rather than a list, because it is one
+   sentence about the hunt rather than four facts. */
+.tally {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.6em;
+}
+.tally > span + span::before {
+  content: '·';
+  margin-right: 0.6em;
+  opacity: 0.5;
+}
+
+/* Which hunt, beside the account. Deliberately plain — it is a picker you use twice a week, not a
+   feature, and it only appears at all when there is more than one hunt to pick. */
+.hunt-switch {
+  font: inherit;
+  font-size: 0.9em;
+  margin-right: 0.6em;
+  padding: 1px 4px;
+  max-width: 14rem;
+}
+
+/* Leaving a hunt. Red because there is no undo that puts a membership back, and the quiet variant
+   for the resting state so the row is not shouting until it is asked to be. */
+.danger {
+  font: inherit;
+  padding: 2px 10px;
+  border: 1px solid #c0392b;
+  border-radius: 5px;
+  background: #c0392b;
+  color: #fff;
+  cursor: pointer;
+}
+.danger[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+.danger-quiet {
+  background: none;
+  color: #c0392b;
+}
+.danger-quiet:hover {
+  background: #c0392b;
+  color: #fff;
 }

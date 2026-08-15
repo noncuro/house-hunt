@@ -93,20 +93,165 @@ export function sweepWindow(
   return atLeast({ days, elapsedDays, covered: needed <= WIDEST_WINDOW });
 }
 
-/** The search criteria the sweep runs with — the flat we are actually looking for.
+/** What makes this a rental search at all, and nothing beyond that.
  *
- *  These live here rather than in the URL you pasted because a sweep that searched a different
- *  price band per hub would be worse than useless, and because changing what we are looking for
- *  should be one edit in one place. They match the search we have been running by hand. */
-export const SWEEP_CRITERIA = {
-  minBedrooms: 1,
-  maxBedrooms: 3,
-  minPrice: 4000,
-  maxPrice: 6000,
-  /** Miles. Wide enough to overlap between neighbouring hubs, which is intended — a listing
-   *  between Belsize Park and Primrose Hill should turn up in both sweeps rather than neither. */
-  radius: '1.0',
-} as const;
+ *  There used to be a `SWEEP_CRITERIA` constant here holding one to three bedrooms, four to six
+ *  thousand a month and a mile of radius — the search one hunt had been running by hand, compiled
+ *  in, and therefore run by every hunt using this app whether they were looking in Hampstead or
+ *  Hull. It is the same mistake as `SEED_HUBS`, which AGENTS.md already names: a constant standing
+ *  in for project data puts one project's answer on another project's flats, and does it silently,
+ *  because a search that returns results always looks like it worked.
+ *
+ *  A price band is not a sensible default. There is no number here that is right for a hunt we know
+ *  nothing about, and picking one is worse than picking none: a hunt that never set its own would
+ *  sweep somebody else's budget and find nothing, with no sign anywhere that the filter rather than
+ *  the market was the reason. So there is no fallback. A project that has not said what it is
+ *  looking for cannot sweep, exactly as a hub with no Rightmove location cannot — see
+ *  `sweepSearchUrl`, which returns null for both and lets the surface say which.
+ *
+ *  What is left here is not preference. Rightmove needs to be told this is a letting search before
+ *  any filter means anything, and no hunt using this app is buying. */
+export const RENTAL_SEARCH: SweepCriteria = {
+  rent: 'To rent',
+  channel: 'RENT',
+  transactionType: 'LETTING',
+};
+
+/** The saved criteria as Rightmove's own query parameters, which is the whole of the design.
+ *
+ *  The obvious version of "let people choose the filters" is a form: a price box, a beds box, a
+ *  furnish-type picker, and a field in `HuntPreferences` for each. It is the wrong shape. Rightmove
+ *  has upwards of a dozen filters — property types, must-haves, let type, bathrooms, what not to
+ *  show — it adds to them, and each one modelled here is a field to define, a control to build, a
+ *  migration to write and a thing to keep in step with a site nobody here controls. A hunt that
+ *  wanted one we had not modelled could not have it.
+ *
+ *  So the criteria are stored as the parameters themselves, taken off a search URL somebody has
+ *  already set up on Rightmove — where the filters are, where they are explained, and where you can
+ *  see the results before committing. What we keep is that query minus the three things a sweep
+ *  decides for itself, below. Anything Rightmove supports works on the day it ships, including the
+ *  filters in this comment that this app has never heard of. */
+export type SweepCriteria = Record<string, string>;
+
+/** The parameters a sweep owns, and which a pasted URL therefore never contributes.
+ *
+ *  `locationIdentifier` and its two companions are the *hub* — the whole point is running the same
+ *  criteria against each neighbourhood in turn, so taking the one in the pasted URL would pin every
+ *  sweep to whichever area happened to be on screen when it was copied. `maxDaysSinceAdded` is the
+ *  *window*, which `sweepWindow` computes from when that hub was last swept and must not be frozen
+ *  to the value in a URL copied once. `index` is the pager. `sortType` is newest-first, which is
+ *  what makes a sweep terminate at all (see `SORT_NEWEST_FIRST`) — a URL sorted by price would make
+ *  the sweep unbounded, so it is ours rather than theirs. */
+const SWEEP_OWNS = new Set([
+  'searchLocation',
+  'useLocationIdentifier',
+  'locationIdentifier',
+  'displayLocationIdentifier',
+  'maxDaysSinceAdded',
+  'index',
+  'sortType',
+  // The radius belongs to the place being swept, not to the hunt's filters. A pasted URL carries
+  // whatever was on screen when it was copied, and applying that one number to every place is
+  // exactly what a per-place radius exists to stop.
+  'radius',
+]);
+
+
+/** What a pasted Rightmove search URL says this hunt is looking for.
+ *
+ *  Returns the criteria and, separately, the parameters that were dropped — because dropping them
+ *  silently is how somebody pastes a Hampstead search, sweeps Peckham with it, and never finds out
+ *  why the results look wrong. The screen says which ones it took charge of and why.
+ *
+ *  Anything that is not a Rightmove rental search comes back null rather than as an empty set of
+ *  criteria, since an empty set is a valid and very wide search — "everything, everywhere" — and
+ *  accepting a pasted tweet as one would quietly widen the sweep to the whole country. */
+export function criteriaFromUrl(href: string): { criteria: SweepCriteria; ignored: string[] } | null {
+  let url: URL;
+  try {
+    url = new URL(href.trim());
+  } catch {
+    return null;
+  }
+  if (!/(^|\.)rightmove\.co\.uk$/i.test(url.hostname)) return null;
+  if (!url.pathname.includes('find.html')) return null;
+
+  const criteria: SweepCriteria = {};
+  const ignored: string[] = [];
+  for (const [key, value] of url.searchParams) {
+    // Rightmove writes the literal string "undefined" into `displayLocationIdentifier` on some of
+    // its own links. It is in `SWEEP_OWNS` regardless, so this is only worth noting: a value that
+    // looks like a bug is a good sign the URL was copied from the address bar, which is exactly
+    // where we want it copied from.
+    if (SWEEP_OWNS.has(key)) {
+      ignored.push(key);
+      continue;
+    }
+    // Rightmove routinely emits `minPrice=&maxPrice=` for a filter nobody set. Kept, those are
+    // filters in name only: `sweepSearchUrl` would count the hunt as having chosen something (the
+    // object is not empty) while nothing is actually narrowed, and the summary would read
+    // "Rent £–£". An empty value is the absence of a filter, so it is recorded as dropped.
+    if (value === '') {
+      ignored.push(key);
+      continue;
+    }
+    // A repeated parameter cannot survive a flat record, and the last one silently winning is the
+    // same class of failure this function exists to prevent — a search that looks like the one you
+    // pasted and is not. Say so rather than lose it quietly.
+    if (key in criteria) {
+      ignored.push(key);
+      continue;
+    }
+    criteria[key] = value;
+  }
+  return { criteria, ignored: [...new Set(ignored)] };
+}
+
+/** The saved criteria in words, so the page can show what a sweep will actually search without
+ *  making anyone read a query string. Unknown parameters are printed as themselves rather than
+ *  hidden — a filter we have no name for is still a filter that is narrowing the results. */
+export function describeCriteria(criteria: SweepCriteria): string[] {
+  const said = new Set<string>();
+  const lines: string[] = [];
+  const take = (...keys: string[]) => {
+    for (const key of keys) said.add(key);
+    return keys.map((key) => criteria[key]);
+  };
+  const range = (label: string, min?: string, max?: string, unit = '') => {
+    if (min === undefined && max === undefined) return;
+    if (min !== undefined && max !== undefined) lines.push(`${label} ${unit}${min}–${unit}${max}`);
+    else if (min !== undefined) lines.push(`${label} from ${unit}${min}`);
+    else lines.push(`${label} up to ${unit}${max}`);
+  };
+
+  range('Rent', ...(take('minPrice', 'maxPrice') as [string?, string?]), '£');
+  range('Bedrooms', ...(take('minBedrooms', 'maxBedrooms') as [string?, string?]));
+  range('Bathrooms', ...(take('minBathrooms', 'maxBathrooms') as [string?, string?]));
+
+  const [types] = take('propertyTypes');
+  if (types) lines.push(`Property types: ${types.split(',').join(', ')}`);
+  const [furnish] = take('furnishTypes');
+  if (furnish) lines.push(`Furnishing: ${furnish.split(',').join(', ')}`);
+  const [must] = take('mustHave');
+  if (must) lines.push(`Must have: ${must.split(',').join(', ')}`);
+  const [dont] = take('dontShow');
+  if (dont) lines.push(`Not shown: ${dont.split(',').join(', ')}`);
+  const [letAgreed] = take('_includeLetAgreed');
+  // `on` is the only value Rightmove sends, and it is a checkbox, so anything else is a URL nobody
+  // here has seen. Printed as itself rather than swallowed — `take` has already claimed the key, so
+  // the unknown-parameter loop below would never reach it.
+  if (letAgreed === 'on') lines.push('Including let-agreed');
+  else if (letAgreed !== undefined) lines.push(`_includeLetAgreed: ${letAgreed}`);
+  const [letType] = take('letType');
+  if (letType) lines.push(`Let type: ${letType}`);
+
+  // Everything we have no sentence for, said plainly rather than dropped.
+  take('rent', 'channel', 'transactionType');
+  for (const [key, value] of Object.entries(criteria)) {
+    if (!said.has(key)) lines.push(`${key}: ${value}`);
+  }
+  return lines;
+}
 
 /** Rightmove's own page size. Only used to turn a page number into the `index` it wants. */
 export const RESULTS_PER_PAGE = 24;
@@ -121,6 +266,10 @@ export interface SweepSearch {
   days: SweepWindow;
   /** 1-based, the way the site's own pager counts. */
   page?: number;
+  /** What this hunt is looking for, from `project_setting`. Required, and there is deliberately no
+   *  default — see `RENTAL_SEARCH`. A hunt that has not chosen gets no link rather than somebody
+   *  else's price band. */
+  criteria: SweepCriteria | null | undefined;
 }
 
 /** The Rightmove search URL for one hub, one time window, one page.
@@ -131,26 +280,36 @@ export interface SweepSearch {
  *
  *  Returns null for a hub whose identifier we could not verify, because a search URL with a
  *  wrong `locationIdentifier` still returns a page full of plausible flats somewhere else. */
-export function sweepSearchUrl({ hub, days, page = 1 }: SweepSearch): string | null {
-  if (!hub.rightmove) return null;
+export function sweepSearchUrl({ hub, days, page = 1, criteria }: SweepSearch): string | null {
+  if (!hub.rightmove || hub.radiusMiles === null) return null;
+  // Nothing chosen, no link. The alternative is a search with no price and no bedroom filter at all,
+  // which returns every rental within a mile and reads as a broken sweep rather than as an unset
+  // one — and the alternative to *that* is inventing a budget, which is what this stopped doing.
+  if (!criteria || Object.keys(criteria).length === 0) return null;
   const { locationIdentifier, displayLocationIdentifier } = hub.rightmove;
 
+  // The hunt's criteria first, then the seven parameters a sweep decides for itself — written
+  // second so they win outright. A saved set that somehow carried a `locationIdentifier` (a future
+  // Rightmove rename that slips past `SWEEP_OWNS`, a hand-edited row) would otherwise sweep every
+  // neighbourhood at whichever one was on screen when the URL was copied, and the results would
+  // look plausible for every hub.
   const parameters = new URLSearchParams({
+    ...RENTAL_SEARCH,
+    ...criteria,
     searchLocation: searchLocationFor(displayLocationIdentifier),
     useLocationIdentifier: 'true',
     locationIdentifier,
-    rent: 'To rent',
-    minBedrooms: String(SWEEP_CRITERIA.minBedrooms),
-    maxBedrooms: String(SWEEP_CRITERIA.maxBedrooms),
-    radius: SWEEP_CRITERIA.radius,
-    minPrice: String(SWEEP_CRITERIA.minPrice),
-    maxPrice: String(SWEEP_CRITERIA.maxPrice),
-    _includeLetAgreed: 'on',
+    // The place's own radius, written with the sweep-owned parameters rather than left to the
+    // saved criteria. A pasted search URL carries the radius that was on screen when it was
+    // copied, and one radius for every place is exactly what having a radius per place is for —
+    // half a mile around the office is not half a mile around the whole search area.
+    // The number as configured. `toFixed(1)` turned a quarter mile into 0.3, which is not one of
+    // the radii Rightmove accepts — so a place set to the smallest option searched a wider area
+    // than anybody chose, and the URL looked right.
+    radius: String(hub.radiusMiles),
     maxDaysSinceAdded: String(days),
     index: String(Math.max(0, page - 1) * RESULTS_PER_PAGE),
     sortType: SORT_NEWEST_FIRST,
-    channel: 'RENT',
-    transactionType: 'LETTING',
     displayLocationIdentifier,
   });
 

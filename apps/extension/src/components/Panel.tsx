@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Confidence } from '@house-hunt/ui';
+
 import { Hint } from '@house-hunt/ui';
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { CappedNotice, SpendWarning } from '@house-hunt/ui';
@@ -10,18 +10,17 @@ import { OffMarketRow } from '@house-hunt/ui';
 import { scoreListing } from '@/lib/score';
 import { send, type AnalysisRequest, type SessionUser, type SpendSummary } from '@/lib/messages';
 import {
-  BIGGEST_ROOM_BIG_SQFT,
-  BIGGEST_ROOM_SMALL_SQFT,
   FLAG_ICON,
-  OUTDOOR_MINIMUM_SQFT,
-  claimLabel,
   explainReading,
   relativeUpdate,
   resolveReading,
+  type HuntPreferences,
   type Reading,
 } from '@house-hunt/core';
+import { Flags } from '@house-hunt/ui';
+import { webAppUrl } from '@/lib/web-app';
 import { HubFact } from '@house-hunt/ui';
-import { hubsFromProject, type Hub } from '@house-hunt/core';
+import { galleryFor, hubsFromProject, travelDestinations, type Hub } from '@house-hunt/core';
 import { formatDuration, MapsButton, MODE_ICON, readTravel, Routes, TransitBasis } from '@house-hunt/ui';
 import { Stations, STATIONS_SHOWN } from '@house-hunt/ui';
 import { Gallery } from '@house-hunt/ui';
@@ -29,7 +28,7 @@ import '@house-hunt/ui/flags.css';
 // The section caveat's styling lived in this file and was imported by nothing, so it never
 // applied. One import, and the rule that was written for it takes effect.
 import './panel.css';
-import { SizeFact, sqft } from '@house-hunt/ui';
+import { SizeFact } from '@house-hunt/ui';
 import type { Point } from '@house-hunt/core';
 import {
   TRAVEL_MODES,
@@ -69,6 +68,10 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   /** The project's verdict-score model, read once. Null when it has never been trained; scoring is
    *  done in render against these weights, so it costs nothing to keep here. */
   const [model, setModel] = useState<Model | null>(null);
+  /** What this hunt is looking for. Undefined while reading — a hunt with no preferences and a hunt
+   *  whose preferences have not arrived yet look identical on screen otherwise, and the first of
+   *  those is worth saying out loud (see `PreferencesNote`). */
+  const [prefs, setPrefs] = useState<HuntPreferences | undefined>(undefined);
   const [galleryAt, setGalleryAt] = useState<number | null>(null);
   /** What the analyser said when we asked. Null until it has answered — `capped` and `failed` are
    *  states the panel spells out rather than absences it renders as a missing paragraph. */
@@ -77,10 +80,10 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   const [note, setNote] = useState('');
   /** The panel's own element, only so the gallery knows which shadow root to portal into. */
   const root = useRef<HTMLDivElement | null>(null);
-  // The floorplan leads, exactly as it does on the shortlist. It is the single most useful image
-  // for deciding whether to view a place, and Rightmove buries it behind its own gallery.
+  // The floorplan leads, exactly as it does on the shortlist — Rightmove buries it behind its own
+  // gallery, and it is the one image that decides whether a viewing is worth booking.
   const plan = listing.floorplans[0]?.url;
-  const gallery = plan ? [plan, ...listing.imageUrls.filter((u) => u !== plan)] : listing.imageUrls;
+  const gallery = galleryFor({ floorplanUrl: plan ?? null, imageUrls: listing.imageUrls });
   const [error, setError] = useState<string | null>(null);
   /** The rating we've shown but haven't confirmed. Null means everything on screen is saved. */
   const [pending, setPending] = useState<Rating | null>(null);
@@ -147,16 +150,21 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
     setStagePending(null);
 
     void (async () => {
-      const [existing, placeList, spending, hubList, storedModel, offState, stageState] = await Promise.all([
+      const [existing, placeList, spending, storedModel, offState, stageState, settings] =
+        await Promise.all([
         send({ type: 'verdicts:get', rightmoveIds: [listing.rightmoveId] }),
         send({ type: 'places:list' }),
         send({ type: 'spend:summary' }),
-        send({ type: 'hubs:list' }),
         send({ type: 'model:get' }),
         send({ type: 'off-market:get', rightmoveId: listing.rightmoveId }),
         send({ type: 'stage:get', rightmoveId: listing.rightmoveId }),
+        send({ type: 'settings:get' }),
       ]);
       if (!live) return;
+
+      // Project-scoped like the model above, so a failed read is no reason to throw the last
+      // answer away — but it must not pass unmentioned either, so it joins the list below.
+      if (settings.ok) setPrefs(settings.data);
 
       if (stageState.ok) setStage(stageState.data);
 
@@ -172,9 +180,11 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       // side) comes back as a successful read of nothing, which does null it. What must not happen
       // is the failure passing unmentioned, so it joins the list below.
       if (storedModel.ok) setModel(storedModel.data?.model ?? null);
-      // Rows with no coordinate are dropped by `hubsFromProject` rather than guessed at, so a hub
-      // kept only for its sweep history never rotates a bearing.
-      setHubs(hubList.ok ? hubsFromProject(hubList.data) : null);
+      // One list now: the places a hunt measures against and the places it searches around are the
+      // same rows (see the `places_are_hubs` migration). Rows with no coordinate are dropped by
+      // `hubsFromProject` rather than guessed at, so a place kept only for its sweep history never
+      // rotates a bearing.
+      setHubs(placeList.ok ? hubsFromProject(placeList.data) : null);
       if (existing.ok) {
         // At most one row comes back now — the project shares one rating (design D6).
         const current = existing.data[0] ?? null;
@@ -195,9 +205,9 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
         else void toggleOffMarket(true, 'Marked off the market — it is no longer listed on Rightmove.');
       }
 
-      // Surface the first failure of the five. Swallowing these is what made a broken
-      // background look like an empty database.
-      const failure = [placeList, existing, spending, hubList, storedModel, stageState].find((r) => !r.ok);
+      // Surface the first failure. Swallowing these is what made a broken background look like an
+      // empty database.
+      const failure = [placeList, existing, spending, storedModel, stageState, settings].find((r) => !r.ok);
       if (failure && !failure.ok) setError(failure.error);
 
       // Recording the listing is what gives this project a `project_property` link, and the
@@ -463,11 +473,28 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
         />
               {listing.furnishType && <span>{listing.furnishType}</span>}
             </div>
-            <div className="rm-fact-row">
-              <BathtubFact analysis={analysis} />
-              <OutdoorFact analysis={analysis} />
-            </div>
-            <RoomFact analysis={analysis} />
+            {/* One fact, one renderer (AGENTS.md). This was three components built here — a
+                bathtub, an outdoor space and a biggest room — each re-deciding what counts as bad
+                news, and none of them reading the hunt's preferences. So the panel disagreed with
+                the website twice over: a 600 sq ft room was a great room on one and not the other
+                (`>` here against `>=` in `flagsFor`), and "don't mind a bathtub" silenced the
+                shortlist while the panel went on flagging it red. It also showed only these three,
+                so a house share or a bed in the kitchen — the two facts most likely to end the
+                conversation — appeared on every screen except the one you read on Rightmove. */}
+            <Flags
+              source={{
+                analysis,
+                floorplanUrl: plan ?? null,
+                size: {
+                  floorplanSqft: analysis?.floorplanSqft,
+                  floorplanLegible: analysis?.floorplanLegible,
+                  listedSqft: listing.floorArea?.sqft ?? null,
+                  listedSource: listing.floorArea?.source ?? null,
+                },
+              }}
+              prefs={prefs}
+            />
+            <PreferencesNote prefs={prefs} />
             {!analysis && (
               <AnalysisState
                 request={request}
@@ -486,7 +513,7 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       {/* Directly under the address, because it is the answer to the same question the address
           is asking and mostly failing to answer. */}
       <div className="rm-row rm-row-hub">
-        <HubFact point={point} hubs={hubs} places={places} />
+        <HubFact point={point} hubs={hubs} />
       </div>
 
       <div className="rm-row">
@@ -514,14 +541,14 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       </Section>
 
       <Section title="Travel times" note={<TransitBasis />}>
-        {places.length === 0 ? (
-          <div className="rm-empty">Add places in Settings, on the website</div>
+        {travelDestinations(places).length === 0 ? (
+          <div className="rm-empty">Nowhere to measure to — add somewhere with a postcode, on the website</div>
         ) : !listing.postcode ? (
           <div className="rm-empty">No postcode on this listing</div>
         ) : travel === null ? (
           <div className="rm-empty rm-working">Working…</div>
         ) : (
-          places.map((place) => {
+          travelDestinations(places).map((place) => {
             const forPlace = travel.filter((x) => x.placeId === place.id);
             const verdict = readTravel(forPlace);
             const shown = TRAVEL_MODES.map((mode) => {
@@ -799,78 +826,22 @@ function AnalysisState({
   );
 }
 
-/** The two judgements from the photos, promoted into the header. They only appear when they say
- *  something — a room that is neither small nor big, and ordinary outdoor space, are not news. */
-function RoomFact({ analysis }: { analysis: Analysis | null }) {
-  const size = analysis?.biggestRoomSqft;
-  if (!analysis || size === null || size === undefined) return null;
-
-  const small = size < BIGGEST_ROOM_SMALL_SQFT;
-  const big = size > BIGGEST_ROOM_BIG_SQFT;
-  if (!small && !big) return null;
-
-  const room = analysis.biggestRoomLabel ?? 'Biggest room';
-  return (
-    <span className="rm-claim">
-      <Hint
-        // Amber, not red. A main room slightly under target is a reservation you settle by standing
-      // in it; red is reserved for the things that mean don't bother viewing at all — no bath,
-      // nowhere to sit outside. See the severity table in facts.ts.
-      className={small ? 'rm-flag-yellow' : 'rm-good'}
-        text={`${room} — ${sqft(size)}. Small is under ${BIGGEST_ROOM_SMALL_SQFT} sq ft.`}
-      >
-        {small ? `${FLAG_ICON.yellow} ` : '⭐ '}
-        {claimLabel(small ? 'rooms-small' : 'rooms-big', analysis.biggestRoomConfidence)}
-      </Hint>
-      {/* Outside the Hint, not inside it: the dotted hover underline would otherwise run under
-          the rings and read as part of the drawing. */}
-      <Confidence level={analysis.biggestRoomConfidence} />
-    </span>
-  );
-}
-
-function OutdoorFact({ analysis }: { analysis: Analysis | null }) {
-  if (!analysis || analysis.hasOutdoorSpace === null) return null;
-
-  const area = analysis.outdoorSqft;
-  const tiny = analysis.hasOutdoorSpace && area !== null && area < OUTDOOR_MINIMUM_SQFT;
-  const none = !analysis.hasOutdoorSpace;
-  const detail = [
-    analysis.outdoorKind ?? null,
-    area !== null ? `${analysis.outdoorIsEstimate ? 'about ' : ''}${sqft(area)}` : null,
-  ]
-    .filter(Boolean)
-    .join(', ');
-
-  if (!none && !tiny) {
-    return (
-      <span className="rm-claim">
-        <Hint
-          text={`${detail || 'Outdoor space'}.${analysis.outdoorIsEstimate ? ' Size estimated from the photos.' : ''}`}
-        >
-          🌿 {detail || 'outdoor space'}
-        </Hint>
-        <Confidence level={analysis.outdoorConfidence} />
-      </span>
-    );
-  }
+/** The panel's one nudge towards setting up the hunt.
+ *
+ *  A hunt with no preferences still gets flags — a house share is a house share — but every
+ *  judgement that depends on what *these* people want is missing, silently. Silence is the wrong
+ *  answer there: the panel looks like it has finished thinking. It appears only when nothing at all
+ *  has been set, so it is a first-run message rather than a permanent nag. */
+function PreferencesNote({ prefs }: { prefs: HuntPreferences | undefined }) {
+  if (prefs === undefined) return null; // still reading
+  const anyAmenity = Object.values(prefs.amenities ?? {}).some(Boolean);
+  if (anyAmenity || prefs.greatRoomMinSqft != null || prefs.minSqft != null) return null;
 
   return (
-    <span className="rm-claim">
-      <Hint
-        className="rm-bad"
-        text={
-          none
-            ? 'No outdoor space in any photo.'
-            : `Only ${detail} — under ${OUTDOOR_MINIMUM_SQFT} sq ft is too small to sit out in.`
-        }
-      >
-        {none
-          ? `${FLAG_ICON.red} ${claimLabel('outdoor-absent', analysis.outdoorConfidence)}`
-          : `${FLAG_ICON.red} ${detail}`}
-      </Hint>
-      <Confidence level={analysis.outdoorConfidence} />
-    </span>
+    <a className="rm-prefs-note" href={webAppUrl()} target="_blank" rel="noreferrer">
+      Set what this hunt wants →
+      <small>A bathtub, outdoor space, a floor area — nothing here is judged against you yet.</small>
+    </a>
   );
 }
 
@@ -941,33 +912,6 @@ function CountFact({
     <Fact reading={reading} format={(n) => `${n} ${word}`}>
       {icon} {reading.value} {word}
     </Fact>
-  );
-}
-
-/** A bath is a thing this search wants and a shower-only flat is a reason to skip a viewing, so its
- *  absence is stated in red rather than left as a row you have to go looking for. */
-function BathtubFact({ analysis }: { analysis: Analysis | null }) {
-  if (!analysis || analysis.hasBathtub === null) return null;
-  if (analysis.hasBathtub) {
-    return (
-      <span className="rm-claim">
-        <Hint text="Bathtub seen in the photos.">
-          🛁 {claimLabel('bathtub-present', analysis.bathtubConfidence)}
-        </Hint>
-        <Confidence level={analysis.bathtubConfidence} />
-      </span>
-    );
-  }
-  return (
-    <span className="rm-claim">
-      <Hint
-        className="rm-bad"
-        text="No bathtub in any photo or on the floorplan."
-      >
-        {FLAG_ICON.red} {claimLabel('bathtub-absent', analysis.bathtubConfidence)}
-      </Hint>
-      <Confidence level={analysis.bathtubConfidence} />
-    </span>
   );
 }
 

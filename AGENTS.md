@@ -49,6 +49,14 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   `packages/core/src/facts.ts`. Never re-implement a fact in a view.
 - **Only `background.ts` constructs a Supabase client** (extension side). One session holder is
   what keeps an MV3 session alive; `pnpm check:one-client` enforces it.
+- **Change anything under `apps/extension/` and bump `apps/extension/package.json`'s `version`,
+  and `EXPECTED_EXTENSION_VERSION` in `apps/web/src/lib/extension-version.ts` to match.** The two
+  are compared over the bridge on `hello`, and that comparison is the only thing that can tell
+  somebody the copy in their Chrome is older than the code. Nothing enforces it: Vercel builds
+  only `apps/web`, so a forgotten bump ships as a confident "up to date" on a browser running
+  last week's extension — which is how eleven withdrawn listings stayed on a worklist that had
+  already been taught to drop them. A stale unpacked copy is the most common bug in this project
+  and it never looks like one.
 - **Rightmove's own mark may be used on the buttons that go to Rightmove**, and nowhere else. It
   labels an outbound link with the thing it opens, which is what a trademark is for, and it is the
   owner's decision on the owner's product. What stays forbidden is unchanged and is a different

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   stationDistance,
   relativeUpdate,
@@ -13,7 +13,8 @@ import {
   duplicateIds,
   enthusiasm,
   groupOf,
-  NO_FILTER,
+  parseFilter,
+  withKnownPlaces,
   sizeOf,
   FILTER_LABEL,
   funnelCounts,
@@ -24,8 +25,8 @@ import {
   type Group,
   type StageFilter,
 } from '@house-hunt/core';
-import { NoActiveProject, spendSummary, Unauthenticated, type ShortlistEntry } from '@house-hunt/core/db';
-import type { ArchiveReason, HuntPreferences, Place, Rating, Stage, TriageFilter } from '@house-hunt/core';
+import { NoActiveProject, renameProject, spendSummary, Unauthenticated, type ShortlistEntry } from '@house-hunt/core/db';
+import type { ArchiveReason, HuntPreferences, Place, PricePoint, Rating, Stage, TriageFilter } from '@house-hunt/core';
 import { HubFact } from '@house-hunt/ui';
 import { Hint } from '@house-hunt/ui';
 import { Flags } from '@house-hunt/ui';
@@ -34,18 +35,21 @@ import { SpendWarning } from '@house-hunt/ui';
 import { RATINGS, ratingOf } from '@house-hunt/ui';
 import { ScoreBadge } from '@house-hunt/ui';
 import { OffMarketRow } from '@house-hunt/ui';
+import { PriceMove } from '@house-hunt/ui';
 import { scoreEntries, sortForTriage, isSurprise, NEEDS_MODEL, SORT_LABEL, type SortMode } from '@/lib/score';
 import type { StoredModel } from '@house-hunt/core/db';
 import { hubsFromProject, type Hub } from '@house-hunt/core';
 import { ExtensionNotice } from '@/screens/Extension';
 import { Tick, useRangePick, type Selection } from '@/components/Tick';
 import { Pager, usePaging } from '@/components/Pager';
+import { InlineName } from '@/components/InlineName';
 import { TriageFilters } from '@/components/TriageFilters';
+import { useStoredState } from '@/lib/stored';
 import { Install } from '@/screens/Install';
 import { Compare } from '@/screens/Compare';
 import { Detail } from '@/screens/Detail';
 import { Admin } from '@/screens/Admin';
-import { Project, ProjectPicker } from '@/screens/Project';
+import { HuntSwitch, Project, ProjectPicker } from '@/screens/Project';
 import { Settings } from '@/screens/Settings';
 import { SignIn } from '@/screens/SignIn';
 import { ShortlistMap } from '@/screens/Map';
@@ -54,7 +58,6 @@ import {
   keys,
   queryClient,
   useAuth,
-  useHubs,
   useLocateProperties,
   useModel,
   useOffMarket,
@@ -66,6 +69,8 @@ import {
   useSetStage,
   useShortlist,
   useSignOut,
+  useCachedTravel,
+  usePrices,
 } from '@/lib/queries';
 
 /** What the page is at all is decided here, and by one question: who is signed in.
@@ -116,13 +121,30 @@ export default function Page() {
     );
   }
 
-  return <App user={state.user} project={state.activeProject} />;
+  // Keyed on the hunt, so switching remounts rather than re-renders. Everything held in React
+  // state here belongs to one project — which flats are ticked, what triage is filtered to, which
+  // card is revealed — and a re-render carries all of it across. The ticked set is the dangerous
+  // one: the same listing can be in two hunts, so a selection that survived the switch meant the
+  // next bulk-rating click wrote a verdict in a hunt where nobody had selected anything. The query
+  // caches were already reset on switch; this is the other half.
+  return (
+    <App
+      key={state.activeProject.id}
+      user={state.user}
+      project={state.activeProject}
+      projects={state.projects}
+    />
+  );
 }
 
 /** Everything the two of you have looked at, in the order you'd want to think about it: the
  *  places someone is excited about first, the maybes underneath and hideable, and the rejects
  *  as a number — the point of writing "not our place" down is never seeing it again. */
-const VIEWS = ['list', 'table', 'map', 'triage', 'sweep', 'project', 'install', 'admin', 'settings'] as const;
+/** The order the funnel is read in: what you are keen on, then what is still open, then what is
+ *  done with. `rejected` last because it is the only one that is not work. */
+const TALLY_ORDER: Group[] = ['excited', 'maybe', 'unrated', 'rejected'];
+
+const VIEWS = ['list', 'table', 'map', 'triage', 'project', 'install', 'admin', 'settings'] as const;
 type View = (typeof VIEWS)[number];
 
 /** The open tab lives in the URL (`?v=sweep`), so a reload, a bookmark, or a link sent to the
@@ -136,6 +158,10 @@ function useUrlView(): [View, (next: View) => void] {
   useEffect(() => {
     const read = () => {
       const v = new URLSearchParams(window.location.search).get('v');
+      // `sweep` was its own tab until sweeping moved under Triage. Links to it are in people's
+      // bookmarks and in the extension, so it lands where its contents went rather than silently
+      // on the list.
+      if (v === 'sweep') return setViewState('triage');
       setViewState((VIEWS as readonly string[]).includes(v ?? '') ? (v as View) : 'list');
     };
     read();
@@ -157,7 +183,15 @@ function useUrlView(): [View, (next: View) => void] {
   return [view, setView];
 }
 
-function App({ user, project }: { user: SessionUser; project: ProjectSummary }) {
+function App({
+  user,
+  project,
+  projects,
+}: {
+  user: SessionUser;
+  project: ProjectSummary;
+  projects: ProjectSummary[];
+}) {
   const [view, setView] = useUrlView();
   const [showMaybes, setShowMaybes] = useState(true);
   const [showUnrated, setShowUnrated] = useState(false);
@@ -175,19 +209,31 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   // happens below, at render, so a score is always the current model's — never stored, never stale.
   const modelQuery = useModel();
   const offMarketQuery = useOffMarket();
+  // Price history for the whole list in one read — see `usePrices`.
+  const pricesQuery = usePrices((shortlist.data ?? []).map((e) => e.rightmoveId));
   const settingsQuery = useProjectSettings();
   const retrain = useRetrain();
   const offMarketMutation = useSetOffMarket();
   const stageMutation = useSetStage();
   const [sortMode, setSortMode] = useState<SortMode>('default');
+  // The flat a jump from elsewhere has asked to see. Held here because the pile that holds it is
+  // decided by its verdict, and only that pile can page to it — see `openCard`.
+  const [reveal, setReveal] = useState<string | null>(null);
   // Held here rather than inside Triage so that going to the map and back does not throw away the
-  // narrowing you set up to work through.
-  const [triageFilter, setTriageFilter] = useState<TriageFilter>(NO_FILTER);
+  // narrowing you set up to work through — and stored, so neither does closing the tab. Working a
+  // pile of two hundred takes more than one sitting, and setting the same four bars up again each
+  // time is the friction that stops the second sitting happening.
+  // Per hunt. A filter names this project's places and this project's budget; one shared key meant
+  // opening a second hunt with the first one's rent ceiling already applied, and the count on the
+  // bar explaining a number nobody had chosen.
+  const [triageFilter, setTriageFilter] = useStoredState<TriageFilter>(
+    `triage:filter:${project.id}`,
+    parseFilter,
+  );
 
   // The neighbourhoods every card places its flat against (design D11). Same hook the Sweep view
   // reads, so switching between them costs nothing and the two cannot disagree about which
   // neighbourhoods this house hunt has.
-  const hubsQuery = useHubs();
 
   // What the month's photo analysis has cost. The panel warns on the listing in front of you; the
   // shortlist warns here, once, at the top — the first sign of a budget should not be a listing
@@ -206,12 +252,34 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     [all, stageFilter],
   );
   const places = placesQuery.data ?? [];
+  // A stored filter can name a place somebody has since deleted, and a bar with no place is one the
+  // panel cannot draw and nobody can clear. Pruned on the way in rather than on the way out of
+  // storage, because which places exist is a query that has not answered yet when the filter is
+  // read.
+  //
+  // Only against a *successful* read. `placesQuery.data ?? []` looked like the same thing and was
+  // not: while the query is loading, and after it fails, an empty list means "no places" and every
+  // saved travel bar is thrown away — silently widening the triage filter to everything on the
+  // first frame of every page load. Undefined means we do not know yet, and not knowing is a
+  // reason to keep what somebody saved.
+  const triageFilterNow = useMemo(
+    () =>
+      placesQuery.data
+        ? withKnownPlaces(triageFilter, placesQuery.data.map((p) => p.id))
+        : triageFilter,
+    [triageFilter, placesQuery.data],
+  );
   // Three states, and the difference matters: still reading, read and failed, read. `HubFact`
   // renders each as itself rather than letting a failure read as "nothing near this flat".
-  const hubs: Hub[] | null | undefined = hubsQuery.isError
+  // Every place, not just the swept ones. `useHubs()` filters to what can be searched, which is
+  // the right list for the sweep view and the wrong one here: the office is not somewhere we look
+  // for flats and is still one of the best landmarks to fix a flat against. Reading the filtered
+  // list made the website say "no hub within a mile" about a flat the extension panel — which
+  // reads every place — was happily placing next to work.
+  const hubs: Hub[] | null | undefined = placesQuery.isError
     ? null
-    : hubsQuery.data
-      ? hubsFromProject(hubsQuery.data)
+    : placesQuery.data
+      ? hubsFromProject(placesQuery.data)
       : undefined;
   // A verdict is attributed to whoever set it, and that is now the signed-in user rather than a
   // name typed into Settings. Kept as a plain string here because every view below it — the
@@ -234,6 +302,16 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     if (group === 'maybe') setShowMaybes(true);
     if (group === 'unrated') setShowUnrated(true);
     if (group === 'rejected') setShowRejected(true);
+    // Three things can hide the card you asked for, and all three have to be undone or the scroll
+    // below lands on nothing and the jump reads as "it just opened the shortlist".
+    //
+    // The pile being collapsed is the one this always knew about. The other two arrived later: the
+    // funnel filter, which can exclude the flat outright, and paging, which renders twenty-five of
+    // two hundred — so a map pin for anything below the first page scrolled to an element that was
+    // never in the document.
+    const entry = byId.get(id);
+    if (entry && !matchesStage(entry.stage, stageFilter)) setStageFilter('all');
+    setReveal(id);
     // Wait for the card, rather than for one frame. Revealing the unrated pile renders two hundred
     // cards, which does not fit in the frame after the state change — so the single rAF scrolled
     // to nothing at all and left you at the top of a page with the flat you asked for thirteen
@@ -247,7 +325,11 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     requestAnimationFrame(tryScroll);
   }
 
-  const setPlaces = (next: Place[]) => client.setQueryData(keys.places, next);
+  // An updater rather than a value. Two place writes that complete out of order both derived their
+  // next list from the same rendered snapshot, so the second could restore a place the first had
+  // already deleted — and the travel-bar filters keyed on it would stay live until a refetch.
+  const setPlaces = (update: (current: Place[]) => Place[]) =>
+    client.setQueryData(keys.places, (current: Place[] | undefined) => update(current ?? []));
 
   /** Renaming yourself is a change to the session, not to a local setting — every verdict this
    *  page attributes to you reads the same field. Patched in place rather than refetched so the
@@ -271,6 +353,20 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     }
     return piles;
   }, [entries]);
+
+  // Over the whole hunt rather than over `grouped`, which is computed from the filtered `entries`:
+  // the header states what the hunt is, and a stage filter must not make places disappear from it.
+  const tally = useMemo(() => {
+    const counts: Record<Group, number> = { excited: 0, maybe: 0, rejected: 0, unrated: 0 };
+    for (const entry of all ?? []) counts[groupOf(entry.verdicts)]++;
+    return counts;
+  }, [all]);
+
+  const rename = useMutation({
+    mutationFn: async (next: string) => await renameProject(project.id, next),
+    onSuccess: async () => await client.invalidateQueries({ queryKey: keys.auth }),
+    onError: (e: Error) => push(`Not renamed — ${e.message}`),
+  });
 
   // Over every entry, not per pile: a relisted flat is routinely rejected under one id and
   // unrated under the other, which lands the two halves in piles that never see each other.
@@ -308,10 +404,11 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   const model = modelQuery.data?.model ?? null;
   const scores = useMemo(
     () => (model && all && Array.isArray(hubs) ? scoreEntries(model, all, hubs) : null),
-    // hubsQuery.data rather than the derived `hubs` array, which is a fresh reference every render;
-    // isError alongside it so a failed refetch clears the scores instead of leaving stale ones up.
+    // placesQuery.data rather than the derived `hubs` array, which is a fresh reference every
+    // render; isError alongside it so a failed refetch clears the scores instead of leaving stale
+    // ones up.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-    [model, all, hubsQuery.data, hubsQuery.isError],
+    [model, all, placesQuery.data, placesQuery.isError],
   );
   const offMarket = offMarketQuery.data ?? new Set<string>();
   const setEntryOffMarket = (entry: ShortlistEntry, off: boolean) =>
@@ -337,6 +434,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     rate,
     scores,
     offMarket,
+    prices: pricesQuery.data,
     setOffMarket: setEntryOffMarket,
     setStage: setEntryStage,
     // react-query holds the variables of the mutation in flight, which is exactly the "which flat,
@@ -401,28 +499,57 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     <div className={view === 'table' || view === 'triage' ? 'wrap wrap-wide' : 'wrap'}>
       <header className="top">
         <div>
-          <h1>Shortlist</h1>
+          {/* The hunt, not the view. This said "Shortlist" on every screen — which is the name of
+              the first tab, so the shortlist announced itself twice and the map announced itself as
+              the shortlist. The one thing true of every view here is which house hunt you are
+              looking at, and it was buried mid-sentence in the line below. */}
+          {/* Renamed here, where the name is read. It had a labelled field and a Save button under
+              a paragraph on the Your Hunt page, which is a page away from the only place anybody
+              ever looks at it. */}
+          <h1>
+            <InlineName
+              value={project.name}
+              label="this house hunt"
+              busy={rename.isPending}
+              onSave={(next) => rename.mutateAsync(next).catch(() => {})}
+            />
+          </h1>
           <p className="dim">
-            {all.length} {all.length === 1 ? 'place' : 'places'} opened in{' '}
-            <strong>{project.name}</strong>, shared with everyone in it.
-            {/* The count above is the whole hunt, so a filter has to say what is actually on
+            {/* The funnel, not the total. "459 places, shared with everyone in this hunt" answered
+                a question nobody had — the sharing is the whole point of the app and does not need
+                restating on every screen, and one big number says nothing about whether there is
+                anything to do. These four are the state of the hunt. */}
+            <span className="tally">
+              {TALLY_ORDER.map((group) => (
+                <span key={group}>
+                  <strong>{tally[group]}</strong> {GROUP_LABEL[group].toLowerCase()}
+                </span>
+              ))}
+            </span>
+            {/* The counts above are the whole hunt, so a filter has to say what is actually on
                 screen — otherwise a shortlist showing two flats claims to be showing forty. */}
             {stageFilter !== 'all' && (
               <span> Showing the {entries.length} at “{FILTER_LABEL[stageFilter].toLowerCase()}”.</span>
             )}
             {shortlist.isFetching && <span className="working"> · refreshing</span>}
           </p>
-          {/* Who you are, because a verdict is now signed. Sign out sits with it rather than in
-              Settings: the one moment you want it is the moment you notice the wrong name here. */}
+        </div>
+        <div className="top-right">
+          {/* Who you are, because a verdict is signed. Above the tabs rather than under the
+              heading: it is not a fact about the hunt, it is the state of this browser, and it sat
+              in the one place that made the top of the page read as three headings. The moment you
+              want it is the moment you notice the wrong name, which is why it is not in Settings. */}
           <p className="dim who">
+            {/* Beside the account rather than three clicks into Your Hunt: this is the control that
+                decides what every other screen is showing. */}
+            <HuntSwitch projects={projects} activeId={project.id} />
             {user.displayName}{' '}
             {user.displayName !== user.email && <span className="who-email">{user.email}</span>}
             <button className="linkish" disabled={signOut.isPending} onClick={() => signOut.mutate()}>
               {signOut.isPending ? 'Signing out…' : 'Sign out'}
             </button>
           </p>
-        </div>
-        <div className="views">
+          <div className="views">
           <button className={view === 'list' ? 'view view-on' : 'view'} onClick={() => setView('list')}>
             Shortlist
           </button>
@@ -438,13 +565,6 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
             onClick={() => setView('triage')}
           >
             Triage{grouped.unrated.length > 0 && <span className="dim"> {grouped.unrated.length}</span>}
-          </button>
-          <button
-            className={view === 'sweep' ? 'view view-on' : 'view'}
-            title="Go looking for places we don't have yet"
-            onClick={() => setView('sweep')}
-          >
-            Sweep
           </button>
           <button
             className={view === 'project' ? 'view view-on' : 'view'}
@@ -478,6 +598,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           >
             ⚙
           </button>
+          </div>
         </div>
       </header>
 
@@ -502,21 +623,17 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
 
       {view === 'settings' && (
         <Settings
-          places={places}
-          setPlaces={setPlaces}
           person={person}
           setPerson={setPerson}
           notify={push}
         />
       )}
 
-      {view === 'project' && <Project notify={push} />}
+      {view === 'project' && <Project notify={push} places={places} setPlaces={setPlaces} />}
 
       {view === 'install' && <Install email={user.email} />}
 
       {view === 'admin' && <Admin />}
-
-      {view === 'sweep' && <Sweep />}
 
       {view === 'triage' && (
         <Triage
@@ -529,7 +646,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           retrain={retrain}
           sortMode={sortMode}
           setSortMode={setSortMode}
-          filter={triageFilter}
+          filter={triageFilterNow}
           setFilter={(next) => {
             setTriageFilter(next);
             // Anything ticked and then filtered away would still be rated by the bulk buttons —
@@ -541,6 +658,12 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           {...cardProps}
         />
       )}
+
+      {/* Sweeping under Triage rather than beside it. They were two tabs, and the split cut one
+          job in half: the pile you work through here *is* what a sweep produces, so "go and find
+          more" and "there is nothing left to rate" belong on the same screen. A separate tab meant
+          the empty triage list said nothing about how to refill it. */}
+      {view === 'triage' && <Sweep />}
 
       {view === 'table' && (
         <Compare
@@ -564,6 +687,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         title={GROUP_LABEL.excited}
         entries={grouped.excited}
         empty="Nothing yet — mark a place “Love it” in the panel and it lands here."
+        reveal={reveal}
         {...cardProps}
       />
 
@@ -572,7 +696,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         open={showMaybes}
         onToggle={() => setShowMaybes((v) => !v)}
       />
-      {showMaybes && <Pile entries={grouped.maybe} empty="Nothing liked." {...cardProps} />}
+      {showMaybes && <Pile entries={grouped.maybe} empty="Nothing liked." reveal={reveal} {...cardProps} />}
 
       <Toggle
         label={`${GROUP_LABEL.unrated} (${grouped.unrated.length})`}
@@ -580,7 +704,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         onToggle={() => setShowUnrated((v) => !v)}
       />
       {showUnrated && (
-        <Pile entries={grouped.unrated} empty="Everything you've opened has a verdict." {...cardProps} />
+        <Pile entries={grouped.unrated} empty="Everything you've opened has a verdict." reveal={reveal} {...cardProps} />
       )}
 
       {/* A count, not a list. Seeing them again is the thing rejecting was meant to prevent —
@@ -590,7 +714,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
         open={showRejected}
         onToggle={() => setShowRejected((v) => !v)}
       />
-      {showRejected && <Pile entries={grouped.rejected} empty="Nothing rejected." {...cardProps} />}
+      {showRejected && <Pile entries={grouped.rejected} empty="Nothing rejected." reveal={reveal} {...cardProps} />}
       </div>
 
       <Toasts toasts={toasts} dismiss={dismiss} />
@@ -713,10 +837,16 @@ function Triage({
     setSelected(on ? [...new Set([...selected, ...ids])] : selected.filter((s) => !run.has(s)));
   };
 
+  // The cache and nothing else, for the same reason the compare table reads it that way: a
+  // read-through here would fire a journey-planner request for every gap in a pile of two hundred,
+  // on every keystroke in the minutes box. A pairing nobody has looked up is unknown, and a travel
+  // bar keeps the unknowns — which on a fresh sweep is most of them, and is what the count says.
+  const travel = useCachedTravel(entries.map((e) => e.postcode));
+
   // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave
   // the ranking meaning something about flats that are no longer on screen. `unknowns` is what the
   // filter kept without an answer either way, which the bar says out loud.
-  const { kept, unknowns } = applyFilter(entries, filter);
+  const { kept, unknowns } = applyFilter(entries, filter, travel.data);
   const shown = sortForTriage(kept, cardProps.scores, sortMode);
   const metrics = storedModel?.model.metrics;
 
@@ -794,6 +924,7 @@ function Triage({
       kept={kept.length}
       unknowns={unknowns}
       total={entries.length}
+      places={cardProps.places}
     />
   );
 
@@ -938,6 +1069,9 @@ interface CardProps {
    *  love — this only keeps the model from learning it. */
   offMarket: Set<string>;
   setOffMarket: (entry: ShortlistEntry, off: boolean) => void;
+  /** What each flat has cost over time, keyed by listing. Undefined while the read is outstanding,
+   *  which renders as no note rather than as "no change" — see `PriceMove`. */
+  prices: Map<string, PricePoint[]> | undefined;
   /** Move a place along the funnel. Never touches its rating — the two are separate facts, which is
    *  the point of the funnel existing at all (`packages/core/src/stage.ts`). */
   setStage: (entry: ShortlistEntry, stage: Stage, archiveReason: ArchiveReason | null) => void;
@@ -953,11 +1087,22 @@ function Pile({
   title,
   entries,
   empty,
+  reveal,
   ...cardProps
-}: { title?: string; entries: ShortlistEntry[]; empty: string } & CardProps) {
+}: {
+  title?: string;
+  entries: ShortlistEntry[];
+  empty: string;
+  /** A flat something outside this pile has asked to see — a map pin, a compare row, a link. Only
+   *  the pile actually holding it responds; for every other pile this is an id it does not have. */
+  reveal?: string | null;
+} & CardProps) {
   // A page at a time. Two hundred cards, each with a photo strip and a travel-time block, is both
   // slow and unreadable — see `Pager`.
-  const paging = usePaging(entries);
+  const paging = usePaging(
+    entries,
+    reveal ? entries.findIndex((e) => e.rightmoveId === reveal) : undefined,
+  );
   // Cards get the same shift-pick the table has. They were the one layout of triage where a run
   // could only be ticked one at a time, and `setMany` was handed down and never called.
   //
@@ -1010,6 +1155,7 @@ function Card({
   rate,
   scores,
   offMarket,
+  prices,
   setOffMarket,
   setStage,
   stageSaving,
@@ -1054,6 +1200,9 @@ function Card({
           a place is, the shortlist stopped being a view of the same data. */}
       <div className="facts">
         {entry.price && <span className="price">{entry.price}</span>}
+        {/* What it used to cost, when that is a thing we have watched change. Nothing at all for a
+            flat seen once — see `PriceMove`. */}
+        <PriceMove history={prices?.get(entry.rightmoveId)} />
         {/* "3 weeks ago" is the useful form and Rightmove's own sentence is the fact behind it, so
             the sentence is a hint rather than a `title` — reachable by keyboard, and on a schedule
             we control. */}
@@ -1100,14 +1249,13 @@ function Card({
         <HubFact
           point={entry.lat !== null && entry.lon !== null ? { lat: entry.lat, lon: entry.lon } : null}
           hubs={hubs}
-          places={places}
           approximate={!entry.exactLocation}
         />
       </div>
 
       {/* Cards keep the good news — a bathtub IS the reason you'd look twice — but the rings
           go bare: four flags each shouting "HIGH" is four times the noise for one fact. */}
-      <Flags source={{ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }} prefs={prefs} />
+      <Flags source={{ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) }} prefs={prefs} />
 
       {entry.nearestStations.length > 0 && (
         <div className="stations dim">

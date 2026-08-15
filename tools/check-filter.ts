@@ -14,9 +14,12 @@ import {
   applyFilter,
   filterIsOn,
   matchesFilter,
+  parseFilter,
+  withKnownPlaces,
+  type TravelIndex,
   type TriageFilter,
 } from '../packages/core/src/filter';
-import type { Analysis } from '../packages/core/src/types';
+import type { Analysis, TravelTime } from '../packages/core/src/types';
 import type { ShortlistEntry } from '../packages/core/src/db/supabase';
 
 let failures = 0;
@@ -152,6 +155,131 @@ const filtered = applyFilter(pile, only({ minSqft: 700 }));
 check('the one under the bar is dropped', filtered.kept.map((e) => e.rightmoveId), ['a', 'c', 'd']);
 check('and two of the three left are unmeasured', filtered.unknowns, 2);
 check('with no filter on, nothing is counted as unknown', applyFilter(pile, NO_FILTER).unknowns, 0);
+
+// ------------------------------------------------------------------------------------------- //
+console.log('\ntravel: a bar per place and mode, and three answers again');
+
+/** A travel cache keyed the way `cachedTravelTimes` returns it: by the flat's own postcode. */
+function reachIndex(postcode: string, rows: Array<Partial<TravelTime>>): TravelIndex {
+  return {
+    [postcode]: rows.map((r) => ({ placeId: 'work', mode: 'transit', seconds: 0, changes: null, ...r }) as TravelTime),
+  };
+}
+
+const near = flat({ rightmoveId: 'near', postcode: 'N1 1AA' });
+const far = flat({ rightmoveId: 'far', postcode: 'E1 1AA' });
+const toWork = only({ travel: [{ placeId: 'work', mode: 'transit', maxMinutes: 20 }] });
+
+check('a filter with only a travel bar is on', filterIsOn(toWork), true);
+check(
+  'inside the bar stays',
+  matchesFilter(near, toWork, reachIndex('N1 1AA', [{ seconds: 15 * 60 }])),
+  true,
+);
+check(
+  'outside it goes',
+  matchesFilter(far, toWork, reachIndex('E1 1AA', [{ seconds: 40 * 60 }])),
+  false,
+);
+// The number on the card is the rounded one, so the bar has to be read against that: 20m 20s prints
+// as "20m", and dropping it from a twenty-minute filter reads as the filter being broken.
+check(
+  'a journey that prints as 20m clears a bar of 20',
+  matchesFilter(near, toWork, reachIndex('N1 1AA', [{ seconds: 20 * 60 + 20 }])),
+  true,
+);
+check(
+  'nothing cached for that pairing stays',
+  matchesFilter(near, toWork, reachIndex('N1 1AA', [])),
+  true,
+);
+check('no cache at all stays', matchesFilter(near, toWork, undefined), true);
+// A flat with no postcode has no origin to route from — unknown, not unreachable.
+check('a flat with no postcode stays', matchesFilter(flat({ postcode: null }), toWork, {}), true);
+
+// The bar is about one place and one mode, and a number for a different pairing answers neither.
+check(
+  'a time to another place does not clear this bar',
+  matchesFilter(near, toWork, reachIndex('N1 1AA', [{ placeId: 'gym', seconds: 5 * 60 }])),
+  true,
+);
+check(
+  'and neither does the same trip by another mode',
+  matchesFilter(near, toWork, reachIndex('N1 1AA', [{ mode: 'walking', seconds: 90 * 60 }])),
+  true,
+);
+
+// "TfL says there is no such journey" is an answer, and it is a failing one — unlike a rate limit,
+// which is us not having asked yet.
+check(
+  'no route by this mode goes',
+  matchesFilter(near, toWork, reachIndex('N1 1AA', [{ seconds: 0, error: 'no journey', transient: false }])),
+  false,
+);
+check(
+  'a transient failure stays',
+  matchesFilter(near, toWork, reachIndex('N1 1AA', [{ seconds: 0, error: 'rate limited', transient: true }])),
+  true,
+);
+// The case `readTravel` would get wrong, and why this does not go through it: an hour-and-a-half
+// walk is discarded there as "not a real option", which for a twenty-minute walking bar is a known
+// failure rather than a missing measurement.
+check(
+  'a 90-minute walk fails a 20-minute walking bar',
+  matchesFilter(near, only({ travel: [{ placeId: 'work', mode: 'walking', maxMinutes: 20 }] }),
+    reachIndex('N1 1AA', [{ mode: 'walking', seconds: 90 * 60 }])),
+  false,
+);
+
+// Two journeys are both requirements, the same as every other pair of bars here.
+check(
+  'both travel bars have to be cleared',
+  matchesFilter(
+    near,
+    only({ travel: [
+      { placeId: 'work', mode: 'transit', maxMinutes: 20 },
+      { placeId: 'gym', mode: 'walking', maxMinutes: 10 },
+    ] }),
+    reachIndex('N1 1AA', [
+      { seconds: 15 * 60 },
+      { placeId: 'gym', mode: 'walking', seconds: 25 * 60 },
+    ]),
+  ),
+  false,
+);
+
+const travelPile = applyFilter([near, far], toWork, {
+  'N1 1AA': [{ placeId: 'work', mode: 'transit', seconds: 15 * 60, changes: null }],
+});
+check('the measured one inside the bar is kept', travelPile.kept.map((e) => e.rightmoveId), ['near', 'far']);
+check('and the unmeasured one is counted as unknown', travelPile.unknowns, 1);
+
+// ------------------------------------------------------------------------------------------- //
+console.log('\ncoming back out of storage');
+
+check('nothing stored is no filter', parseFilter(null), NO_FILTER);
+check('a string is not a filter', parseFilter('700'), NO_FILTER);
+// The case this exists for: a filter saved before travel bars existed still has to work.
+check(
+  'a filter from before a field existed keeps the rest',
+  parseFilter({ maxPrice: 3000, minBedrooms: 2 }),
+  only({ maxPrice: 3000, minBedrooms: 2 }),
+);
+check('an amenity we no longer have is dropped', parseFilter({ amenities: ['outdoor', 'helipad'] }), only({ amenities: ['outdoor'] }));
+check('a bar of nought is not a bar', parseFilter({ minSqft: 0 }), NO_FILTER);
+check('nor is one that is not a number', parseFilter({ minSqft: '700' }), NO_FILTER);
+check(
+  'a travel bar survives the round trip',
+  parseFilter(JSON.parse(JSON.stringify(toWork))),
+  toWork,
+);
+check('a travel bar with no place is dropped', parseFilter({ travel: [{ mode: 'transit', maxMinutes: 20 }] }), NO_FILTER);
+check('so is one with a mode we do not have', parseFilter({ travel: [{ placeId: 'work', mode: 'teleport', maxMinutes: 20 }] }), NO_FILTER);
+
+// A place can be deleted while a filter naming it is still stored, and a bar nobody can see is a
+// bar nobody can clear — so it goes, which shows more flats rather than fewer.
+check('a bar naming a deleted place is dropped', withKnownPlaces(toWork, ['gym']), NO_FILTER);
+check('and one naming a place that exists is kept', withKnownPlaces(toWork, ['work']), toWork);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

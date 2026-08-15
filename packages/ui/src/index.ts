@@ -16,6 +16,7 @@ export * from './Hint';
 export * from './Hub';
 export * from './Journey';
 export * from './OffMarket';
+export * from './PriceMove';
 export * from './Opener';
 export * from './Score';
 export * from './Size';

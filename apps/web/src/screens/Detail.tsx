@@ -11,6 +11,8 @@ import { RightmoveLink } from '@/components/RightmoveLink';
 import { useTravel } from '@/lib/queries';
 import {
   TRAVEL_MODES,
+  galleryFor,
+  travelDestinations,
   type ArchiveReason,
   type Place,
   type Rating,
@@ -44,11 +46,7 @@ export function Detail({
 }) {
   const [galleryAt, setGalleryAt] = useState<number | null>(null);
 
-  // The floorplan leads the gallery. It is the single most useful image for deciding whether to
-  // view a place, and keeping it as a separate link meant leaving the photos to look at it.
-  const gallery = entry.floorplanUrl
-    ? [entry.floorplanUrl, ...entry.imageUrls.filter((url) => url !== entry.floorplanUrl)]
-    : entry.imageUrls;
+  const gallery = galleryFor(entry);
   // At most one verdict per property now — the project shares one rating (design D6).
   const verdict = entry.verdicts[0] ?? null;
   // The funnel opens when somebody likes the place: liking it is what puts it there (`enter_funnel`
@@ -124,8 +122,11 @@ export function Detail({
         </h3>
         {!entry.postcode ? (
           <p className="dim">No postcode on this listing.</p>
-        ) : places.length === 0 ? (
-          <p className="dim">Add places in Settings.</p>
+        ) : travelDestinations(places).length === 0 ? (
+          // Counted the same way the rows below are listed. A hunt whose only places are
+          // neighbourhoods it searches around has nowhere to time a journey to, and the honest
+          // answer is the same one as having no places at all — not an empty list under a heading.
+          <p className="dim">Nowhere to measure to yet — add somewhere with a postcode on Your Hunt.</p>
         ) : travelQuery.isError ? (
           // A refusal is not a wait. `travel` is `data ?? null`, and `data` stays undefined when the
           // query fails, so every failure used to render as "Working…" — a spinner that never
@@ -142,7 +143,7 @@ export function Detail({
         ) : travel === null ? (
           <p className="dim working">Working…</p>
         ) : (
-          places.map((place) => {
+          travelDestinations(places).map((place) => {
             const forPlace = travel.filter((t) => t.placeId === place.id);
             // Exactly what the panel shows, from the same components: the minutes stay plain
             // numbers, transit hovers to reveal which lines you'd ride, and one map button per
