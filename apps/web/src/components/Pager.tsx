@@ -77,6 +77,18 @@ export interface Reveal {
   index: number;
   /** Whatever the caller uses to mean "this particular ask". Compared by identity, never read. */
   token: unknown;
+  /** Withdraw the request, because the reader has taken the wheel.
+   *
+   *  A request stays live until then, and that is deliberate: the list moves underneath — a refetch
+   *  drops six earlier flats and the target is six rows up — and while the reader is still looking
+   *  at where they were sent, following that shift is the whole job. Once they have turned a page
+   *  themselves, the same shift would haul them back to a flat they had finished with.
+   *
+   *  Spending it belongs to whoever holds the request rather than to the list that answered it. The
+   *  ask is one flat against four piles, only one of which has it; a pile that recorded "spent" for
+   *  itself would leave the other three still willing to obey a request the reader had already
+   *  overridden, and the flat only has to change verdict for one of them to act on it. */
+  spend?: () => void;
 }
 
 /** One list's slice of its items, and the state the pager below needs to draw itself.
@@ -106,35 +118,37 @@ export function usePaging<T>(
   );
   const [page, setPage] = useState(0);
 
-  // Read through a ref so that changing how many go on a page does not count as a fresh request to
-  // reveal something: that already lands you on page one (below), and jumping back to the last flat
-  // somebody followed a link to would undo it.
-  const perPage = useRef(size);
-  perPage.current = size;
-
   /** Page to whatever has been asked for. A link into a list — a map pin, a compare row, a
    *  `#card-…` address — used to scroll to nothing whenever the flat was past the first page,
    *  because a card on page three is not in the document to scroll to. */
   const index = reveal?.index ?? -1;
   const token = reveal?.token;
-  // A request stays live until the reader takes the wheel, and then it is spent.
+
+  // Two values the effects below need but must not depend on: the page size, because changing it
+  // would otherwise count as a fresh request to reveal something and undo the jump to page one, and
+  // the withdrawal, because it is a fresh closure on every render.
   //
-  // It cannot simply be honoured once. The list moves underneath — a refetch drops six earlier
-  // flats and the target is six rows up — and while the reader is still looking at where they were
-  // sent, following that is the whole job. But once they have turned a page themselves, the same
-  // shift would haul them back to a flat they had finished with, and a list that yanks you
-  // somewhere every few minutes is worse than one that never went there.
-  //
-  // So the reader's own paging spends it, and the next ask — a fresh token — starts a new one.
-  const served = useRef<unknown>(undefined);
-  const steered = useRef(false);
-  if (served.current !== token) steered.current = false;
+  // Written in an effect rather than during the render that produced them. A render can be started
+  // and thrown away — React abandons one to serve something more urgent — and a ref assigned on the
+  // way past keeps the value from a render that never happened. Assigning at commit means these
+  // always hold what is actually on screen.
+  const latest = useRef({ size, spend: reveal?.spend });
+  useEffect(() => {
+    latest.current = { size, spend: reveal?.spend };
+  });
+
+  /** The reader takes the wheel: turn to `next`, and withdraw whatever request is outstanding.
+   *  Reads the withdrawal from this render rather than the ref — it runs from an event handler on a
+   *  render that has certainly committed. */
+  const spend = reveal?.spend;
+  const steer = (next: number) => {
+    setPage(next);
+    spend?.();
+  };
 
   useEffect(() => {
     if (index < 0) return;
-    if (served.current === token && steered.current) return;
-    served.current = token;
-    setPage(Math.floor(index / perPage.current));
+    setPage(Math.floor(index / latest.current.size));
     // `reveal` itself is deliberately not a dependency: the caller builds it fresh on every render,
     // so depending on the object would page a reader back to the last flat anybody followed a link
     // to every time anything on the page changed. Its two halves are what actually mean something.
@@ -144,8 +158,12 @@ export function usePaging<T>(
     const onChange = (next: PageSize) => {
       setSize(next);
       // Twenty-five to a hundred means page three no longer exists, and the row you were looking at
-      // is on page one now anyway.
+      // is on page one now anyway. That is the reader choosing a page, so it spends the request
+      // too: without that, a later shift of the list would move them off the page they had just
+      // asked to be on. Through the ref: this listener is registered once, so the withdrawal it
+      // closed over at mount is the one from before anything had been asked.
       setPage(0);
+      latest.current.spend?.();
     };
     listeners.add(onChange);
     return () => {
@@ -161,12 +179,9 @@ export function usePaging<T>(
     pages,
     size,
     total: items.length,
-    // Wrapped, so that turning a page by hand spends whatever request is outstanding — see the
-    // effect above. Everything that reaches this is the reader: the pager's own buttons.
-    setPage: (next: number) => {
-      steered.current = true;
-      setPage(next);
-    },
+    // Wrapped, so that turning a page by hand withdraws whatever request is outstanding — see
+    // `Reveal.spend`. Everything that reaches this is the reader: the pager's own buttons.
+    setPage: steer,
   };
 }
 

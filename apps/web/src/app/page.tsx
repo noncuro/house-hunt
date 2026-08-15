@@ -83,6 +83,13 @@ import {
  *  reads six things, and a signed-out session fails all six at once. Rendering the shortlist and
  *  letting each read say "sign in" would put that sentence on screen six times and the actual
  *  sign-in field nowhere. */
+/** A jump from somewhere else in the app to one flat: which flat, and how to call the request off
+ *  again. Only the pile actually holding it can answer, so it is passed to all of them. */
+interface Ask {
+  id: string;
+  spend: () => void;
+}
+
 export default function Page() {
   const auth = useAuth();
 
@@ -224,7 +231,7 @@ function App({
   //
   // A fresh object per ask rather than a bare id: clicking the same pin again after paging away has
   // to page back to it, and the same id twice would read as nothing having been asked.
-  const [reveal, setReveal] = useState<{ id: string } | null>(null);
+  const [reveal, setReveal] = useState<Ask | null>(null);
   // Held here rather than inside Triage so that going to the map and back does not throw away the
   // narrowing you set up to work through — and stored, so neither does closing the tab. Working a
   // pile of two hundred takes more than one sitting, and setting the same four bars up again each
@@ -324,7 +331,9 @@ function App({
     // never in the document.
     const entry = byId.get(id);
     if (entry && !matchesStage(entry.stage, stageFilter)) setStageFilter('all');
-    setReveal({ id });
+    // The ask carries its own withdrawal, so that the pile that answers it and the three that do
+    // not all cancel the same request the moment the reader turns a page — see `Reveal.spend`.
+    setReveal({ id, spend: () => setReveal(null) });
     // Wait for the card, rather than for one frame. Revealing the unrated pile renders two hundred
     // cards, which does not fit in the frame after the state change — so the single rAF scrolled
     // to nothing at all and left you at the top of a page with the flat you asked for thirteen
@@ -1122,14 +1131,14 @@ function Pile({
   empty: string;
   /** A flat something outside this pile has asked to see — a map pin, a compare row, a link. Only
    *  the pile actually holding it responds; for every other pile this is an id it does not have. */
-  reveal?: { id: string } | null;
+  reveal?: Ask | null;
 } & CardProps) {
   // Where that flat is *now*, searched on every render rather than remembered: a refetch that drops
   // or reorders earlier flats moves it, and a remembered index would turn to the page it used to be
   // on. `usePaging` compares the index by value, so recomputing it costs nothing when nothing moved
   // — and `reveal` rides along as the token that makes a second click on the same pin count.
   const at = reveal
-    ? { index: entries.findIndex((e) => e.rightmoveId === reveal.id), token: reveal }
+    ? { index: entries.findIndex((e) => e.rightmoveId === reveal.id), token: reveal, spend: reveal.spend }
     : null;
   // A page at a time. Two hundred cards, each with a photo strip and a travel-time block, is both
   // slow and unreadable — see `Pager`.
