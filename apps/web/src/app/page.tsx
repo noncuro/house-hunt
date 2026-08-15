@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   stationDistance,
   relativeUpdate,
@@ -25,7 +25,7 @@ import {
   type Group,
   type StageFilter,
 } from '@house-hunt/core';
-import { NoActiveProject, spendSummary, Unauthenticated, type ShortlistEntry } from '@house-hunt/core/db';
+import { NoActiveProject, renameProject, spendSummary, Unauthenticated, type ShortlistEntry } from '@house-hunt/core/db';
 import type { ArchiveReason, HuntPreferences, Place, PricePoint, Rating, Stage, TriageFilter } from '@house-hunt/core';
 import { HubFact } from '@house-hunt/ui';
 import { Hint } from '@house-hunt/ui';
@@ -42,6 +42,7 @@ import { hubsFromProject, type Hub } from '@house-hunt/core';
 import { ExtensionNotice } from '@/screens/Extension';
 import { Tick, useRangePick, type Selection } from '@/components/Tick';
 import { Pager, usePaging } from '@/components/Pager';
+import { InlineName } from '@/components/InlineName';
 import { TriageFilters } from '@/components/TriageFilters';
 import { useStoredState } from '@/lib/stored';
 import { Install } from '@/screens/Install';
@@ -127,6 +128,10 @@ export default function Page() {
 /** Everything the two of you have looked at, in the order you'd want to think about it: the
  *  places someone is excited about first, the maybes underneath and hideable, and the rejects
  *  as a number — the point of writing "not our place" down is never seeing it again. */
+/** The order the funnel is read in: what you are keen on, then what is still open, then what is
+ *  done with. `rejected` last because it is the only one that is not work. */
+const TALLY_ORDER: Group[] = ['excited', 'maybe', 'unrated', 'rejected'];
+
 const VIEWS = ['list', 'table', 'map', 'triage', 'project', 'install', 'admin', 'settings'] as const;
 type View = (typeof VIEWS)[number];
 
@@ -309,6 +314,20 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     return piles;
   }, [entries]);
 
+  // Over the whole hunt rather than over `grouped`, which is computed from the filtered `entries`:
+  // the header states what the hunt is, and a stage filter must not make places disappear from it.
+  const tally = useMemo(() => {
+    const counts: Record<Group, number> = { excited: 0, maybe: 0, rejected: 0, unrated: 0 };
+    for (const entry of all ?? []) counts[groupOf(entry.verdicts)]++;
+    return counts;
+  }, [all]);
+
+  const rename = useMutation({
+    mutationFn: async (next: string) => await renameProject(project.id, next),
+    onSuccess: async () => await client.invalidateQueries({ queryKey: keys.auth }),
+    onError: (e: Error) => push(`Not renamed — ${e.message}`),
+  });
+
   // Over every entry, not per pile: a relisted flat is routinely rejected under one id and
   // unrated under the other, which lands the two halves in piles that never see each other.
   const twins = useMemo(() => duplicateIds(all ?? []), [all]);
@@ -443,10 +462,30 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
               the first tab, so the shortlist announced itself twice and the map announced itself as
               the shortlist. The one thing true of every view here is which house hunt you are
               looking at, and it was buried mid-sentence in the line below. */}
-          <h1>{project.name}</h1>
+          {/* Renamed here, where the name is read. It had a labelled field and a Save button under
+              a paragraph on the Your Hunt page, which is a page away from the only place anybody
+              ever looks at it. */}
+          <h1>
+            <InlineName
+              value={project.name}
+              label="this house hunt"
+              busy={rename.isPending}
+              onSave={(next) => rename.mutate(next)}
+            />
+          </h1>
           <p className="dim">
-            {all.length} {all.length === 1 ? 'place' : 'places'}, shared with everyone in this hunt.
-            {/* The count above is the whole hunt, so a filter has to say what is actually on
+            {/* The funnel, not the total. "459 places, shared with everyone in this hunt" answered
+                a question nobody had — the sharing is the whole point of the app and does not need
+                restating on every screen, and one big number says nothing about whether there is
+                anything to do. These four are the state of the hunt. */}
+            <span className="tally">
+              {TALLY_ORDER.map((group) => (
+                <span key={group}>
+                  <strong>{tally[group]}</strong> {GROUP_LABEL[group].toLowerCase()}
+                </span>
+              ))}
+            </span>
+            {/* The counts above are the whole hunt, so a filter has to say what is actually on
                 screen — otherwise a shortlist showing two flats claims to be showing forty. */}
             {stageFilter !== 'all' && (
               <span> Showing the {entries.length} at “{FILTER_LABEL[stageFilter].toLowerCase()}”.</span>
@@ -540,15 +579,13 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
 
       {view === 'settings' && (
         <Settings
-          places={places}
-          setPlaces={setPlaces}
           person={person}
           setPerson={setPerson}
           notify={push}
         />
       )}
 
-      {view === 'project' && <Project notify={push} />}
+      {view === 'project' && <Project notify={push} places={places} setPlaces={setPlaces} />}
 
       {view === 'install' && <Install email={user.email} />}
 

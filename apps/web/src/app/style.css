@@ -1693,3 +1693,51 @@ h2 {
   margin: 0;
   font-size: 12px;
 }
+
+/* Renaming in place. The pencil is quiet until you are near it — a control that lives inside a
+   heading has to earn its ink, and a permanently visible button beside the title reads as part of
+   the title. */
+.inline-name-edit {
+  margin-left: 0.35em;
+  padding: 0 0.25em;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 0.6em;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms;
+}
+h1:hover .inline-name-edit,
+.inline-name:hover .inline-name-edit,
+.inline-name-edit:focus-visible {
+  opacity: 0.55;
+}
+.inline-name-edit:hover {
+  opacity: 1;
+}
+.inline-name-field {
+  font: inherit;
+  color: inherit;
+  padding: 0 0.2em;
+  border: 0;
+  border-bottom: 2px solid currentColor;
+  background: none;
+  min-width: 8ch;
+}
+.inline-name {
+  font-weight: 600;
+}
+
+/* The funnel in the header. Middle dots between the counts rather than a list, because it is one
+   sentence about the hunt rather than four facts. */
+.tally {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.6em;
+}
+.tally > span + span::before {
+  content: '·';
+  margin-right: 0.6em;
+  opacity: 0.5;
+}

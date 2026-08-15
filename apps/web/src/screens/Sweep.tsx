@@ -1,25 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Hint, Opener } from '@house-hunt/ui';
+import { Opener } from '@house-hunt/ui';
 import { toSweepHub, recheckTargets, RECHECK_AFTER_DAYS } from '@house-hunt/core';
-import {
-  addHub,
-  listHubSweeps,
-  listHubs,
-  locateProperties,
-  pendingSightings,
-  removeHub,
-  resolveLocation,
-  updateHub,
-  type HubSweep,
-} from '@house-hunt/core/db';
+import { listHubSweeps, locateProperties, pendingSightings, type HubSweep } from '@house-hunt/core/db';
 import { keys, useHubs, useProjectSettings, useShortlist } from '@/lib/queries';
-import { attempt, type Notify } from '@/lib/attempt';
 import { helloExtension } from '@/lib/bridge';
-import type { LocationResult, ProjectHub, SweepCriteria } from '@house-hunt/core';
-import { SWEEP_WINDOWS, distanceMiles, sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
+import type { ProjectHub, SweepCriteria } from '@house-hunt/core';
+import { sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
 
 /** Going looking, in two separate halves.
  *

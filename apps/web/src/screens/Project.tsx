@@ -3,10 +3,12 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { keys as shellKeys, useAuth, useProjectSettings, useSetProjectSettings } from '@/lib/queries';
-import { Hint } from '@house-hunt/ui';
+import { Hint, TRANSIT_BASIS_NOTE } from '@house-hunt/ui';
 import { attempt } from '@/lib/attempt';
 import {
   addHub,
+  addPlace as addPlaceRow,
+  removePlace as removePlaceRow,
   listHubs,
   removeHub,
   resolveLocation,
@@ -19,7 +21,6 @@ import {
   leaveProject,
   listInvites,
   listMembers,
-  renameProject,
   resendInvite,
   revokeInvite,
   setActiveProject,
@@ -40,6 +41,7 @@ import type {
   Invite,
   InviteResult,
   LocationResult,
+  Place,
   ProjectHub,
   ProjectSummary,
   SweepCriteria,
@@ -65,7 +67,15 @@ const keys = {
 
 type Notify = (text: string, kind?: 'error' | 'info') => void;
 
-export function Project({ notify }: { notify: Notify }) {
+export function Project({
+  notify,
+  places,
+  setPlaces,
+}: {
+  notify: Notify;
+  places: Place[];
+  setPlaces: (places: Place[]) => void;
+}) {
   const auth = useAuth();
 
   if (auth.isPending) return <p className="working">Working…</p>;
@@ -83,8 +93,11 @@ export function Project({ notify }: { notify: Notify }) {
 
   return (
     <div className="settings">
-      <ActiveProject project={activeProject} notify={notify} />
       <HuntSettings notify={notify} />
+      {/* Where journeys are measured to. It sat under Settings beside the display name, as though
+          it were one person's own — but `place` is a project table, so adding the office added it
+          for everyone in the hunt while the heading above it said otherwise. */}
+      <Places places={places} setPlaces={setPlaces} notify={notify} />
       <SearchCriteria notify={notify} />
       {/* Where, straight after what. These two are one thought — a search is filters plus a place
           to point them at — and they were a page apart, with the neighbourhoods filed under the
@@ -344,44 +357,6 @@ export function ProjectPicker() {
         )}
       </section>
     </div>
-  );
-}
-
-function ActiveProject({ project, notify }: { project: ProjectSummary; notify: Notify }) {
-  const client = useQueryClient();
-  const [name, setName] = useState(project.name);
-
-  // The name can change from the other laptop while this page is open, and a field left holding
-  // the old one would quietly rename it back on the next save.
-  useEffect(() => setName(project.name), [project.name]);
-
-  const rename = useMutation({
-    mutationFn: async () => await renameProject(project.id, name.trim()),
-    onSuccess: async () => {
-      notify(`Renamed to ${name.trim()}.`, 'info');
-      await client.invalidateQueries({ queryKey: shellKeys.auth });
-    },
-    onError: (e: Error) => notify(`Not renamed — ${e.message}`),
-  });
-
-  return (
-    <section className="setting">
-      <h2>This house hunt</h2>
-      <p className="dim">
-        The name is only for telling one hunt from another when you are in more than one. Everyone
-        in it sees the same name.
-      </p>
-      <div className="fields">
-        <input value={name} placeholder="Name" onChange={(e) => setName(e.target.value)} />
-        <button
-          className="primary"
-          disabled={rename.isPending || !name.trim() || name.trim() === project.name}
-          onClick={() => rename.mutate()}
-        >
-          Save
-        </button>
-      </div>
-    </section>
   );
 }
 
@@ -1125,5 +1100,73 @@ function LocationNote({ result, hub }: { result: LocationResult; hub: ProjectHub
           ? ` Rightmove puts its centre ${apart.toFixed(1)} mi from where this hub is — check which of the two is wrong before sweeping it.`
           : ` Rightmove's centre agrees to within ${apart.toFixed(1)} mi.`}
     </div>
+  );
+}
+
+/** The destinations every listing is timed against.
+ *
+ *  Shared by the hunt, like everything else on this page. */
+function Places({
+  places,
+  setPlaces,
+  notify,
+}: {
+  places: Place[];
+  setPlaces: (places: Place[]) => void;
+  notify: Notify;
+}) {
+  const [label, setLabel] = useState('');
+  const [postcode, setPostcode] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function addPlace() {
+    setBusy(true);
+    const place = await attempt(() => addPlaceRow(label, postcode.toUpperCase()), notify);
+    setBusy(false);
+    if (!place) return;
+    setPlaces([...places, place]);
+    setLabel('');
+    setPostcode('');
+  }
+
+  async function removePlace(id: string) {
+    const gone = await attempt(async () => {
+      await removePlaceRow(id);
+      return true;
+    }, notify);
+    if (!gone) return;
+    setPlaces(places.filter((p) => p.id !== id));
+  }
+
+  return (
+    <section className="setting">
+        <h2>Places we measure against</h2>
+        <p className="dim">
+          Each is measured by walking, bike and public transport. {TRANSIT_BASIS_NOTE}
+        </p>
+        {places.length === 0 && <p className="dim">Nothing yet — add the office, the in-laws, Heathrow.</p>}
+        {places.map((p) => (
+          <div className="place" key={p.id}>
+            <span>
+              {p.label} <span className="dim">{p.postcode}</span>
+            </span>
+            <button className="remove" title="Remove" onClick={() => void removePlace(p.id)}>
+              ×
+            </button>
+          </div>
+        ))}
+        <div className="fields">
+          <input value={label} placeholder="Label" onChange={(e) => setLabel(e.target.value)} />
+          <input
+            value={postcode}
+            placeholder="Postcode or lat,lon"
+            title="A UK postcode, or coordinates pasted from Google Maps (51.4708,-0.4523)"
+            onChange={(e) => setPostcode(e.target.value)}
+          />
+          <button className="primary" disabled={busy || !label.trim() || !postcode.trim()} onClick={() => void addPlace()}>
+            Add
+          </button>
+        </div>
+      </section>
   );
 }
