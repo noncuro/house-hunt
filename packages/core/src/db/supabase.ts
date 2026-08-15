@@ -904,7 +904,12 @@ export async function getAnalysis(rightmoveId: string): Promise<Analysis | null>
   return data ? toAnalysis(data) : null;
 }
 
-function toAnalysis(data: Record<string, any>): Analysis {
+/** Every `property_analysis` row reaching either application comes through here — the panel's
+ *  single read and the shortlist's join both call it — which makes it the one place a stored value
+ *  becomes a fact. Exported so `check:filter` can put a row through it rather than assemble an
+ *  `Analysis` by hand: a check that builds the object itself agrees with whatever this function
+ *  does, including the wrong thing. */
+export function toAnalysis(data: Record<string, any>): Analysis {
   return {
     model: data.model,
     analysedAt: data.analysed_at,

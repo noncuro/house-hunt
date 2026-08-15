@@ -23,8 +23,8 @@ import {
   type TravelIndex,
   type TriageFilter,
 } from '../packages/core/src/filter';
-import { toSleepingSeparation, type Analysis, type TravelTime } from '../packages/core/src/types';
-import type { ShortlistEntry } from '../packages/core/src/db/supabase';
+import type { Analysis, TravelTime } from '../packages/core/src/types';
+import { toAnalysis, type ShortlistEntry } from '../packages/core/src/db/supabase';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -179,17 +179,32 @@ check(
   matchesFilter(flat({ analysis: analysis({}) }), only({ amenities: ['separateSleeping'] })),
   true,
 );
-// The column is plain text, so a string nobody recognises can come back out of the database. Taken
-// at face value it would be a finding rather than a gap — everything downstream reads anything but
-// 'same-space' as a bedroom of its own — and the flat would be kept as known to clear the bar
-// instead of counted among the shrugs, which is the one thing the tally is there to prevent.
-check('a stored separation nobody recognises reads as unknown', toSleepingSeparation('mezzanine-ish'), null);
+// `sleeping_separation` is plain text in the database, so a string nobody recognises can come back
+// out of it — an older writer, a hand-edited row, a value some later version adds. Taken at face
+// value it is a finding rather than a gap, because everything below reads anything but 'same-space'
+// as a bedroom of its own: the flat would clear the bar as *known* to qualify and go uncounted,
+// which is the one thing the tally exists to prevent.
+//
+// The row goes through `toAnalysis`, the function every property_analysis row actually travels
+// through on its way out of Postgres. Writing `sleepingSeparation` into the fixture by hand would
+// assert the parser and leave the hydration free to cast, which is where the bug was.
+const hydrated = toAnalysis({ sleeping_separation: 'mezzanine-ish', sleeping_separation_confidence: 'high' });
+check('a stored separation nobody recognises hydrates to unknown', hydrated.sleepingSeparation, null);
 const unreadable = applyFilter(
-  [flat({ rightmoveId: 'unreadable', analysis: analysis({ sleepingSeparation: toSleepingSeparation('mezzanine-ish') }) })],
+  [flat({ rightmoveId: 'unreadable', analysis: hydrated })],
   only({ amenities: ['separateSleeping'] }),
 );
 check('so its flat stays', unreadable.kept.map((e) => e.rightmoveId), ['unreadable']);
 check('and is counted among the unknowns rather than the separated', unreadable.unknowns, 1);
+// The three real values still survive the same trip — a parser that dropped everything would pass
+// the case above and quietly turn every assessed studio into an unknown.
+check(
+  'and the values we do recognise come through it unchanged',
+  ['separate-room', 'practically-separate', 'same-space'].map(
+    (v) => toAnalysis({ sleeping_separation: v }).sleepingSeparation,
+  ),
+  ['separate-room', 'practically-separate', 'same-space'],
+);
 
 // Every bar has to be cleared, not any of them.
 check(
