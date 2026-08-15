@@ -86,8 +86,8 @@ comment on table travel_backoff is
 -- written under the trimmed key, not matched here, and asked for again every quarter of an hour
 -- forever, spending the run's budget on the one leg that can never leave the set.
 --
--- Dropped and recreated rather than replaced: the return type gains a column, and `create or
--- replace function` refuses that.
+-- Dropped and recreated rather than replaced: the return type differs from the one this deployment
+-- may already be holding, and `create or replace function` refuses to change it.
 drop function if exists public.travel_gaps(int);
 
 create function public.travel_gaps(p_limit int default 50)
@@ -191,9 +191,24 @@ begin
     raise exception 'record_travel_failure: the travel function records these, not clients';
   end if;
 
+  -- A failure that arrives after the answer did is not a failure to back off on. Two runs can draw
+  -- the same leg; if one succeeds and caches while the other is still waiting on TfL, the loser's
+  -- report describes a journey the deployment already knows. Recording it anyway leaves a backoff
+  -- row standing against a cached pair — the exact state the unconditional `clear_travel_failure`
+  -- on the success path exists to prevent, reached from the other side — and it also charges the
+  -- pair an attempt, so its next genuine failure starts a doubling higher than it earned.
+  --
+  -- The existence test is part of the insert rather than an `if exists ... then return` above it,
+  -- because a check and a write as two statements are two snapshots, which is the same shape of bug
+  -- one order down. As one statement it is as tight as read committed goes.
   insert into public.travel_backoff as tb (
     origin_postcode, dest_postcode, mode, attempts, last_error, next_attempt_at, updated_at)
-  values (p_origin_postcode, p_dest_postcode, p_mode, 1, p_error, now() + interval '5 minutes', now())
+  select p_origin_postcode, p_dest_postcode, p_mode, 1, p_error, now() + interval '5 minutes', now()
+   where not exists (
+     select 1 from public.travel_time tt
+      where tt.origin_postcode = p_origin_postcode
+        and tt.dest_postcode   = p_dest_postcode
+        and tt.mode            = p_mode)
   on conflict (origin_postcode, dest_postcode, mode) do update set
     attempts        = tb.attempts + 1,
     last_error      = excluded.last_error,
@@ -201,6 +216,14 @@ begin
     -- attempt count reaches.
     next_attempt_at = now() + least(interval '24 hours', interval '5 minutes' * power(2, least(tb.attempts, 8))),
     updated_at      = now();
+
+  -- Said out loud rather than returned silently: declining to record is the right answer to a race
+  -- and the wrong answer to anything else, and the two are told apart only by how often this
+  -- appears in the log.
+  if not found then
+    raise notice 'record_travel_failure: % -> % (%) is already answered; not backing off a failure the cache overtook',
+      p_origin_postcode, p_dest_postcode, p_mode;
+  end if;
 end;
 $$;
 
