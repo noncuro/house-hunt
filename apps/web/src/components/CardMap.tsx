@@ -58,6 +58,10 @@ export function CardMap({
 
   useEffect(() => {
     if (!open || lat === null || lon === null || !host.current || map.current) return;
+    // A fresh map has not failed yet. Left set, the sentence below outlived the map it was about:
+    // close a map whose tiles were refused, open it again on a network that has come back, and it
+    // still says the streets are missing over streets that are right there.
+    setTilesFailed(false);
     const point = { lat, lon };
     const lonScale = Math.cos((point.lat * Math.PI) / 180);
     const dLat = HALF_SPAN_MILES / MILES_PER_DEGREE_LAT;
