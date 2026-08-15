@@ -7,6 +7,7 @@ import { Hint, TRANSIT_BASIS_NOTE } from '@house-hunt/ui';
 import { attempt } from '@/lib/attempt';
 import {
   addPlace as addPlaceRow,
+  listHubSweeps,
   removePlace as removePlaceRow,
   resolveLocation,
   updatePlace,
@@ -1031,11 +1032,21 @@ function Places({
   }
 
   async function removePlace(place: Place) {
-    // A place that is swept takes its sweep history with it — `hub_sweep` cascades. That is the
-    // whole record of having worked this search to the end, so it is worth a stop.
-    if (place.sweepRadiusMiles !== null && !confirm(`Remove ${place.label}? Its sweep history goes with it.`)) {
-      return;
-    }
+    // A place takes its sweep history with it — `hub_sweep` cascades. That is the whole record of
+    // having worked this search to the end, so it is worth a stop.
+    //
+    // Asked of the sweeps rather than of the place's current radius: unticking "search around"
+    // only clears the radius and leaves the history behind, so a place that reads as never-swept
+    // can still have every page of a finished sweep hanging off it. Looked up at the click rather
+    // than held in a query, because this is the only thing on this screen that wants it — and a
+    // lookup that fails warns anyway, since the alternative is deleting the history in silence.
+    const swept = await listHubSweeps()
+      .then((sweeps) => sweeps.some((s) => s.placeId === place.id))
+      .catch(() => true);
+    const warning = swept
+      ? `Remove ${place.label}? Its sweep history goes with it.`
+      : `Remove ${place.label}?`;
+    if (!confirm(warning)) return;
     const gone = await attempt(async () => {
       await removePlaceRow(place.id);
       return true;

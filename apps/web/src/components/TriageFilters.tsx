@@ -5,6 +5,7 @@ import {
   NO_FILTER,
   TRAVEL_MODES,
   filterIsOn,
+  travelDestinations,
   type AmenityKey,
   type Place,
   type TravelBar,
@@ -43,6 +44,9 @@ export function TriageFilters({
    *  travel row at all — an empty picker is a control that cannot be used and does not say why. */
   places: Place[];
 }) {
+  // A place with no postcode cannot be routed to, so a bar against it would keep every listing on
+  // the "we don't know" rule and quietly do no filtering at all.
+  const destinations = travelDestinations(places);
   const on = filterIsOn(filter);
   const set = (patch: Partial<TriageFilter>) => setFilter({ ...filter, ...patch });
 
@@ -98,14 +102,14 @@ export function TriageFilters({
           because a hunt has one or two journeys it actually cares about and a picker per place
           would put six controls on screen to express one requirement. Absent when there are no
           places: the answer then is to go and save one, which Settings is for. */}
-      {places.length > 0 && (
+      {destinations.length > 0 && (
         <div className="triage-filter-row triage-filter-travel">
           <span className="dim">Within:</span>
           {filter.travel.map((entry, index) => (
             <TravelRow
               key={index}
               bar={entry}
-              places={places}
+              places={destinations}
               onChange={(next) =>
                 set({ travel: filter.travel.map((t, i) => (i === index ? next : t)) })
               }
@@ -120,7 +124,10 @@ export function TriageFilters({
             // twice before it does anything.
             onClick={() =>
               set({
-                travel: [...filter.travel, { placeId: places[0]!.id, mode: 'transit', maxMinutes: 30 }],
+                travel: [
+                  ...filter.travel,
+                  { placeId: destinations[0]!.id, mode: 'transit', maxMinutes: 30 },
+                ],
               })
             }
           >

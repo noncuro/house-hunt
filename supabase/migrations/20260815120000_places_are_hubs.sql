@@ -39,6 +39,12 @@ alter table place add column if not exists display_location_id   text;
 -- accepts, so the select would have no matching option and the search URL would carry a radius
 -- nobody chose. Exactly the class of silent default this project keeps refusing.
 alter table place add column if not exists sweep_radius_miles numeric(4, 2);
+-- And widen it where an earlier run of this file created it as `numeric(3,1)`. `add column if not
+-- exists` does nothing to a column that is already there, so without this a database part-way
+-- through a `psql -f` that failed keeps the precision that rounds 0.25 to 0.3 — and re-running the
+-- migration, which is how this project fixes a partial apply, would report success and change
+-- nothing.
+alter table place alter column sweep_radius_miles type numeric(4, 2);
 alter table place add column if not exists max_days_since_added int;
 
 -- A hub never had a postcode — it was a name resolved to a coordinate and an identifier — so the
@@ -57,16 +63,31 @@ comment on column place.sweep_radius_miles is
 -- Existing duplicates are renamed rather than merged or deleted: two places with one name are two
 -- rows somebody made on purpose, and which is "the" Work is not ours to decide. The suffix makes
 -- them distinguishable and visible, which is what gets them fixed.
+-- The suffix is searched for rather than computed from the row's position among its duplicates. A
+-- hunt holding `Work`, `Work` and `Work (2)` would otherwise rename the second `Work` to `Work (2)`
+-- and collide with the row already called that, and the unique index below would fail on a
+-- migration whose whole job here is to make it succeed.
 do $$
 declare dup record;
+declare n int;
+declare candidate text;
 begin
   for dup in
-    select id, label, row_number() over (partition by project_id, lower(label) order by created_at, id) as n
+    select id, project_id, label,
+           row_number() over (partition by project_id, lower(label) order by created_at, id) as rank
       from place
   loop
-    if dup.n > 1 then
-      update place set label = dup.label || ' (' || dup.n || ')' where id = dup.id;
-    end if;
+    continue when dup.rank = 1;
+    n := 1;
+    loop
+      n := n + 1;
+      candidate := dup.label || ' (' || n || ')';
+      exit when not exists (
+        select 1 from place p
+         where p.project_id = dup.project_id and lower(p.label) = lower(candidate)
+      );
+    end loop;
+    update place set label = candidate where id = dup.id;
   end loop;
 end $$;
 
@@ -140,10 +161,12 @@ alter table hub_sweep add column if not exists place_id uuid references place(id
 
 -- The name this search was filed under, back again. It was `hub_sweep`'s primary key originally and
 -- the multi-tenant migration dropped it in favour of `hub_id`, on the reasoning that the hub row
--- carries the name. That reasoning holds right up until the row is deleted — and `place_id` is
--- deliberately nullable here so a sweep outlives the place it was of, which is the whole point of
--- keeping the history. Without a name such a row says which pages were recorded and refuses to say
--- of what. `search_sighting.hub` has always been a text name for exactly this reason.
+-- carries the name — which holds right up until there is no row. `place_id` is nullable because the
+-- backfill below cannot always find one: a sweep recorded against a hub that was deleted before this
+-- migration ran has nothing to point at. Such a row keeps its pages and its name instead of saying
+-- which pages were recorded and refusing to say of what. (Deleting a place from here on is the other
+-- case, and it cascades — see the note above the foreign key.) `search_sighting.hub` has always been
+-- a text name for the same reason.
 alter table hub_sweep add column if not exists hub text;
 
 -- Only the backfill is guarded on `project_hub` still being here. The schema changes below it are
@@ -174,7 +197,6 @@ begin
    where s.hub_id = h.id
      and s.hub is null;
 
-  drop table project_hub;
 end $$;
 
 -- A sweep whose hub was dropped before this migration ran has no place to point at, which is why
@@ -184,8 +206,16 @@ end $$;
 -- sweep centre removes its sweep, and the button that does it says as much. Keeping a sweep against
 -- a place nobody has any more would date the next window of a search nobody is running — the one
 -- failure in the sweep that looks exactly like success.
+--
+-- Unconditional, and *before* the table goes: `hub_id` references `project_hub`, so dropping the
+-- table first fails outright with "other objects depend on it". Being outside the guard is what
+-- makes the whole thing re-runnable — inside it, a database that had already lost `project_hub`
+-- kept `hub_id` and never gained the composite key below, and the client stopped writing `hub_id`
+-- in this same commit.
 alter table hub_sweep drop constraint if exists hub_sweep_project_hub_fkey;
 alter table hub_sweep drop column if exists hub_id;
+
+drop table if exists project_hub;
 
 do $$
 begin

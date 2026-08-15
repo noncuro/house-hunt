@@ -5,6 +5,7 @@ import { Unauthenticated } from './session';
 import { getCachedTravelFor, listPlaces, backfillPlaceCoords } from './supabase';
 import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime, type JourneyOption } from '../types';
 import { staleTravel } from '../tfl';
+import { travelDestinations } from '../hubs';
 import type { Point } from '../postcode';
 import { logInfo, logWarn } from '../log';
 
@@ -110,7 +111,13 @@ export function travelTimes(postcode: string, refresh = false): Promise<TravelTi
 async function computeTravelTimes(postcode: string, refresh: boolean): Promise<TravelTime[]> {
   const started = Date.now();
 
-  const raw = await listPlaces();
+  // Somewhere a journey can actually end. Routing is postcode to postcode, so a place without one
+  // — anywhere the hunt searches around rather than commutes to — has no journey to ask about.
+  // Asking anyway sent the function a destination of `null`, which came back as a leg it could not
+  // answer, which every view then rendered as a red "no route": TfL declaring a journey impossible,
+  // about a journey nobody wanted. Dropped here, at the one place that decides what is asked, so no
+  // view has to remember to skip it.
+  const raw = travelDestinations(await listPlaces());
   if (raw.length === 0) return [];
 
   // Coordinates for places added before we resolved them at entry. Kept client-side because it
@@ -121,7 +128,7 @@ async function computeTravelTimes(postcode: string, refresh: boolean): Promise<T
   const { answers } = await ask<{ answers: JourneyAnswer[] }>({
     kind: 'journeys',
     origin: postcode,
-    destinations: places.map((p) => ({ postcode: p.postcode, lat: p.lat, lon: p.lon })),
+    destinations: places.map((p) => ({ postcode: p.postcode!, lat: p.lat, lon: p.lon })),
     modes: TRAVEL_MODES,
     refresh,
   });
@@ -289,13 +296,13 @@ export async function cachedTravelTimes(postcodes: string[]): Promise<Record<str
 function destinationIndex(places: Place[]): Map<string, string[]> {
   const index = new Map<string, string[]>();
   for (const place of places) {
-    // A place with no postcode is a neighbourhood we search around, not a destination. It has
-    // nothing to route to and is skipped rather than given a blank key, which would collect every
-    // such place under one imaginary journey.
+    // Belt and braces: `computeTravelTimes` already filtered these out, and this function is
+    // exported to callers that may not have. A blank key would collect every postcode-less place
+    // under one imaginary journey.
     if (place.postcode === null) continue;
-    const list = index.get(place.postcode) ?? [];
+    const list = index.get(place.postcode!) ?? [];
     list.push(place.id);
-    index.set(place.postcode, list);
+    index.set(place.postcode!, list);
   }
   return index;
 }
