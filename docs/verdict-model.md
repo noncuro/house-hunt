@@ -8,9 +8,9 @@ happened when we tried.
 
 Everything below is measured on one real hunt as it stood on 2026-08-15: **379 rated
 flats, 331 no / 25 maybe / 23 love**. Every number is nested leave-one-out — hyperparameters chosen
-inside the training fold, never on the held-out flat — which is what `pnpm check:predict` already
-does, and every experiment reproduced the production baseline to four decimals before it was
-trusted with anything else.
+inside the training fold, never on the held-out flat. `pnpm check:predict` is nested in the same
+sense and 10-fold rather than leave-one-out, for the reason given below; and every experiment
+reproduced the production baseline to four decimals before it was trusted with anything else.
 
 ## Where it started and where it ended
 

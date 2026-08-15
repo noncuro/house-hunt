@@ -335,11 +335,19 @@ function rowFor(raw: Record<string, number | null>, columns: SpecColumn[]): numb
 // The prior.
 //
 // Ordinary L2 shrinks every weight toward zero, which is the belief that no feature matters until
-// the data insists. On a hunt with 23 loves that belief is expensive, and it is also false: the
-// hunt has already told us what it wants, on the Your Hunt page, in the same vocabulary as the
-// features. So the weights are shrunk toward the signs those answers imply instead — outdoor space
-// and a bathtub upward for a hunt that called them must-haves, unmet must-haves sharply downward,
-// distance to a saved place downward.
+// the data insists. On a hunt with 23 loves that belief is expensive, and it is also false: some of
+// these features have a direction everybody already agrees on. So the weights are shrunk toward
+// those signs instead — outdoor space and a bathtub upward, distance to a saved place downward, a
+// must-have the flat misses sharply downward.
+//
+// The table is by column name and is the same for every hunt, which is worth being clear about,
+// because the two halves of "the score reads the hunt's own preferences" are easy to run together.
+// What the hunt said enters as *features* — `unmet_musts`, `unmet_nices`, `meets_min_sqft`,
+// `meets_great_room` are each computed against that hunt's own answers, so they already say
+// something different on every project. This table only says which way each of those columns should
+// point before any verdict has been read, and "a flat that misses something you called a must-have
+// is worse" does not vary by hunt. A prior conditioned on the preferences on top of features that
+// already are would be saying it twice.
 //
 // This is worth about +0.04 AUC on this project's love-vs-no when positives are scarce, and it
 // decays as verdicts accumulate — at 20 to 60 verdicts it is three times the size it is at 350,
