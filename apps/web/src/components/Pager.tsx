@@ -117,8 +117,24 @@ export function usePaging<T>(
    *  because a card on page three is not in the document to scroll to. */
   const index = reveal?.index ?? -1;
   const token = reveal?.token;
+  // A request stays live until the reader takes the wheel, and then it is spent.
+  //
+  // It cannot simply be honoured once. The list moves underneath — a refetch drops six earlier
+  // flats and the target is six rows up — and while the reader is still looking at where they were
+  // sent, following that is the whole job. But once they have turned a page themselves, the same
+  // shift would haul them back to a flat they had finished with, and a list that yanks you
+  // somewhere every few minutes is worse than one that never went there.
+  //
+  // So the reader's own paging spends it, and the next ask — a fresh token — starts a new one.
+  const served = useRef<unknown>(undefined);
+  const steered = useRef(false);
+  if (served.current !== token) steered.current = false;
+
   useEffect(() => {
-    if (index >= 0) setPage(Math.floor(index / perPage.current));
+    if (index < 0) return;
+    if (served.current === token && steered.current) return;
+    served.current = token;
+    setPage(Math.floor(index / perPage.current));
     // `reveal` itself is deliberately not a dependency: the caller builds it fresh on every render,
     // so depending on the object would page a reader back to the last flat anybody followed a link
     // to every time anything on the page changed. Its two halves are what actually mean something.
@@ -145,7 +161,12 @@ export function usePaging<T>(
     pages,
     size,
     total: items.length,
-    setPage,
+    // Wrapped, so that turning a page by hand spends whatever request is outstanding — see the
+    // effect above. Everything that reaches this is the reader: the pager's own buttons.
+    setPage: (next: number) => {
+      steered.current = true;
+      setPage(next);
+    },
   };
 }
 
