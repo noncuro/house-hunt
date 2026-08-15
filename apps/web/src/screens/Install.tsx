@@ -72,7 +72,9 @@ export function Install({ email }: { email: string }) {
             Turn on <strong>Developer mode</strong>, top right.
           </li>
           <li>
-            Click <strong>Load unpacked</strong> and pick the unzipped folder.
+            Click <strong>Load unpacked</strong> and pick the unzipped folder. On macOS the picker
+            opens on <code>/Applications</code>, which is not <code>~/Applications</code> and does
+            not contain it — press <kbd>⌘⇧G</kbd> and type the path to go straight there.
           </li>
           <li>
             Click the extension icon. It opens the house hunt in a browser tab. Sign in there with{' '}
