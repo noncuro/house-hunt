@@ -11,6 +11,7 @@ import { Sweep } from '@/screens/Sweep';
 import {
   applyFilter,
   duplicateIds,
+  addressBesidePostcode,
   enthusiasm,
   groupOf,
   parseFilter,
@@ -52,7 +53,8 @@ import { Admin } from '@/screens/Admin';
 import { HuntSwitch, Project, ProjectPicker } from '@/screens/Project';
 import { Settings } from '@/screens/Settings';
 import { SignIn } from '@/screens/SignIn';
-import { ShortlistMap } from '@/screens/Map';
+import { ShortlistMap, COLOUR } from '@/screens/Map';
+import { CardMap } from '@/components/CardMap';
 import type { AuthState, ProjectSummary, SessionUser } from '@house-hunt/core';
 import {
   keys,
@@ -1174,12 +1176,25 @@ function Card({
   // A love or maybe you can act on can be taken off the market; a rejection has nothing to withhold
   // (it is already out of the positive class), and an unrated flat is not in training yet.
   const canGoOffMarket = group === 'excited' || group === 'maybe';
+  const point = entry.lat !== null && entry.lon !== null ? { lat: entry.lat, lon: entry.lon } : null;
 
   return (
     <article
       className={`card card-${group}${ticked ? ' card-ticked' : ''}${isOff ? ' card-off-market' : ''}${surprise ? ' card-surprise' : ''}`}
       id={`card-${entry.rightmoveId}`}
     >
+      {/* Everything that says what and where this place is, in one block so the map can be floated
+          into its top right and the rest read around it. */}
+      <div className="card-top">
+        {/* First in the block because a float only pushes aside what comes after it. */}
+        <CardMap
+          point={point}
+          hubs={hubs}
+          colour={COLOUR[group]}
+          approximate={!entry.exactLocation}
+          address={entry.displayAddress}
+        />
+
       <div className="card-head">
         {selection && onPick && (
           <Tick checked={ticked} label={entry.displayAddress} onPick={onPick} />
@@ -1188,7 +1203,9 @@ function Card({
             obvious thing to click on a card the one thing that took you off the site; the card
             below already holds the photos, the times and the verdict, and `Detail` ends with the
             explicit way out to the listing. */}
-        <span className="address">{entry.displayAddress}</span>
+        {/* The postcode chip a few pixels away says the district already — see
+            `addressBesidePostcode`. */}
+        <span className="address">{addressBesidePostcode(entry.displayAddress, entry.postcode)}</span>
         {score !== undefined && (
           <span className="card-score">
             <ScoreBadge score={score} surprise={surprise} />
@@ -1247,7 +1264,7 @@ function Card({
           time the two views have quietly disagreed about what a place is. */}
       <div className="card-hub">
         <HubFact
-          point={entry.lat !== null && entry.lon !== null ? { lat: entry.lat, lon: entry.lon } : null}
+          point={point}
           hubs={hubs}
           approximate={!entry.exactLocation}
         />
@@ -1265,6 +1282,7 @@ function Card({
             .join(' · ')}
         </div>
       )}
+      </div>
 
       {/* The verdict itself is stated once, by `Detail` immediately below, where it sits with the
           buttons that change it and the note that explains it. This card used to draw its own pill

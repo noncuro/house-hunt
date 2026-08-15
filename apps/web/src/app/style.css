@@ -171,6 +171,110 @@ h2 {
   margin: 2px 0;
 }
 
+/* The address, the facts, the hub fix, the flags and the stations, as one block so the map can be
+   floated into its top right and everything else read around it. A block rather than another flex
+   column: a float is ignored by flex layout, and what is wanted here is exactly what a float does.
+   `.card` itself supplies the gap between its children; inside a block, spacing is a margin. */
+.card-top {
+  display: flow-root;
+}
+
+.card-top > * + * {
+  margin-top: 6px;
+}
+
+/* Top right of the card, with the text running down its left. `margin-top: 0` beats the block's
+   own `* + *` spacing — the map's top edge lines up with the address, not a line below it. */
+.card-map-wrap {
+  float: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 0 0 8px 14px;
+}
+
+/* Plain and quiet: it is an offer, not one of the card's decisions. */
+.card-map-toggle {
+  border: 1px solid #dfe6ec;
+  background: #fff;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: #4a5b6c;
+  cursor: pointer;
+}
+
+.card-map-toggle:hover {
+  border-color: #b9c6d2;
+}
+
+.card-map {
+  width: 320px;
+  height: 220px;
+  border: 1px solid #dfe6ec;
+  border-radius: 10px;
+  /* Leaflet paints tiles to the edge, so the radius has to clip them. */
+  overflow: hidden;
+  background: #eef2f5;
+}
+
+.card-map .leaflet-container {
+  font: inherit;
+}
+
+/* Hub names sit on the map itself — a card has no room for a legend. Leaflet's tooltip is a
+   speech bubble by default; here it is a label. */
+.card-map-hub {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0 0 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #3d4c5a;
+  /* Legible over any tile without a panel behind it. */
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff;
+}
+
+.card-map-hub::before {
+  display: none;
+}
+
+.card-map-hub-fix {
+  color: #12263a;
+}
+
+.card-map-note,
+.card-map-missing {
+  display: block;
+  font-size: 11px;
+}
+
+.card-map-note {
+  width: 320px;
+}
+
+.card-map-missing {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .card-map-wrap {
+    float: none;
+    align-items: flex-start;
+    width: 100%;
+    margin: 0;
+  }
+
+  .card-map,
+  .card-map-note {
+    width: 100%;
+  }
+}
+
 .verdict {
   display: inline-flex;
   align-items: baseline;

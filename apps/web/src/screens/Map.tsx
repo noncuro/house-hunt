@@ -16,7 +16,9 @@ import type { ShortlistEntry } from '@house-hunt/core/db';
  *
  *  Positions come from the postcode wherever we have it. Rightmove's own pin is deliberately
  *  fuzzed, which is invisible at their zoom level and misleading at ours. */
-const COLOUR: Record<Group, string> = {
+/** Exported because the card thumbnails (`components/CardMap.tsx`) draw the same flat, and one
+ *  place looking green here and blue there is the same view disagreeing with itself. */
+export const COLOUR: Record<Group, string> = {
   excited: '#1a7f5a',
   maybe: '#d8a33a',
   rejected: '#9aa7b2',
