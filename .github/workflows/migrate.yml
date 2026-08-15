@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     # So a migration reaching production is a thing somebody approved, not a thing that happened.
     # Set the required reviewers on the environment if you want it to stop and ask.
-    environment: production
+    environment: Production
     steps:
       - uses: actions/checkout@v4
 
