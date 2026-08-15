@@ -114,6 +114,12 @@ a {
   border-color: var(--ink-soft);
 }
 
+/* A subject hue is a dark ink meant for paper, and on the inked ground of a pressed key it is one
+   dark colour on another. The fill already says "on", so the glyph joins the label. */
+.key-on .rm-icon {
+  color: inherit;
+}
+
 /* The one filled action of a section — sign in, save, download. */
 .primary {
   display: inline-flex;
@@ -896,6 +902,20 @@ code {
   margin: 0;
   font-size: 12.5px;
   color: var(--muted);
+}
+
+/* Where it is: the compass fix and the nearest stations on one row. `.rm-hub` is inline-flex, so
+   the line is a flex row rather than a paragraph the dial would sit on the baseline of. */
+.flat-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+}
+
+.flat-stations {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
 }
 
 .flat-flags {
@@ -1823,9 +1843,26 @@ code {
   color: var(--fainter);
 }
 
+/* The model line and the button that refits it, at the far end of the bar and wrapping as a pair. */
+.triage-modelling {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+}
+
 .triage-model {
   font-size: 12px;
-  margin-left: auto;
+}
+
+/* The set bars, as one flex item of the button rather than several — otherwise the button's own gap
+   lands between every word and every separator. */
+.triage-summary {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  text-align: left;
 }
 
 .triage-bulk {
@@ -2496,7 +2533,7 @@ input[type='checkbox'] {
   }
 
   .table-note,
-  .triage-model,
+  .triage-modelling,
   .triage-filter-clear {
     margin-left: 0;
   }

@@ -846,7 +846,14 @@ function AnalysisState({
 function PreferencesNote({ prefs }: { prefs: HuntPreferences | undefined }) {
   if (prefs === undefined) return null; // still reading
   const anyAmenity = Object.values(prefs.amenities ?? {}).some(Boolean);
-  if (anyAmenity || prefs.greatRoomMinSqft != null || prefs.minSqft != null) return null;
+  if (
+    anyAmenity ||
+    prefs.greatRoomMinSqft != null ||
+    prefs.minSqft != null ||
+    prefs.targetSqft != null
+  ) {
+    return null;
+  }
 
   return (
     <a className="rm-prefs-note" href={webAppUrl()} target="_blank" rel="noreferrer">

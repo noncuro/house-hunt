@@ -8,14 +8,24 @@ import {
   resolveSize,
   sizeOf,
   stageSentence,
+  stationDistance,
   travelDestinations,
   type Flag,
+  type Hub,
   type HuntPreferences,
   type Place,
   type TravelTime,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
-import { FlagChip, Icon, ScoreGauge, VerdictStamp, formatDuration, readTravel } from '@house-hunt/ui';
+import {
+  FlagChip,
+  HubFact,
+  Icon,
+  ScoreGauge,
+  VerdictStamp,
+  formatDuration,
+  readTravel,
+} from '@house-hunt/ui';
 import { isSurprise } from '@/lib/score';
 
 /** One flat, condensed to what decides whether you look closer.
@@ -27,13 +37,14 @@ import { isSurprise } from '@/lib/score';
  *  each saying its rent, its size, its commute and the one thing against it, answers that in a
  *  glance, and the arrow opens the rest.
  *
- *  Six facts, in the order they decide anything: what it costs, how big it is, how far it is, what
+ *  Six facts, in the order they decide anything: what it costs, how big it is, where it is, what
  *  the photos said, what we think of it, and how far it has got. Nothing else fits, and adding a
  *  seventh is what turned the old card into a page. */
 export function FlatCard({
   entry,
   places,
   travel,
+  hubs,
   prefs,
   score,
   onOpen,
@@ -43,6 +54,10 @@ export function FlatCard({
   /** Every travel row we hold, keyed by postcode — the cache and nothing else. A card must never
    *  fire a journey lookup: a grid of twenty-five would be twenty-five TfL calls on scroll. */
   travel: Record<string, TravelTime[]> | undefined;
+  /** The hunt's neighbourhoods, for the compass fix — same three states `HubFact` documents, and
+   *  optional only because the grid can render before the places have been read. An unpassed one
+   *  says "placing…" for good, which is loud rather than a blank pretending to be an answer. */
+  hubs?: Hub[] | null;
   prefs: HuntPreferences;
   score?: number;
   onOpen: (rightmoveId: string) => void;
@@ -55,6 +70,7 @@ export function FlatCard({
   const lead = images.find((url) => url !== plan) ?? null;
   const rest = images.length - (lead ? 1 : 0) - (plan ? 1 : 0);
 
+  const stations = stationsLine(entry);
   const flags = flagsFor(
     { analysis: entry.analysis, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) },
     prefs,
@@ -91,6 +107,14 @@ export function FlatCard({
         </div>
 
         <p className="flat-meta">{summarise(entry, places, travel)}</p>
+
+        {/* Where it is, which the redesign moved to the detail pane and which turns out to be what
+            you scan a card for: a postcode places nothing, and "0.4 mi NE of Angel · Angel 0.3 mi"
+            is the whole answer without opening anything. */}
+        <p className="flat-meta flat-where">
+          <HubFact point={pointOf(entry)} hubs={hubs} approximate={!entry.exactLocation} />
+          {stations && <span className="flat-stations">{stations}</span>}
+        </p>
 
         {/* At most three. A card carrying every flag it has is a card whose flags are not read —
             and the two that matter are the worst one and the best one, which is what `pickFlags`
@@ -158,6 +182,23 @@ function summarise(
   if (best && first) bits.push(`${formatDuration(best.seconds)} ${verbFor(best.mode)} to ${first.label}`);
 
   return bits.join(' · ');
+}
+
+const pointOf = (entry: ShortlistEntry) =>
+  entry.lat !== null && entry.lon !== null ? { lat: entry.lat, lon: entry.lon } : null;
+
+/** The two nearest stations as one line: "Angel 0.3 mi · Old Street 0.5 mi".
+ *
+ *  Not the shared `Stations` component, which is right everywhere else and wrong here for two
+ *  reasons: it fetches the walk and the lines per postcode, and a grid of twenty-five cards would
+ *  fire twenty-five of those on scroll — the same thing the `travel` prop above refuses to do — and
+ *  it draws a row per station where a card has room for a clause. The distance itself still goes
+ *  through `stationDistance`, so the number is formatted in one place. */
+function stationsLine(entry: ShortlistEntry): string {
+  return entry.nearestStations
+    .slice(0, 2)
+    .map((s) => `${s.name.replace(/\s+Station$/, '')} ${stationDistance(s.distance, s.unit)}`)
+    .join(' · ');
 }
 
 const VERB: Record<string, string> = { walking: 'walk', cycling: 'bike', transit: 'transit' };

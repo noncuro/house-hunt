@@ -285,6 +285,14 @@ export interface HuntPreferences {
    *  A hunt looking for 900 sq ft and a hunt looking for 450 read the identical panel on a 600 sq ft
    *  flat. Absent means no opinion, and no flag either way — a size bar is not something to guess. */
   minSqft?: number | null;
+  /** The floor area this hunt would actually like, above the floor it will not go below.
+   *
+   *  Two numbers because a size preference is two answers and was being stored as one: the flat you
+   *  would take and the flat you want are rarely the same figure, and a single bar makes everything
+   *  above it look equally fine. Between the two is amber — worth a viewing, worth knowing it is
+   *  under what you asked for — which is the same reading the main-room flag has always had. Absent
+   *  means the floor is the whole of the opinion. */
+  targetSqft?: number | null;
   /** Per amenity, whether the hunt must have it or would merely like it. Absent means "don't mind",
    *  which is the default behaviour these flags already had. */
   amenities?: Partial<Record<AmenityKey, AmenityWant>>;
@@ -409,13 +417,25 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
   // little under target is a reservation you settle by standing in it; a flat two hundred square
   // feet under what you need is not a viewing you were going to enjoy. The bar is the hunt's own
   // number, so being under it is their own judgement rather than ours.
+  //
+  // The caveat rides along on both: a figure read out of the description may be measuring the
+  // garden, and being told a flat is too small on the strength of one is worth knowing about.
+  const approximate = floorArea?.approximate ? ', and approximate' : '';
   if (prefs?.minSqft != null && floorArea && floorArea.value < prefs.minSqft) {
     flags.push({
       key: 'size',
       severity: 'red',
-      // The caveat rides along: a figure read out of the description may be measuring the garden,
-      // and being told a flat is too small on the strength of one is worth knowing about.
-      text: `${floorArea.value} sq ft — under your ${prefs.minSqft}${floorArea.approximate ? ', and approximate' : ''}`,
+      text: `${floorArea.value} sq ft — under your ${prefs.minSqft}${approximate}`,
+      confidence: null,
+    });
+  } else if (prefs?.targetSqft != null && floorArea && floorArea.value < prefs.targetSqft) {
+    // Amber, and only when the red above did not fire: a flat over the floor but under the target
+    // is one to look at knowing it is smaller than you asked for, which is a reservation rather
+    // than a reason to skip it.
+    flags.push({
+      key: 'size',
+      severity: 'yellow',
+      text: `${floorArea.value} sq ft — under the ${prefs.targetSqft} you are aiming for${approximate}`,
       confidence: null,
     });
   }

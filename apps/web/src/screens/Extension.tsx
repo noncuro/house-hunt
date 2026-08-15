@@ -20,9 +20,19 @@ import { keys, useExtension } from '@/lib/queries';
  *  - **Signed in as somebody else.** Two people share a laptop, or one account was for testing. The
  *    overlay would quietly write verdicts under the other name, which is worth a sentence.
  *
- *  Absent gets a line and no link. The install is load-unpacked on a handful of laptops; a "click
- *  here to install" button that cannot install anything is worse than the sentence. */
-export function ExtensionNotice({ email }: { email: string }) {
+ *  - **Absent.** Not installed on this laptop at all. This used to be a sentence and nothing else,
+ *    on the argument that a button which cannot install anything is worse than saying so — but the
+ *    Install tab exists now and does hand you the zip and the steps, so "not installed" without the
+ *    way to fix it is a dead end somebody has to guess their way out of. */
+export function ExtensionNotice({
+  email,
+  onInstall,
+}: {
+  email: string;
+  /** Opens the Install tab. Optional because the route lives on the page rather than here; without
+   *  it the notice is the sentence it used to be. */
+  onInstall?: () => void;
+}) {
   const client = useQueryClient();
   // One probe for the page. This and the Install screen each ran their own, each racing the
   // handshake's own two-second deadline, so the banner could say "not installed" directly above
@@ -78,7 +88,12 @@ export function ExtensionNotice({ email }: { email: string }) {
       return (
         <p className="dim">
           The browser extension is not installed here, so Rightmove pages will not show travel times
-          or the rating panel. Everything on this page works without it.
+          or the rating panel. Everything on this page works without it.{' '}
+          {onInstall && (
+            <button className="key" data-testid="notice-install" onClick={onInstall}>
+              Install it
+            </button>
+          )}
         </p>
       );
     }

@@ -34,3 +34,83 @@
   font-size: 11px;
   color: var(--muted);
 }
+
+/* --- spend against a cap ---------------------------------------------------------------------
+
+   The bar is drawn *behind* the figures rather than above them: stacked, the fill and the number
+   read as two separate facts about a row and cost a line of height each; behind, the number sits
+   at the point on the track it describes.
+
+   The fill has to be visibly darker than the track, which is the whole bug this replaced — a fill
+   a few percent off `--line-3` is a pill that looks the same at 5% spent and at 79%, so the bar
+   was a decoration beside a number rather than a reading of it. */
+
+.rm-budget {
+  position: relative;
+  display: block;
+  min-width: 168px;
+  height: 22px;
+  border-radius: var(--r-chip);
+  background: var(--line-3);
+  overflow: hidden;
+}
+
+.rm-budget-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--fainter);
+}
+
+.rm-budget-near .rm-budget-fill {
+  background: var(--warn-line);
+}
+
+/* Over the cap the fill covers the track and is hatched, so it cannot be mistaken for a budget
+   spent exactly to the line — the one reading that matters is the one a clipped bar hides. */
+.rm-budget-over .rm-budget-fill {
+  background: repeating-linear-gradient(135deg, var(--bad-line) 0 5px, var(--bad-bg) 5px 10px);
+}
+
+.rm-budget-over {
+  box-shadow: inset 0 0 0 1px var(--bad-line);
+}
+
+/* No cap at all: hatched track rather than an empty one, because an empty track reads as a budget
+   nobody has touched — which is exactly what an empty track means one row up. */
+.rm-budget-none {
+  background: repeating-linear-gradient(135deg, var(--line-3) 0 3px, var(--line) 3px 6px);
+}
+
+.rm-budget-figures {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: 0 var(--s2);
+  line-height: 22px;
+  color: var(--ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.rm-budget-of {
+  color: var(--muted);
+}
+
+/* The percentage at the far end, so the two numbers do not have to be read as one string and the
+   share has the width of the track to sit across. */
+.rm-budget-percent {
+  margin-left: auto;
+}
+
+.rm-budget-near-ink {
+  color: var(--warn-ink);
+}
+
+.rm-budget-over-ink {
+  color: var(--bad-ink);
+}
+
+.rm-budget-none-ink {
+  color: var(--muted);
+}

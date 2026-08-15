@@ -351,7 +351,7 @@ function App({
           in the usual case. */}
       <div className="notices">
         <SpendWarning summary={spendQuery.data ?? null} />
-        <ExtensionNotice email={user.email} />
+        <ExtensionNotice email={user.email} onInstall={() => go({ view: 'install' })} />
       </div>
 
       <main className={route.view === 'places' || route.view === 'triage' ? 'wrap wrap-wide' : 'wrap'}>
@@ -369,6 +369,7 @@ function App({
             setLens={setLens}
             places={places}
             travel={travel.data}
+            hubs={hubs}
             prefs={prefs}
             scores={scores}
             picked={picked}

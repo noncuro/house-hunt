@@ -1,5 +1,6 @@
 'use client';
 
+import { AmenityLabel } from '@house-hunt/ui';
 import {
   AMENITIES,
   CROW,
@@ -97,7 +98,7 @@ export function TriageFilters({
             data-testid={`want-${amenity.key}`}
             onClick={() => toggleAmenity(amenity.key)}
           >
-            {amenity.name}
+            <AmenityLabel amenity={amenity.key} />
           </button>
         ))}
       </div>

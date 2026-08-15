@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Icon, RATINGS, ScoreGauge, ratingOf } from '@house-hunt/ui';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AmenityLabel, Icon, RATINGS, ScoreGauge, ratingOf } from '@house-hunt/ui';
 import {
-  AMENITIES,
   addressBesidePostcode,
   applyFilter,
   placePoints,
@@ -193,7 +192,8 @@ export function Triage({
           data-testid="triage-filters-toggle"
           onClick={() => setEditing(!editing)}
         >
-          <Icon name="filter" size={12} /> {summarise(filter, places)}
+          <Icon name="filter" size={12} />
+          <span className="triage-summary">{summarise(filter, places)}</span>
         </button>
 
         <label className="triage-sort">
@@ -215,15 +215,31 @@ export function Triage({
           </select>
         </label>
 
-        <button type="button" className="key" onClick={onRerun} disabled={retrain.isPending}>
-          {retrain.isPending ? 'Rescoring…' : 'Rescore'}
-        </button>
-        <span className="dim triage-model">
-          {metrics
-            ? `${metrics.n} verdicts, ${Math.round(metrics.cvAuc * 100)}% AUC`
-            : scores
-              ? 'Model ready'
-              : 'No model yet'}
+        {/* The model and the button that rebuilds it, as one group at the far end of the bar: what
+            Rescore acts on is the line beside it, not the filters it used to sit next to. Grouped
+            rather than merely adjacent so the pair wraps together on a narrow window.
+
+            The button is the whole of the retraining story — a click refits the model server-side on
+            every verdict in the hunt, and nothing else ever does (design: explicit on purpose). It
+            says so on hover, because "Rescore" beside a percentage reads like a re-sort. */}
+        <span className="triage-modelling">
+          <span className="dim triage-model">
+            {metrics
+              ? `${metrics.n} verdicts, ${Math.round(metrics.cvAuc * 100)}% AUC`
+              : scores
+                ? 'Model ready'
+                : 'No model yet — rate a few, then rescore'}
+          </span>
+          <button
+            type="button"
+            className="key"
+            onClick={onRerun}
+            disabled={retrain.isPending}
+            title="Refit the model on every verdict in this hunt, then re-score the pile."
+            data-testid="triage-rescore"
+          >
+            {retrain.isPending ? 'Rescoring…' : 'Rescore'}
+          </button>
         </span>
       </div>
 
@@ -390,9 +406,12 @@ const KEY_RATING: Record<string, Rating | undefined> = { '1': 'no', '2': 'maybe'
 
 /** What the collapsed filter button says it is doing. Names the bars that are set rather than
  *  counting them: "under £2,600 · 2+ beds" is legible where "3 filters" is a number you have to
- *  open the panel to understand. */
-function summarise(filter: TriageFilter, places: Place[]): string {
-  const bits: string[] = [];
+ *  open the panel to understand.
+ *
+ *  Nodes rather than a string because an amenity is drawn, not spelled: it wears the same glyph here
+ *  as it does on the control that set it and on the flag that answers it. */
+function summarise(filter: TriageFilter, places: Place[]): ReactNode {
+  const bits: ReactNode[] = [];
   if (filter.maxPrice !== null) bits.push(`under £${filter.maxPrice.toLocaleString()}`);
   if (filter.minBedrooms !== null) bits.push(`${filter.minBedrooms}+ beds`);
   if (filter.minSqft !== null) bits.push(`${filter.minSqft}+ sq ft`);
@@ -404,9 +423,17 @@ function summarise(filter: TriageFilter, places: Place[]): string {
     if (place) bits.push(`${bar.max}${bar.mode === 'crow' ? ' mi' : ' min'} to ${place.label}`);
   }
   for (const key of filter.amenities) {
-    bits.push(AMENITIES.find((a) => a.key === key)?.label ?? key);
+    bits.push(<AmenityLabel amenity={key} word="label" size={12} />);
   }
-  return bits.length === 0 ? 'No filters' : bits.join(' · ');
+  if (bits.length === 0) return 'No filters';
+  return bits.map((bit, i) => (
+    // The index is the identity: the list is rebuilt whole on every filter change and never
+    // reordered in place.
+    <Fragment key={i}>
+      {i > 0 && <span className="dim">·</span>}
+      {bit}
+    </Fragment>
+  ));
 }
 
 /** The one line under an address in the pile: rent, beds, size. Everything else about the flat is

@@ -42,6 +42,7 @@ export type IconName =
   | 'hunt'
   | 'external'
   | 'tick'
+  | 'heart'
   | 'close'
   | 'back'
   | 'forward'
@@ -134,6 +135,7 @@ const PATHS: Record<IconName, React.ReactNode> = {
   ),
   external: <path d="M9.5 2.5H13.5V6.5M13.5 2.5 7.5 8.5M11.5 9.5v3.5a.5.5 0 0 1-.5.5H3a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5h3.5" />,
   tick: <path d="m3 8.4 3.2 3.2L13 4.8" />,
+  heart: <path d="M8 13.6C2.9 10.2 2 8.3 2 6.4a3 3 0 0 1 6-1.2 3 3 0 0 1 6 1.2c0 1.9-.9 3.8-6 7.2z" />,
   close: <path d="M4 4l8 8M12 4l-8 8" />,
   back: <path d="M9.5 3 4.5 8l5 5M4.5 8h7.5" />,
   forward: <path d="M6.5 3l5 5-5 5M11.5 8H4" />,

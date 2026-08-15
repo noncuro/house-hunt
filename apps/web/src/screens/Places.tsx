@@ -7,6 +7,7 @@ import {
   enthusiasm,
   groupOf,
   type Group,
+  type Hub,
   type HuntPreferences,
   type Place,
   type TravelTime,
@@ -53,6 +54,7 @@ export function Places({
   setLens,
   places,
   travel,
+  hubs,
   prefs,
   scores,
   picked,
@@ -76,6 +78,8 @@ export function Places({
   setLens: (next: Lens) => void;
   places: Place[];
   travel: Record<string, TravelTime[]> | undefined;
+  /** The hunt's neighbourhoods, for the card's compass fix. Three states — see `HubFact`. */
+  hubs: Hub[] | null | undefined;
   prefs: HuntPreferences;
   scores: Map<string, number> | null;
   /** The finalists ticked in the table, for the head-to-head. Held above this screen so that going
@@ -172,6 +176,7 @@ export function Places({
           grouped={lens.kind !== 'group'}
           places={places}
           travel={travel}
+          hubs={hubs}
           prefs={prefs}
           scores={scores}
           onOpen={onOpen}
@@ -272,6 +277,7 @@ function Cards({
   grouped,
   places,
   travel,
+  hubs,
   prefs,
   scores,
   onOpen,
@@ -280,6 +286,7 @@ function Cards({
   grouped: boolean;
   places: Place[];
   travel: Record<string, TravelTime[]> | undefined;
+  hubs: Hub[] | null | undefined;
   prefs: HuntPreferences;
   scores: Map<string, number> | null;
   onOpen: (rightmoveId: string) => void;
@@ -307,6 +314,7 @@ function Cards({
           entries={pile.entries}
           places={places}
           travel={travel}
+          hubs={hubs}
           prefs={prefs}
           scores={scores}
           onOpen={onOpen}
@@ -325,6 +333,7 @@ function Pile({
   entries,
   places,
   travel,
+  hubs,
   prefs,
   scores,
   onOpen,
@@ -333,6 +342,7 @@ function Pile({
   entries: ShortlistEntry[];
   places: Place[];
   travel: Record<string, TravelTime[]> | undefined;
+  hubs: Hub[] | null | undefined;
   prefs: HuntPreferences;
   scores: Map<string, number> | null;
   onOpen: (rightmoveId: string) => void;
@@ -356,6 +366,7 @@ function Pile({
             entry={entry}
             places={places}
             travel={travel}
+            hubs={hubs}
             prefs={prefs}
             score={scores?.get(entry.rightmoveId)}
             onOpen={onOpen}

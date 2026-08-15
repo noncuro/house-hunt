@@ -97,9 +97,34 @@
   font-family: inherit;
   cursor: pointer;
   color: var(--ink-soft);
+  /* The glyph costs the label a few pixels, and in the panel's 320px column "Not our place" takes a
+     second line rather than being clipped — so the two lines are set to sit tidily. */
+  text-align: center;
+  line-height: 1.25;
   /* Every tap target on a phone is at least 44px (audit rule 6). Three of these across a card is
      the most-tapped control in the app. */
   min-height: 36px;
+}
+
+/* The unselected state carries the difference too, and it is the state all three are in nearly all
+   of the time: a rejection and a rave used to be the same white button with a different word on it,
+   and the colours only appeared after the decision they were meant to help make. So at rest the hue
+   sits on the glyph — enough to tell the ends of the row apart from across the desk, quiet enough
+   that three of them still read as one control group rather than three shouting buttons. */
+.rm-rate-no .rm-rate-icon {
+  color: var(--bad-ink);
+}
+
+.rm-rate-maybe .rm-rate-icon {
+  color: var(--warn-ink);
+}
+
+.rm-rate-love .rm-rate-icon {
+  color: var(--good-ink);
+}
+
+.rm-rate:disabled .rm-rate-icon {
+  color: inherit;
 }
 
 /* In a row shared with the note field the buttons keep their own width; stretched to a third of
@@ -113,9 +138,20 @@
   white-space: nowrap;
 }
 
-.rm-rate:hover:not(:disabled) {
-  background: var(--paper);
-  border-color: var(--fainter);
+/* Hover is a preview of what pressing it looks like — its own ground, not a shared grey. */
+.rm-rate-no:hover:not(:disabled) {
+  background: var(--bad-bg);
+  border-color: var(--bad-line);
+}
+
+.rm-rate-maybe:hover:not(:disabled) {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+}
+
+.rm-rate-love:hover:not(:disabled) {
+  background: var(--good-bg);
+  border-color: var(--good-line);
 }
 
 .rm-rate:disabled {
@@ -127,7 +163,18 @@
 /* The selected button is the stamp: the same three grounds a card's verdict takes, so pressing
    "Love it" and then seeing a green stamp on the card afterwards is plainly the same fact and not
    two coincidentally coloured things. Not one dark ink for all three, which is what it was —
-   that made the choice legible and the *answer* not. */
+   that made the choice legible and the *answer* not.
+
+   The inner ring is what says "pressed" where the tint cannot: three pale grounds are three shades
+   of the same light grey to a monochrome eye, and a doubled edge is not. */
+.rm-rate-on {
+  box-shadow: inset 0 0 0 1px currentcolor;
+}
+
+.rm-rate-on .rm-rate-icon {
+  color: inherit;
+}
+
 .rm-rate-on.rm-rate-love {
   background: var(--good-bg);
   border-color: var(--good-line);

@@ -15,9 +15,12 @@ import { SEED_HUBS, toSweepHub } from '../packages/core/src/hubs';
 import type { Place } from '../packages/core/src/types';
 import { readSearchPage, staleAgainst, type SearchPage } from '../apps/extension/src/lib/search-page';
 import {
+  RENTAL_SEARCH,
   RESULTS_PER_PAGE,
   SWEEP_MARGIN_HOURS,
+  describeCriteria,
   nextPageUrl,
+  rightmoveSearchStart,
   sweepProgress,
   sweepSearchUrl,
   sweepWindow,
@@ -530,6 +533,44 @@ check('the last page has no next', nextPageUrl(onPage1, 3, 3), null);
 check('nor does a single-page search', nextPageUrl(onPage1, 1, 1), null);
 check('and a page past the end does not invent one', nextPageUrl(onPage1, 4, 3), null);
 check('an unparseable URL yields nothing rather than a broken link', nextPageUrl('not a url', 1, 3), null);
+
+console.log('describeCriteria');
+// Rent and bedrooms are the two the screen renders as English. Everything else is somebody's own
+// filter carried through from Rightmove, and it stays visible as itself rather than being dropped.
+check(
+  'the basics read as sentences',
+  describeCriteria({ minPrice: '1500', maxPrice: '3000', minBedrooms: '1', maxBedrooms: '3' }).supported,
+  ['Rent £1,500–£3,000 pcm', '1 to 3 bedrooms'],
+);
+check('an open end says which end', describeCriteria({ maxPrice: '2750' }).supported, ['Rent up to £2,750 pcm']);
+// Rightmove counts a studio as nought bedrooms, which cannot be printed as a number.
+check('nought bedrooms is a studio', describeCriteria({ minBedrooms: '0', maxBedrooms: '0' }).supported, ['Studio']);
+check(
+  'a filter we have no sentence for is still shown',
+  describeCriteria({ ...RENTAL_SEARCH, propertyTypes: 'flat', minBedrooms: '2', maxBedrooms: '2' }),
+  { supported: ['2 bedrooms'], other: ['propertyTypes=flat'] },
+);
+// The three that only say "this is a lettings search" are nobody's choice, so they are neither
+// described nor listed as somebody's extra filter.
+check('what makes it a rental search is not a filter', describeCriteria(RENTAL_SEARCH), { supported: [], other: [] });
+
+console.log('rightmoveSearchStart');
+check(
+  'a resolved place is pointed at by identifier',
+  rightmoveSearchStart({
+    label: 'Hampstead',
+    locationIdentifier: 'STATION^4187',
+    displayLocationIdentifier: 'Hampstead-Station.html',
+  }),
+  'https://www.rightmove.co.uk/property-to-rent/search.html?searchLocation=Hampstead+Station&useLocationIdentifier=true&locationIdentifier=STATION%5E4187',
+);
+// No identifier, no invented one: Rightmove is asked in words and offers its own matches, which is
+// honest about what we hold. A guessed identifier returns plausible flats somewhere else.
+check(
+  'an unresolved place is searched by name alone',
+  rightmoveSearchStart({ label: 'The office', locationIdentifier: null, displayLocationIdentifier: null }),
+  'https://www.rightmove.co.uk/property-to-rent/search.html?searchLocation=The+office',
+);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

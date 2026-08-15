@@ -1,7 +1,8 @@
 import './flags.css';
+import { AMENITY_SUBJECT, type SubjectHue } from './Amenity';
 import { Confidence } from './Confidence';
 import { Icon, type IconName } from './Icon';
-import { flagsFor, problemsOnly, type Flag, type FlagSource, type HuntPreferences } from '@house-hunt/core';
+import { AMENITIES, flagsFor, problemsOnly, type Flag, type FlagSource, type HuntPreferences } from '@house-hunt/core';
 
 /** What the photos say, in one place, drawn the same way everywhere.
  *
@@ -46,15 +47,14 @@ export function Flags({
 /** A subject's picture and the hue that picture is drawn in. The hue is not severity — it says
  *  what the icon is a picture *of*, which is the one job colour still has on a neutral chip.
  *  Keyed on `Flag.key` rather than on the words, so rewording a claim cannot silently change its
- *  glyph. */
-const SUBJECT: Record<string, { icon: IconName; hue: 'water' | 'green' | 'warm' | 'muted' }> = {
-  bathtub: { icon: 'bathtub', hue: 'water' },
+ *  glyph.
+ *
+ *  The six amenities come from `AMENITY_SUBJECT` rather than being listed again here: a chip and the
+ *  filter that asks for the same amenity showed different pictures of it, which is what a second
+ *  table always ends up doing. Only the subjects that are not amenities are named below. */
+const SUBJECT: Record<string, { icon: IconName; hue: SubjectHue }> = {
+  ...Object.fromEntries(AMENITIES.map((a) => [a.flagKey, AMENITY_SUBJECT[a.key]])),
   rooms: { icon: 'room', hue: 'warm' },
-  outdoor: { icon: 'outdoor', hue: 'green' },
-  dishwasher: { icon: 'dishwasher', hue: 'muted' },
-  laundry: { icon: 'laundry', hue: 'green' },
-  light: { icon: 'light', hue: 'warm' },
-  bills: { icon: 'bills', hue: 'warm' },
   floorplan: { icon: 'floorplan', hue: 'muted' },
   size: { icon: 'size', hue: 'muted' },
   // Neither of these is a fixture with a picture — they are things about how the flat is *lived
@@ -79,8 +79,8 @@ export function FlagChip({ flag }: { flag: Flag }) {
   const unsure = flag.confidence === 'low' || flag.confidence === 'medium';
 
   return (
-    <span className={`rm-flag rm-flag-${flag.severity}${hue ? ` rm-flag-hue-${hue}` : ''}`}>
-      <Icon name={icon} size={13} className="rm-flag-icon" />
+    <span className={`rm-flag rm-flag-${flag.severity}`}>
+      <Icon name={icon} size={13} className={hue ? `rm-subject-${hue}` : undefined} />
       {flag.text}
       {/* The bars and the word are one group behind one hairline, so the divider reads as
           separating the claim from the doubt rather than the bars from their own caption. */}

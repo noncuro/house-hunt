@@ -176,79 +176,13 @@
 
 /* --- the budget bar --------------------------------------------------------------------- */
 
-/* The one mark this view is built around, and one box rather than two rows: the bar is drawn
-   *behind* the figures, not above them. Stacked, the fill and the number read as two separate
-   facts about a row and cost a line of height each; behind, the number sits at the point on the
-   track it describes.
-
-   The track is drawn at full width at every level, so a column of these can be read down by
-   comparing fills — the same argument the confidence bars settled
-   (`components/Confidence.tsx`): a mark that shrinks as it matters more is backwards.
-
-   Colour is the signal here, which it deliberately is not on the confidence bars. A cap is a
-   threshold with a right and a wrong side, so amber at 80% and red at the line mean what amber
-   and red mean everywhere else. Below the warning line the fill is a warm grey: normal spend is
-   not news, and giving it a hue would spend the palette on the state every row is in. */
+/* The bar itself is `SpendBar` in `packages/ui` — it was drawn here, and its fill was
+   `color-mix(in oklab, var(--ink) 9%, var(--white))` on a `--line-3` track, which is the same
+   colour, which is why a half-spent budget looked identical to an untouched one. This file keeps
+   only the cell it sits in. */
 
 .budget-cell {
   min-width: 200px;
-}
-
-.budget {
-  position: relative;
-  display: block;
-  min-width: 168px;
-  height: 22px;
-  border-radius: var(--r-chip);
-  background: var(--line-3);
-  overflow: hidden;
-}
-
-.budget-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  /* No minimum width: a $0 row draws the track and nothing in it. A hairline stub for zero reads
-     as a small amount of spend, which is the one thing it is not. */
-  background: color-mix(in oklab, var(--ink) 9%, var(--white));
-}
-
-.budget-near .budget-fill {
-  background: color-mix(in oklab, var(--warn-ink) 22%, var(--white));
-}
-
-.budget-over .budget-fill {
-  background: color-mix(in oklab, var(--bad-ink) 22%, var(--white));
-}
-
-/* No cap at all: the track is drawn hatched rather than empty, because an empty track reads as a
-   budget nobody has touched — which is now exactly what an empty track means. */
-.budget-none {
-  background: repeating-linear-gradient(135deg, var(--line-3) 0 3px, var(--line) 3px 6px);
-}
-
-.budget-figures {
-  position: relative;
-  display: block;
-  padding: 0 var(--s2);
-  line-height: 22px;
-  color: var(--ink);
-  white-space: nowrap;
-}
-
-.budget-of {
-  color: var(--muted);
-}
-
-.budget-word.budget-near {
-  color: var(--warn-ink);
-}
-
-.budget-word.budget-over {
-  color: var(--bad-ink);
-}
-
-.budget-word.budget-none {
-  color: var(--muted);
 }
 
 /* The whole bar is the way into the charges behind it. A button rather than a link because it
@@ -265,7 +199,7 @@
   cursor: pointer;
 }
 
-.admin-drill:hover .budget {
+.admin-drill:hover .rm-budget {
   outline: 1px solid var(--fainter);
   outline-offset: 1px;
 }

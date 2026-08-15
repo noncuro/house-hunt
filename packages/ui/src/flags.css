@@ -46,22 +46,8 @@
   padding: 1.5px 6.5px;
 }
 
-/* The subject's own hue, on the icon alone. Only ever set on a neutral chip — see FlagChip. */
-.rm-flag-hue-water .rm-flag-icon {
-  color: var(--subject-water);
-}
-
-.rm-flag-hue-green .rm-flag-icon {
-  color: var(--subject-green);
-}
-
-.rm-flag-hue-warm .rm-flag-icon {
-  color: var(--subject-warm);
-}
-
-.rm-flag-hue-muted .rm-flag-icon {
-  color: var(--muted);
-}
+/* The subject's own hue rides on the icon as `rm-subject-*` (amenity.css), which is where every
+   surface that draws a subject reads it from. Only ever set on a neutral chip — see FlagChip. */
 
 /* The doubt, behind a hairline: bars, then the word. Quiet on purpose — it qualifies the claim
    rather than replacing it, and it appears only where the model was unsure, so it does not need

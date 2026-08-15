@@ -10,6 +10,7 @@
  */
 export * from './host';
 export * from './Icon';
+export * from './Amenity';
 export * from './Confidence';
 export * from './Flags';
 export * from './Gallery';

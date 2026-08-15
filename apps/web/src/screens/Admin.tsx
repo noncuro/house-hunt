@@ -20,7 +20,7 @@ import {
   listInvites,
   revokeInvite,
 } from '@house-hunt/core/db';
-import { Icon, money, WARN_AT } from '@house-hunt/ui';
+import { charge, Icon, money, SpendBar } from '@house-hunt/ui';
 
 /** What everyone is spending, and the ceilings on it.
  *
@@ -233,57 +233,11 @@ function bucketPreviousMonth(rows: UsageRow[], months: Months) {
 // Money, drawn.
 // ------------------------------------------------------------------------------------------------
 
-/** A cap is rendered by `money()` from `components/Spend`, the same renderer the panel's capped
- *  notice and the shortlist's 80% warning use, and `WARN_AT` is the same 80%. A limit on someone
+/** Every figure here goes through the renderers in `packages/ui/src/Spend.tsx` — `money()` for a
+ *  cap, `charge()` for a single charge, `SpendBar` for one against the other. A limit on someone
  *  else's money phrased two ways in two views is exactly the drift the one-fact-one-renderer rule
- *  exists to stop.
- *
- *  What a charge costs needs one thing more. `cost_usd` is `numeric(10, 6)` and a single analysis
- *  is routinely a fraction of a cent, so rounding to the cent — right for a $20 cap — prints a
- *  real charge as "$0.00" and a table of them as a free API. Same money, one magnitude down. */
-function charge(amount: number): string {
-  if (amount === 0) return '$0';
-  return amount < 0.005 ? '<$0.01' : money(amount);
-}
-
-type BudgetLevel = 'under' | 'near' | 'over' | 'none';
-
-function levelOf(spent: number, cap: number): BudgetLevel {
-  if (!(cap > 0)) return 'none';
-  if (spent >= cap) return 'over';
-  return spent / cap >= WARN_AT ? 'near' : 'under';
-}
-
-/** Spend against a cap: one bar with the two numbers drawn on top of it.
- *
- *  The track is drawn at full width whatever the fill, so every row's bar occupies the same space
- *  and a column of them can be read down: the eye compares fills, not footprints. A cap of zero is
- *  its own state rather than a division by zero rendered as an empty bar, because "no budget at
- *  all" and "nothing spent yet" look identical once you draw them the same way.
- *
- *  The figures sit inside the track rather than under it. Stacked they read as two facts about the
- *  row — a picture and, separately, a number — and cost a line of height on every user; behind, the
- *  bar is the number's own scale. Which also means nothing at all is drawn for zero: the fill is
- *  omitted rather than given a minimum width, because a visible stub beside "$0" says a small
- *  amount was spent. */
-function Budget({ spent, cap, label }: { spent: number; cap: number; label?: string }) {
-  const level = levelOf(spent, cap);
-  const fraction = level === 'none' ? 0 : Math.min(spent / cap, 1);
-  const percent = level === 'none' ? '' : `${Math.round((spent / cap) * 100)}%`;
-
-  return (
-    <span
-      className={`budget budget-${level}`}
-      title={`${label ? `${label}: ` : ''}$${spent.toFixed(6)} of ${money(cap)}${percent ? ` — ${percent}` : ''}`}
-    >
-      {fraction > 0 && <span className="budget-fill" style={{ width: `${fraction * 100}%` }} />}
-      <span className="budget-figures">
-        <b className={level === 'under' ? undefined : `budget-word budget-${level}`}>{charge(spent)}</b>
-        <span className="budget-of"> of {level === 'none' ? 'no budget' : money(cap)}</span>
-      </span>
-    </span>
-  );
-}
+ *  exists to stop, and the bar moved into that file when its fill turned out to be invisible: the
+ *  colour it was drawn in lived in `admin.css`, where nothing shared could reach it. */
 
 // ------------------------------------------------------------------------------------------------
 // Caps. The admin RPCs are the only writable path — RLS gates rows and not columns, so there is no
@@ -482,7 +436,7 @@ function Users({
                   title="The individual charges behind this"
                   onClick={() => onDrill({ kind: 'user', id: user.id, label: user.displayName || user.email })}
                 >
-                  <Budget spent={user.spentThisMonthUsd} cap={user.monthlyCapUsd} label={user.email} />
+                  <SpendBar spent={user.spentThisMonthUsd} cap={user.monthlyCapUsd} label={user.email} />
                 </button>
               </td>
               <td className="num dim">{charge(lastMonth.byUser.get(user.id) ?? 0)}</td>
@@ -650,7 +604,7 @@ function Projects({
                   title="The individual charges behind this"
                   onClick={() => onDrill({ kind: 'project', id: project.id, label: project.name })}
                 >
-                  <Budget spent={project.spentThisMonthUsd} cap={project.monthlyCapUsd} label={project.name} />
+                  <SpendBar spent={project.spentThisMonthUsd} cap={project.monthlyCapUsd} label={project.name} />
                 </button>
               </td>
               <td className="num dim">{charge(lastMonth.byProject.get(project.id) ?? 0)}</td>

@@ -1,4 +1,5 @@
 import { Hint } from './Hint';
+import { Icon, type IconName } from './Icon';
 import { RATINGS, attribution, attributionDetail, ratingOf } from './ratings';
 import './ratings.css';
 import type { Rating, Verdict } from '@house-hunt/core';
@@ -74,6 +75,11 @@ export function VerdictLine({ verdict }: { verdict: Verdict | null }) {
   );
 }
 
+/** A shape per rating, so the three are told apart without reading the words and without seeing the
+ *  colours. Three identically shaped buttons in three tints is one cue, and it is the cue a tenth of
+ *  the men looking at this screen do not have. */
+const RATING_ICON: Record<Rating, IconName> = { no: 'close', maybe: 'tick', love: 'heart' };
+
 /** The three buttons, wherever a rating is set. `pending` is the value clicked but not yet
  *  acknowledged by the database — it reads as pressed straight away, and the stripe says the
  *  other laptop has not seen it yet. */
@@ -123,6 +129,7 @@ export function RatingButtons({
             data-testid={`rate-${r.value}`}
             onClick={() => onRate(r.value)}
           >
+            <Icon name={RATING_ICON[r.value]} size={13} className="rm-rate-icon" />
             {r.label}
             {/* Aria-hidden: the shortcut is a hint to the hands, and read aloud after every label
                 it is three characters of noise on a control that is already reachable by tab. */}

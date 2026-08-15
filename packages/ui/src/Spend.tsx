@@ -26,6 +26,63 @@ export function money(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+/** What a charge costs, which needs one thing more than `money`. `cost_usd` is `numeric(10, 6)`
+ *  and a single analysis is routinely a fraction of a cent, so rounding to the cent — right for a
+ *  $20 cap — prints a real charge as "$0.00" and a table of them as a free API. */
+export function charge(usd: number): string {
+  if (usd === 0) return '$0';
+  return usd < 0.005 ? '<$0.01' : money(usd);
+}
+
+export type SpendLevel = 'under' | 'near' | 'over' | 'none';
+
+export function spendLevel(spent: number, cap: number): SpendLevel {
+  if (!(cap > 0)) return 'none';
+  if (spent >= cap) return 'over';
+  return spent / cap >= WARN_AT ? 'near' : 'under';
+}
+
+/** Spend against a cap: one bar, filled to the share of it that is gone, with the figures and the
+ *  percentage drawn on the track.
+ *
+ *  The track is full width at every level, so a column of these reads down — the eye compares
+ *  fills, not footprints, which is the argument the confidence bars settled. Unlike confidence,
+ *  colour here *is* the signal: a cap is a threshold with a right and a wrong side.
+ *
+ *  Over the cap is not a full bar. A bar clipped at 100% says "all of it is spent", which is the
+ *  same picture as landing exactly on the line and hides the one case somebody has to act on — so
+ *  the over-run is hatched across the whole track and the percentage keeps counting past 100. */
+export function SpendBar({ spent, cap, label }: { spent: number; cap: number; label?: string }) {
+  const level = spendLevel(spent, cap);
+  const share = level === 'none' ? 0 : spent / cap;
+  const percent = level === 'none' ? null : `${Math.round(share * 100)}%`;
+
+  return (
+    <span
+      className={`rm-budget rm-budget-${level}`}
+      data-testid="spend"
+      title={`${label ? `${label}: ` : ''}$${spent.toFixed(6)} of ${
+        level === 'none' ? 'no budget' : money(cap)
+      }${percent ? ` — ${percent}` : ''}`}
+    >
+      {/* No minimum width: a $0 row draws the track and nothing in it, because a hairline stub
+          reads as a small amount of spend, which is the one thing it is not. */}
+      {share > 0 && (
+        <span className="rm-budget-fill" style={{ width: `${Math.min(share, 1) * 100}%` }} />
+      )}
+      <span className="rm-budget-figures">
+        <b className={`rm-budget-${level}-ink`}>{charge(spent)}</b>
+        <span className="rm-budget-of"> of {level === 'none' ? 'no budget' : money(cap)}</span>
+        {percent && (
+          <span className={`rm-budget-percent rm-budget-${level}-ink`}>
+            {level === 'over' ? `over · ${percent}` : percent}
+          </span>
+        )}
+      </span>
+    </span>
+  );
+}
+
 /** Whichever cap is closest to being hit, once it is worth mentioning. Both are checked because
  *  either can bind first, and the one that binds is the only one worth a sentence. */
 export function pressingScope(

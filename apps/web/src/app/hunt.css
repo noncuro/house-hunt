@@ -1,30 +1,37 @@
 /* The Your Hunt screen (`screens/Project.tsx`), and nothing else.
  *
- * Its own file rather than more of `style.css`: this screen is one long column of settings and the
- * rules it needs — a segmented control, a place card, a collapsed explainer — are read nowhere else.
+ * Its own file rather than more of `style.css`: this screen is a column of settings cards and the
+ * rules it needs — a segmented control, a place row, a collapsed explainer — are read nowhere else.
  * Every colour, size and radius here is a token from `packages/ui/src/tokens.css`; a literal in this
  * file is a value that has escaped the palette.
  *
  * The `.settings` prefix on the headings is deliberate specificity: `style.css` styles `.setting h2`
  * and the two files' order in the bundle is not something this file gets to decide. */
 
+/* --- one card per thing the screen is about ------------------------------------------------ */
+
+/* Six unrelated questions — what you want, where you are looking, what a sweep searches, who is in
+   it, who has been asked, which hunt — ran together as one column of headings, so where one ended
+   and the next began was something you worked out from the wording. A card each says it instead.
+   Quiet on purpose: this is a settings screen, so the border and a paper-white ground are the whole
+   of the treatment, with no shadow and no accent. */
+.settings .hunt-card {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: var(--s4);
+  margin-top: var(--s3);
+}
+
 /* --- headings and the explainers ---------------------------------------------------------- */
 
-.settings .hunt-h,
-.settings .hunt-h3 {
+.settings .hunt-h {
   font-family: var(--font-serif);
   font-weight: 600;
   color: var(--ink);
   letter-spacing: -0.01em;
   margin: 0 0 var(--s1);
-}
-
-.settings .hunt-h {
   font-size: 21px;
-}
-
-.settings .hunt-h3 {
-  font-size: 19px;
 }
 
 /* A small-caps mono label, for the places in the wireframe that name a block rather than title it. */
@@ -87,10 +94,13 @@
   border-top: 1px solid var(--line-3);
 }
 
+/* Wrapping rather than shrinking: a size row's numbers take the line under the answer they belong
+   to, which is also what the narrow-window rules do to the segmented group. */
 .hunt-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--s3);
   padding: var(--s2) 0;
   border-bottom: 1px solid var(--line-3);
@@ -111,26 +121,26 @@
   flex: none;
 }
 
-.hunt-ico-water {
-  color: var(--subject-water);
+/* The numbers take the line under the answer that turned them on, and only while it is on. Two of
+   them on the whole-flat row — the floor and the target — so they need room to be told apart by
+   their captions rather than by their order. */
+.hunt-sqft-pair {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  padding-bottom: var(--s1);
 }
 
-.hunt-ico-green {
-  color: var(--subject-green);
-}
-
-.hunt-ico-warm {
-  color: var(--subject-warm);
-}
-
-/* The number rides beside the label it qualifies, and only while the answer is not "don't mind". */
-.hunt-row-size {
+.hunt-sqft {
   display: inline-flex;
   align-items: center;
   gap: var(--s1);
+  font-size: 12px;
+  color: var(--muted);
 }
 
-.hunt-row-size input {
+.hunt-sqft input {
   width: 4.5em;
   font: inherit;
   font-size: 13px;
@@ -198,7 +208,26 @@
   border-bottom: 1px solid var(--line-3);
 }
 
+/* The name takes the first line and the controls the second, always — rather than wrapping wherever
+   the name happens to run out. Wrapped on width, a five-place list broke at a different point on
+   every row, which reads as five different kinds of row rather than one row five times. */
 .hunt-place-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+}
+
+.hunt-place-title {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.hunt-place-controls {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -214,7 +243,6 @@
 .hunt-place-where {
   font-size: 12px;
   color: var(--faint);
-  margin-right: auto;
 }
 
 /* Whether this place is searchable, said as a state rather than as Rightmove's identifier: the id
@@ -266,8 +294,12 @@
 
 /* --- what we search for -------------------------------------------------------------------- */
 
-.hunt-search {
-  margin-top: var(--s5);
+/* The way in to the whole paste flow, so it sits on its own line above the field it feeds rather
+   than beside a paragraph. On a card the standard button's ground is the card's own, so it takes
+   white to stay a thing you press. */
+.hunt-search-open {
+  margin-bottom: var(--s3);
+  background: var(--white);
 }
 
 /* The address bar and the button that accepts it, on one line: a pasted URL is long, so the field
@@ -309,20 +341,36 @@
 .hunt-search-summary li {
   font-size: 12px;
   color: var(--ink-soft);
-  background: var(--raised);
+  background: var(--white);
   border: 1px solid var(--line);
   border-radius: var(--r-chip);
   padding: 3px var(--s2);
 }
 
+/* The one line in that list that is not part of the saved filters — the radius, which each place
+   carries — so it reads as a pointer rather than as something this block could change. */
+.hunt-search-summary .hunt-search-elsewhere {
+  color: var(--faint);
+  background: none;
+  border-style: dashed;
+}
+
 /* --- narrow windows (M4) ------------------------------------------------------------------- */
 
 @media (max-width: 768px) {
+  /* A card's border is worth more than its inset when the screen is 360px wide. */
+  .settings .hunt-card {
+    padding: var(--s3);
+  }
+
   /* The group takes its own line under the label and splits the width evenly, so the three answers
      stay one tap each rather than three targets squeezed into a corner. */
   .hunt-row {
-    flex-wrap: wrap;
     padding: var(--s3) 0;
+  }
+
+  .hunt-sqft input {
+    min-height: 44px;
   }
 
   .hunt-seg {

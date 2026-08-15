@@ -166,6 +166,27 @@ check(
   sizeKeys({ analysis: null, floorplanUrl: null }, { minSqft: 600 }),
   [],
 );
+// The floor and the target are two answers, and the band between them is the amber one: a flat you
+// would take, at a size you did not ask for.
+check(
+  'between the floor and the target is amber',
+  flagsFor(small, { minSqft: 300, targetSqft: 600 }).find((f) => f.key === 'size')?.severity,
+  'yellow',
+);
+// One flag, not two. Under the floor is under the target as well, and the worse reading is the
+// only one worth showing.
+check(
+  'under both is said once, in red',
+  flagsFor(small, { minSqft: 500, targetSqft: 600 })
+    .filter((f) => f.key === 'size')
+    .map((f) => f.severity),
+  ['red'],
+);
+check(
+  'at the target is not under it',
+  sizeKeys({ ...small, size: { listedSqft: 600, listedSource: 'sizings' } }, { minSqft: 300, targetSqft: 600 }),
+  [],
+);
 
 console.log('galleryFor');
 // The floorplan leads and is not repeated further down the set.
