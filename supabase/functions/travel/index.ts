@@ -520,19 +520,17 @@ interface Gap {
   dest_lat: number | null;
   dest_lon: number | null;
   mode: TravelMode;
-  /** Whether a backoff row stands against this pair, so a run that answers it knows whether there
-   *  is anything to clear. */
-  has_backoff: boolean;
   /** The whole outstanding count, carried on every row — see `travel_gaps`. */
   remaining: number;
 }
 
-/** The mode list is stated twice — `TRAVEL_MODES` here and an `array[...]` inside `travel_gaps` —
- *  because there is no way to share a constant across the SQL boundary. Two statements of one fact
- *  can disagree, and this is the point where the disagreement would otherwise pass unnoticed: an
- *  unknown mode falls through `journeyTime`'s lookup to the planner's default and gets cached as a
- *  transit number under whatever label the migration invented. So the rows are checked rather than
- *  trusted, and a divergence stops the run instead of poisoning the shared cache. */
+/** Refuses a mode the migration names and we do not route: it would fall through `journeyTime`'s
+ *  lookup to the planner's default and be cached as a transit number under whatever label the
+ *  migration invented, so the rows are checked rather than trusted.
+ *
+ *  Only that direction. A run sees the modes it happens to draw, and a mode with no outstanding
+ *  gaps returns no rows at all, so nothing here can tell that the migration is *missing* one we
+ *  route — that half is `pnpm check:travel`, which compares the two texts. */
 function checkModes(gaps: Gap[]): void {
   const unknown = [...new Set(gaps.map((g) => g.mode).filter((mode) => !TRAVEL_MODES.includes(mode)))];
   if (unknown.length > 0) {
@@ -618,10 +616,11 @@ async function runBackfill(ask: SystemAsk) {
         // served its purpose.
         if (leg.settled) noRoute++;
         else routed++;
-        // Only where there is one to clear. The healthy case is a clean backlog, and clearing
-        // unconditionally spends a round trip per leg — a whole budget's worth per run — deleting
-        // nothing.
-        if (!gap.has_backoff) return;
+        // Unconditionally, though the delete is usually a no-op: the gap row was read before the
+        // call and cannot say what happened during it. Two overlapping runs can draw the same leg,
+        // and if one fails and writes a backoff while the other succeeds, skipping the clear on the
+        // stale snapshot leaves a backoff row standing over a cached answer — suppressing the leg
+        // later, for a failure that was already overtaken.
         await rpc('clear_travel_failure', {
           p_origin_postcode: gap.origin_postcode,
           p_dest_postcode: gap.dest_postcode,

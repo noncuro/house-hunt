@@ -3,8 +3,18 @@
  *  This is the file that decides whether to believe a number already in the database, so getting
  *  it wrong is silent in both directions: too strict and every page load re-asks TfL for
  *  everything, too loose and a commute measured at midnight during engineering works is shown
- *  forever as the answer. Neither looks like a bug on screen. */
+ *  forever as the answer. Neither looks like a bug on screen.
+ *
+ *  It also pins the one fact about travel that is stated twice: the set of modes we route, written
+ *  once as `TRAVEL_MODES` and once as an `array[...]` inside `travel_gaps`, with no way to share a
+ *  constant across the SQL boundary. The backfill's runtime check can only catch half of a
+ *  divergence — it sees the modes a run happens to return, and a mode with no outstanding gaps
+ *  legitimately returns nothing — so a mode added here and forgotten in the migration is never
+ *  backfilled, forever, with every check green. Comparing the two texts is the only way to see it. */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { NO_ROUTE_RETRY_DAYS, TRAVEL_BASIS, nextWeekdayMorning, staleTravel } from '../packages/core/src/tfl';
+import { TRAVEL_MODES } from '../packages/core/src/types';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -125,6 +135,20 @@ usable(
   'an unreadable timestamp keeps the row rather than thrashing',
   staleTravel(row({ noRoute: true, options: undefined, computedAt: 'not a date' }), 'transit', NOW),
 );
+
+console.log('travel_gaps modes');
+const MIGRATION = 'supabase/migrations/20260815160000_travel_backfill.sql';
+const sql = readFileSync(resolve(import.meta.dirname, '..', MIGRATION), 'utf8');
+// The one `unnest(array[...])` in the file is the mode list; anything else there would be a second
+// literal nobody has told this check about, so a miss is a failure rather than a skip.
+const literal = /cross\s+join\s+unnest\(\s*array\s*\[([^\]]*)\]/i.exec(sql)?.[1];
+if (literal === undefined) {
+  failures++;
+  console.log(`  FAIL ${MIGRATION} has no \`cross join unnest(array[...])\` — did the mode list move?`);
+} else {
+  const inSql = [...literal.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  check('the migration routes exactly the modes TRAVEL_MODES names', [...inSql].sort(), [...TRAVEL_MODES].sort());
+}
 
 if (failures > 0) {
   console.error(`\n${failures} failing`);

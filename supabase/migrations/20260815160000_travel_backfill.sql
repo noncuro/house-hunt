@@ -68,7 +68,9 @@ comment on table travel_backoff is
 --
 -- The modes are the three we route (`TRAVEL_MODES` in packages/core/src/types.ts). Driving is
 -- deliberately absent here as everywhere else: TfL cannot answer it, and asking would cache a
--- transit number under a driving label.
+-- transit number under a driving label. `pnpm check:travel` reads this literal and compares it to
+-- that constant: a mode named there and forgotten here is never backfilled at all, and no runtime
+-- check can see the absence of rows it was never going to be sent.
 --
 -- Archived flats are skipped. The funnel says they are done with — spending TfL's goodwill to learn
 -- the commute to a flat somebody else took is the one clearly wasted call in the set. A flat with no
@@ -95,7 +97,6 @@ returns table (
   dest_lat        double precision,
   dest_lon        double precision,
   mode            text,
-  has_backoff     boolean,
   remaining       bigint
 )
 language plpgsql
@@ -119,8 +120,7 @@ begin
            trim(pl.postcode) as dest_postcode,
            pl.lat            as dest_lat,
            pl.lon            as dest_lon,
-           m.mode            as mode,
-           tb.origin_postcode is not null as has_backoff
+           m.mode            as mode
       from project_property pp
       join property p  on p.rightmove_id = pp.rightmove_id
       join place    pl on pl.project_id  = pp.project_id
@@ -155,7 +155,6 @@ begin
          pairs.dest_lat,
          pairs.dest_lon,
          pairs.mode,
-         pairs.has_backoff,
          count(*) over () as remaining
     from pairs
    order by pairs.origin_postcode, pairs.dest_postcode, pairs.mode

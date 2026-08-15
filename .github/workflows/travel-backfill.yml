@@ -64,6 +64,10 @@ jobs:
           # than like the number was. Checked here so the message names the actual mistake.
           case "${BUDGET}" in
             ''|*[!0-9]*) echo "budget must be a whole number of TfL calls, not '${BUDGET}'." >&2; exit 1 ;;
+            # JSON forbids a leading zero, so `01` is digits all the way through and still builds a
+            # body the function refuses — exactly the failure this check exists to name rather than
+            # let through.
+            0?*) echo "budget must not have a leading zero, unlike '${BUDGET}'." >&2; exit 1 ;;
           esac
           if [ "${BUDGET}" -lt 1 ]; then
             echo "budget must be at least 1 TfL call, not '${BUDGET}'." >&2
