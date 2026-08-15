@@ -221,7 +221,10 @@ function App({
   const [sortMode, setSortMode] = useState<SortMode>('default');
   // The flat a jump from elsewhere has asked to see. Held here because the pile that holds it is
   // decided by its verdict, and only that pile can page to it — see `openCard`.
-  const [reveal, setReveal] = useState<string | null>(null);
+  //
+  // A fresh object per ask rather than a bare id: clicking the same pin again after paging away has
+  // to page back to it, and the same id twice would read as nothing having been asked.
+  const [reveal, setReveal] = useState<{ id: string } | null>(null);
   // Held here rather than inside Triage so that going to the map and back does not throw away the
   // narrowing you set up to work through — and stored, so neither does closing the tab. Working a
   // pile of two hundred takes more than one sitting, and setting the same four bars up again each
@@ -321,7 +324,7 @@ function App({
     // never in the document.
     const entry = byId.get(id);
     if (entry && !matchesStage(entry.stage, stageFilter)) setStageFilter('all');
-    setReveal(id);
+    setReveal({ id });
     // Wait for the card, rather than for one frame. Revealing the unrated pile renders two hundred
     // cards, which does not fit in the frame after the state change — so the single rAF scrolled
     // to nothing at all and left you at the top of a page with the flat you asked for thirteen
@@ -692,6 +695,8 @@ function App({
         />
       )}
 
+      {/* Every pile is handed the same request. The flat is in exactly one of them; the other three
+          look for it, do not find it, and stay where they are. */}
       <div hidden={view !== 'list' && view !== 'map'}>
       <Pile
         title={GROUP_LABEL.excited}
@@ -706,7 +711,9 @@ function App({
         open={showMaybes}
         onToggle={() => setShowMaybes((v) => !v)}
       />
-      {showMaybes && <Pile entries={grouped.maybe} empty="Nothing liked." reveal={reveal} {...cardProps} />}
+      {showMaybes && (
+        <Pile entries={grouped.maybe} empty="Nothing liked." reveal={reveal} {...cardProps} />
+      )}
 
       <Toggle
         label={`${GROUP_LABEL.unrated} (${grouped.unrated.length})`}
@@ -714,7 +721,12 @@ function App({
         onToggle={() => setShowUnrated((v) => !v)}
       />
       {showUnrated && (
-        <Pile entries={grouped.unrated} empty="Everything you've opened has a verdict." reveal={reveal} {...cardProps} />
+        <Pile
+          entries={grouped.unrated}
+          empty="Everything you've opened has a verdict."
+          reveal={reveal}
+          {...cardProps}
+        />
       )}
 
       {/* A count, not a list. Seeing them again is the thing rejecting was meant to prevent —
@@ -724,7 +736,9 @@ function App({
         open={showRejected}
         onToggle={() => setShowRejected((v) => !v)}
       />
-      {showRejected && <Pile entries={grouped.rejected} empty="Nothing rejected." reveal={reveal} {...cardProps} />}
+      {showRejected && (
+        <Pile entries={grouped.rejected} empty="Nothing rejected." reveal={reveal} {...cardProps} />
+      )}
       </div>
 
       <Toasts toasts={toasts} dismiss={dismiss} />
@@ -1108,14 +1122,22 @@ function Pile({
   empty: string;
   /** A flat something outside this pile has asked to see — a map pin, a compare row, a link. Only
    *  the pile actually holding it responds; for every other pile this is an id it does not have. */
-  reveal?: string | null;
+  reveal?: { id: string } | null;
 } & CardProps) {
+  // Which page that flat is on, worked out once per request rather than once per render. Read
+  // through a ref for the same reason `usePaging` reads the page size through one: `entries` is a
+  // new array on every background refetch, and searching it again would hand the pager a fresh
+  // request and page a reader who had since moved on back to the last flat anybody followed a link
+  // to.
+  const list = useRef(entries);
+  list.current = entries;
+  const at = useMemo(
+    () => (reveal ? { index: list.current.findIndex((e) => e.rightmoveId === reveal.id) } : null),
+    [reveal],
+  );
   // A page at a time. Two hundred cards, each with a photo strip and a travel-time block, is both
   // slow and unreadable — see `Pager`.
-  const paging = usePaging(
-    entries,
-    reveal ? entries.findIndex((e) => e.rightmoveId === reveal) : undefined,
-  );
+  const paging = usePaging(entries, at);
   // Cards get the same shift-pick the table has. They were the one layout of triage where a run
   // could only be ticked one at a time, and `setMany` was handed down and never called.
   //

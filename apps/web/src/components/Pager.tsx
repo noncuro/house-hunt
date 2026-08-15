@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /** Pages, and how many rows go on one.
  *
@@ -60,6 +60,13 @@ export interface Paging {
   setPage: (page: number) => void;
 }
 
+/** A request to bring one item of a list into view: where it sits in that list, or -1 when it is
+ *  not in this list at all. A fresh object per ask, never a bare number — asking twice for the same
+ *  flat has to page back to it twice, and two equal numbers would look like nothing had happened. */
+export interface Reveal {
+  index: number;
+}
+
 /** One list's slice of its items, and the state the pager below needs to draw itself.
  *
  *  The page is clamped rather than reset. Filtering the shortlist down to "viewed" while sitting on
@@ -67,8 +74,8 @@ export interface Paging {
  *  filter matching nothing. */
 export function usePaging<T>(
   items: T[],
-  /** Bring one item onto the visible page, by its index in `items` — the answer to "jump to this
-   *  flat" from somewhere that is not this list.
+  /** Bring one item onto the visible page — the answer to "jump to this flat" from somewhere that
+   *  is not this list.
    *
    *  A list that pages is a list where most of its own contents are not in the document, and every
    *  jump into it was written before that was true. Clicking a map pin set the view to the list and
@@ -77,20 +84,28 @@ export function usePaging<T>(
    *  top of the shortlist looking like the click had done nothing but change tabs. Paging is state
    *  this hook owns, so reaching it has to be something the hook offers.
    *
-   *  Passed as an index rather than a predicate because the caller already knows where the item is
-   *  — it has just searched the list to decide whether to jump at all — and -1/undefined is the
-   *  natural "not in this list", which every pile but one will be answering. */
-  reveal?: number,
+   *  Carries an index rather than a predicate because the caller already knows where the item is —
+   *  it has just searched the list to decide whether to jump at all — and -1/null is the natural
+   *  "not in this list", which every pile but one will be answering. */
+  reveal?: Reveal | null,
 ): Paging & { shown: T[] } {
   const [size, setSize] = useState<PageSize>(() =>
     typeof window === 'undefined' ? DEFAULT_PAGE_SIZE : readStored(),
   );
   const [page, setPage] = useState(0);
 
+  // Read through a ref so that changing how many go on a page does not count as a fresh request to
+  // reveal something: that already lands you on page one (below), and jumping back to the last flat
+  // somebody followed a link to would undo it.
+  const perPage = useRef(size);
+  perPage.current = size;
+
+  /** Page to whatever has been asked for. A link into a list — a map pin, a compare row, a
+   *  `#card-…` address — used to scroll to nothing whenever the flat was past the first page,
+   *  because a card on page three is not in the document to scroll to. */
   useEffect(() => {
-    if (reveal === undefined || reveal < 0) return;
-    setPage(Math.floor(reveal / size));
-  }, [reveal, size]);
+    if (reveal && reveal.index >= 0) setPage(Math.floor(reveal.index / perPage.current));
+  }, [reveal]);
 
   useEffect(() => {
     const onChange = (next: PageSize) => {
