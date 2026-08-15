@@ -61,10 +61,22 @@ export interface Paging {
 }
 
 /** A request to bring one item of a list into view: where it sits in that list, or -1 when it is
- *  not in this list at all. A fresh object per ask, never a bare number — asking twice for the same
- *  flat has to page back to it twice, and two equal numbers would look like nothing had happened. */
+ *  not in this list at all, and a token identifying the *asking*.
+ *
+ *  Two dependencies because there are two ways this has to retrigger and neither covers the other.
+ *  The index alone misses a second click on the same pin — the number is equal, so React sees
+ *  nothing to do, and following a link back to a flat you had paged away from does nothing at all.
+ *  The token alone misses the list moving underneath: a refetch that drops six earlier flats leaves
+ *  the same request pointing at an index six too high, so the pager turns to a page the flat is not
+ *  on and the scroll expires against a card that was never rendered.
+ *
+ *  So: the index is recomputed on every render and compared by value, which costs a `findIndex` on
+ *  a list already in memory and is silent when nothing moved; the token is a fresh object per ask
+ *  and compared by identity. */
 export interface Reveal {
   index: number;
+  /** Whatever the caller uses to mean "this particular ask". Compared by identity, never read. */
+  token: unknown;
 }
 
 /** One list's slice of its items, and the state the pager below needs to draw itself.
@@ -103,9 +115,14 @@ export function usePaging<T>(
   /** Page to whatever has been asked for. A link into a list — a map pin, a compare row, a
    *  `#card-…` address — used to scroll to nothing whenever the flat was past the first page,
    *  because a card on page three is not in the document to scroll to. */
+  const index = reveal?.index ?? -1;
+  const token = reveal?.token;
   useEffect(() => {
-    if (reveal && reveal.index >= 0) setPage(Math.floor(reveal.index / perPage.current));
-  }, [reveal]);
+    if (index >= 0) setPage(Math.floor(index / perPage.current));
+    // `reveal` itself is deliberately not a dependency: the caller builds it fresh on every render,
+    // so depending on the object would page a reader back to the last flat anybody followed a link
+    // to every time anything on the page changed. Its two halves are what actually mean something.
+  }, [index, token]);
 
   useEffect(() => {
     const onChange = (next: PageSize) => {

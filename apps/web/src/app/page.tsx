@@ -1124,17 +1124,13 @@ function Pile({
    *  the pile actually holding it responds; for every other pile this is an id it does not have. */
   reveal?: { id: string } | null;
 } & CardProps) {
-  // Which page that flat is on, worked out once per request rather than once per render. Read
-  // through a ref for the same reason `usePaging` reads the page size through one: `entries` is a
-  // new array on every background refetch, and searching it again would hand the pager a fresh
-  // request and page a reader who had since moved on back to the last flat anybody followed a link
-  // to.
-  const list = useRef(entries);
-  list.current = entries;
-  const at = useMemo(
-    () => (reveal ? { index: list.current.findIndex((e) => e.rightmoveId === reveal.id) } : null),
-    [reveal],
-  );
+  // Where that flat is *now*, searched on every render rather than remembered: a refetch that drops
+  // or reorders earlier flats moves it, and a remembered index would turn to the page it used to be
+  // on. `usePaging` compares the index by value, so recomputing it costs nothing when nothing moved
+  // — and `reveal` rides along as the token that makes a second click on the same pin count.
+  const at = reveal
+    ? { index: entries.findIndex((e) => e.rightmoveId === reveal.id), token: reveal }
+    : null;
   // A page at a time. Two hundred cards, each with a photo strip and a travel-time block, is both
   // slow and unreadable — see `Pager`.
   const paging = usePaging(entries, at);
