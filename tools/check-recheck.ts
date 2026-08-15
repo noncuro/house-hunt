@@ -29,19 +29,24 @@ function check(name: string, actual: unknown, expected: unknown) {
 const NOW = new Date('2026-08-15T12:00:00Z');
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000).toISOString();
 
+/** `stage` defaults to `shortlisted` because that is what a flat somebody has shown any interest in
+ *  looks like — liking or loving one enters the funnel there — and every assertion below except the
+ *  two about the funnel itself is about something else (staleness, rating order) on a flat that is
+ *  in it. Pass `stage: null` for the pile outside the funnel. */
 function flat(fields: {
   id: string;
   seen: string;
   rating?: Rating;
-  stage?: PropertyStage['stage'];
+  stage?: PropertyStage['stage'] | null;
 }): ShortlistEntry {
+  const stage = fields.stage === undefined ? 'shortlisted' : fields.stage;
   return {
     rightmoveId: fields.id, url: '', displayAddress: `Flat ${fields.id}`, postcode: null,
     price: null, bedrooms: null, bathrooms: null, floorAreaSqft: null, floorAreaSource: null,
     floorplanUrl: null, imageUrls: [], furnishType: null, listingUpdate: null,
     nearestStations: [], lastSeenAt: fields.seen, lat: null, lon: null, exactLocation: false,
     verdicts: fields.rating ? ([{ rating: fields.rating }] as any) : [],
-    stage: fields.stage ? ({ stage: fields.stage } as PropertyStage) : null,
+    stage: stage ? ({ stage } as PropertyStage) : null,
     analysis: null,
   };
 }
@@ -74,6 +79,23 @@ check(
   'a flat with an offer in is still re-checked',
   ids([flat({ id: 'offer', seen: daysAgo(10), stage: 'offer_made' })]),
   ['offer'],
+);
+// The pile outside the funnel is most of a swept shortlist — hundreds of flats nobody has liked,
+// loved or staged. Re-checking those is what made the run hours long, and a run nobody starts
+// leaves the flats actually in play stale, which is the opposite of the point.
+check(
+  'a flat nobody has put in the funnel is skipped however stale',
+  ids([flat({ id: 'untouched', seen: daysAgo(90), stage: null })]),
+  [],
+);
+// And it is the *stage* that decides, not the rating — the two are independent facts, so this must
+// not quietly become "has a verdict". A rating is what puts a flat in the funnel in the first place
+// (`enter_funnel`), so the combination below does not arise in the database; asserting it anyway is
+// what pins which of the two fields is being read.
+check(
+  'a rating with no stage is still not enough',
+  ids([flat({ id: 'liked-only', seen: daysAgo(90), rating: 'love', stage: null })]),
+  [],
 );
 // A rejection is a verdict, not a stage. Rejected at £3,100 is worth revisiting at £2,700, and
 // finding that is the whole point.

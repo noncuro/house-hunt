@@ -138,18 +138,22 @@ function Recheck() {
   if (targets.length === 0) {
     return (
       <p className="dim">
-        Everything on the shortlist was last read within {RECHECK_AFTER_DAYS} days, so there is
-        nothing worth reopening yet.
+        Everything in the funnel was last read within {RECHECK_AFTER_DAYS} days, so there is nothing
+        worth reopening yet. Places nobody has liked or staged are not re-checked.
       </p>
     );
   }
 
   return (
     <>
+      {/* Says which flats, not just how many. The count is a *slice* — the funnel, minus archived —
+          and a sentence that said "places" while the number came from a narrower set would read as
+          full coverage of a run that skips four hundred flats on purpose. */}
       <p className="dim">
-        {targets.length} {targets.length === 1 ? 'place has' : 'places have'} not been read for{' '}
-        {RECHECK_AFTER_DAYS} days or more. Reopening tells us what they cost now and which have
-        gone — the ones you love go first, so stopping halfway costs you the least.
+        {targets.length} {targets.length === 1 ? 'place' : 'places'} in the funnel{' '}
+        {targets.length === 1 ? 'has' : 'have'} not been read for {RECHECK_AFTER_DAYS} days or more.
+        Reopening tells us what they cost now and which have gone — the ones you love go first, so
+        stopping halfway costs you the least. Places nobody has liked or staged are left alone.
       </p>
       <div className="sweep-fill">
         {extension.isPending ? null : present ? (

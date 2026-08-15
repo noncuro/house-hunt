@@ -47,12 +47,22 @@ export interface RecheckTarget {
 
 /** Which flats are worth reopening, in the order to do it.
  *
- *  Skipped: anything archived, and anything read recently enough to still be believed. Archived is
- *  a decision that has already been made — a flat you lost, or walked away from — and spending a
- *  tab to discover that a place you are not pursuing has been taken is the definition of a wasted
- *  six seconds. Note that this is a *stage*, not a verdict: a flat rated "not our place" is still
- *  re-checked, last, because a rejection at £3,100 is worth revisiting at £2,700 and that is exactly
- *  the change this exists to find.
+ *  Re-checked: what is in the funnel, not archived, and not read recently enough to still be
+ *  believed. Everything else is skipped, for two different reasons.
+ *
+ *  **Archived** is a decision that has already been made — a flat you lost, or walked away from —
+ *  and spending a tab to discover that a place you are not pursuing has been taken is the definition
+ *  of a wasted six seconds. Note that this is a *stage*, not a verdict: a flat rated "not our place"
+ *  is still re-checked, last, because a rejection at £3,100 is worth revisiting at £2,700 and that
+ *  is exactly the change this exists to find.
+ *
+ *  **Not in the funnel at all** is the pile a sweep leaves behind, and it is most of the shortlist:
+ *  four hundred flats nobody has liked, loved or staged. Liking or loving one enters it in the
+ *  funnel automatically (`enter_funnel`, `FIRST_STAGE`), so `stage === null` is precisely "nobody
+ *  has expressed any interest in this" — and re-checking those made a run of two hundred and eighty
+ *  tabs out of a hunt with thirty-nine flats in play. That is a run measured in hours, which is a
+ *  run nobody starts, which leaves the flats that *are* in play stale. The rule the ordering below
+ *  already implies is now the rule the filter applies: spend the tabs on what you are pursuing.
  *
  *  `now` is a parameter so this can be tested against a fixed clock rather than against today. */
 export function recheckTargets(entries: ShortlistEntry[], now: Date = new Date()): RecheckTarget[] {
@@ -60,7 +70,8 @@ export function recheckTargets(entries: ShortlistEntry[], now: Date = new Date()
 
   return entries
     .filter((entry) => {
-      if (entry.stage?.stage === 'archived') return false;
+      if (!entry.stage) return false;
+      if (entry.stage.stage === 'archived') return false;
       const seen = Date.parse(entry.lastSeenAt);
       // A timestamp we cannot read is not a recent one. Treating an unparseable date as fresh would
       // silently exclude the flat for good, and it is the rows with something odd about them that

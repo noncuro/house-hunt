@@ -19,9 +19,12 @@ insert into model_price (model, effective_from, input_usd_per_mtok, cached_input
 values ('tfl', 'epoch', 0, 0, 0)
 on conflict (model, effective_from) do nothing;
 
--- Counting a user's lookups in the last hour, without handing the client a way to read everyone
+-- Counting a user's lookups since a moment, without handing the client a way to read everyone
 -- else's. `api_usage` is admin-readable only, and the function needs a count for one user, so this
 -- is the narrowest thing that answers it. Service role alone: the caller is the Edge Function.
+--
+-- The window is the caller's, not this function's — `travel` picks it (a minute, currently, and it
+-- has been an hour), so changing the cap's shape needs no migration.
 create or replace function public.travel_calls_since(p_user_id uuid, p_since timestamptz)
 returns int
 language sql
