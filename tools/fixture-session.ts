@@ -157,6 +157,10 @@ interface FixtureProperty {
   verdict: null | { rating: 'love' | 'maybe' | 'no'; note: string; by: 'one' | 'two' };
 }
 
+/** Cycled over the analysed flats so all three answers are on screen at once — see the note at the
+ *  insert. Ordered worst-first so the flat the compare table sorts to the bottom is a known one. */
+const SLEEPING_FIXTURE = ['same-space', 'practically-separate', 'separate-room'] as const;
+
 /** Six flats. Three rated and three not, so the piles, the triage view and the default filters all
  *  have something to show; two of them share a postcode and a price, which is the relisted-flat
  *  case `duplicateIds` marks with ⧉. */
@@ -384,7 +388,7 @@ async function seed(alsoCache: ExtraCache[]): Promise<FixtureData> {
 
   const analysed = PROPERTIES.filter((p) => p.analysis);
   must('seeding the analyses', (await db.from('property_analysis').insert(
-    analysed.map((p) => ({
+    analysed.map((p, i) => ({
       rightmove_id: p.id,
       model: 'gpt-5.6-terra',
       status: 'done',
@@ -406,6 +410,11 @@ async function seed(alsoCache: ExtraCache[]): Promise<FixtureData> {
       outdoor_sqft: p.analysis!.hasOutdoorSpace ? 120 : null,
       outdoor_is_estimate: true,
       outdoor_confidence: 'low',
+      // The three answers, spread across the fixture so the flag, the filter and the compare
+      // column all have something to show — a seed where every row agrees proves nothing about a
+      // field whose whole point is telling two studios apart.
+      sleeping_separation: SLEEPING_FIXTURE[i % SLEEPING_FIXTURE.length],
+      sleeping_separation_confidence: 'medium',
       summary: p.analysis!.summary,
     })),
   )).error);

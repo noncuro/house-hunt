@@ -203,6 +203,22 @@ const WANT_CHOICES: { value: AmenityWant | null; label: string }[] = [
   { value: 'must', label: 'Must have' },
 ];
 
+/** The fewest bedrooms, with a studio at the bottom of the scale where it belongs — a studio is a
+ *  flat with no bedroom, so it is 0 rather than a category of its own that would have to be kept
+ *  in agreement with the number forever.
+ *
+ *  "Studio" excludes nothing, which is also true of "Don't mind", and it is still worth having:
+ *  saying a studio is fine is a different act from never having answered, and the hunt is shared
+ *  by up to six people who read these settings to find out what everyone agreed to. */
+const BEDROOM_CHOICES: { value: number | null; label: string }[] = [
+  { value: null, label: "Don't mind" },
+  { value: 0, label: 'Studio' },
+  { value: 1, label: '1 bed' },
+  { value: 2, label: '2 beds' },
+  { value: 3, label: '3 beds' },
+  { value: 4, label: '4+ beds' },
+];
+
 function HuntSettings({ notify }: { notify: Notify }) {
   const settings = useProjectSettings();
   const save = useSetProjectSettings();
@@ -291,6 +307,25 @@ function HuntSettings({ notify }: { notify: Notify }) {
         onDraft={(v) => setDraft({ ...draft, minSqft: v })}
         onCommit={(v) => commit({ ...draft, minSqft: v })}
       />
+
+      <div className="hunt-pref-row">
+        <span className="hunt-pref-name">Bedrooms, at least</span>
+        <div className="hunt-pref-choice" role="group" aria-label="Bedrooms, at least">
+          {BEDROOM_CHOICES.map((choice) => (
+            <button
+              key={choice.label}
+              type="button"
+              className={(draft.minBedrooms ?? null) === choice.value ? 'key key-on' : 'key'}
+              aria-pressed={(draft.minBedrooms ?? null) === choice.value}
+              disabled={busy}
+              data-testid={`min-bedrooms-${choice.value ?? 'any'}`}
+              onClick={() => commit({ ...draft, minBedrooms: choice.value })}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="hunt-pref-amenities">
         {/* From `AMENITIES` in core rather than a list of its own: this page, the flags and

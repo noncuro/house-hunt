@@ -58,7 +58,7 @@ function analysis(fields: Partial<Analysis>): Analysis {
     hasOutdoorSpace: null, outdoorKind: null, outdoorSqft: null, outdoorIsEstimate: null,
     outdoorConfidence: null, isHouseShare: null, houseShareConfidence: null,
     laundry: null, laundryConfidence: null, hasDishwasher: null, dishwasherConfidence: null,
-    bedInKitchen: null, bedInKitchenConfidence: null, utilitiesIncluded: null, utilitiesConfidence: null,
+    sleepingSeparation: null, sleepingSeparationConfidence: null, utilitiesIncluded: null, utilitiesConfidence: null,
     naturalLight: null, naturalLightConfidence: null, summary: null,
     ...fields,
   };
@@ -134,9 +134,50 @@ check(
   false,
 );
 check(
+  'but it does clear "a machine somewhere in the building"',
+  matchesFilter(flat({ analysis: analysis({ laundry: 'in-building' }) }), only({ amenities: ['anyLaundry'] })),
+  true,
+);
+check(
+  'and nowhere to wash clothes clears neither',
+  matchesFilter(flat({ analysis: analysis({ laundry: 'none' }) }), only({ amenities: ['anyLaundry'] })),
+  false,
+);
+check(
   'medium light does not clear a bright-light filter',
   matchesFilter(flat({ analysis: analysis({ naturalLight: 'medium' }) }), only({ amenities: ['brightLight'] })),
   false,
+);
+
+// The two facts most likely to kill a listing, and until now the two you could not clear out of the
+// pile after a sweep: they were left out of the amenity list on the grounds that they were already
+// red for everybody, and triage builds its filter from that same list.
+check(
+  'a known house share can be dropped from the pile',
+  matchesFilter(flat({ analysis: analysis({ isHouseShare: true }) }), only({ amenities: ['wholeProperty'] })),
+  false,
+);
+check(
+  'so can one open room where the kitchen and the bed share a view',
+  matchesFilter(
+    flat({ analysis: analysis({ sleepingSeparation: 'same-space' }) }),
+    only({ amenities: ['separateSleeping'] }),
+  ),
+  false,
+);
+// The distinction the field exists for. Both of these are studios.
+check(
+  'a mezzanine studio stays — one room on the plan, two in use',
+  matchesFilter(
+    flat({ analysis: analysis({ sleepingSeparation: 'practically-separate' }) }),
+    only({ amenities: ['separateSleeping'] }),
+  ),
+  true,
+);
+check(
+  'and a studio nobody has assessed stays, like every other unknown',
+  matchesFilter(flat({ analysis: analysis({}) }), only({ amenities: ['separateSleeping'] })),
+  true,
 );
 
 // Every bar has to be cleared, not any of them.

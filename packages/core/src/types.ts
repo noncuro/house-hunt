@@ -100,9 +100,9 @@ export interface Analysis {
   hasDishwasher: boolean | null;
   dishwasherConfidence: Confidence | null;
 
-  /** A bed in the kitchen or main living space — a studio wearing a one-bedroom's clothes. */
-  bedInKitchen: boolean | null;
-  bedInKitchenConfidence: Confidence | null;
+  /** How separate the place to sleep is from the kitchen — see `SleepingSeparation`. */
+  sleepingSeparation: SleepingSeparation | null;
+  sleepingSeparationConfidence: Confidence | null;
 
   /** Only ever shown when true. Bills not being included is the norm and says nothing. */
   utilitiesIncluded: boolean | null;
@@ -120,6 +120,17 @@ export interface Analysis {
 export type Laundry = 'in-unit' | 'in-building' | 'none';
 
 export type LightLevel = 'low' | 'medium' | 'high';
+
+/** Whether the kitchen and the place to sleep are the same room *in practice*, which is not the
+ *  same question as whether they are the same room on the floorplan.
+ *
+ *  This replaced a boolean, `bedInKitchen`, that was true for any studio — and so said the same
+ *  thing about a mezzanine reached by a ladder as about a hob at the foot of the bed. Those are
+ *  different flats to live in, and the boolean could not tell you which one you were looking at.
+ *  `practically-separate` is the answer it could not give: one room on the plan, two in use,
+ *  because of a level change, a corner in the outline, or something full-height standing between
+ *  them. */
+export type SleepingSeparation = 'separate-room' | 'practically-separate' | 'same-space';
 
 /** Somewhere this hunt cares about: the office, the in-laws, Angel.
  *
