@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants.js';
 import type { NextConfig } from 'next';
 
 /** The workspace root's `.env`, which is where both surfaces' configuration lives.
@@ -49,28 +50,41 @@ loadRootEnv();
  */
 const SUPABASE_ORIGIN = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 
-const csp = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
-  // Rightmove's own photo URLs. We link to them and never re-host them (their terms, 13.4), which
-  // means the images load from their origin and this has to say so.
-  //
-  // And the map's tiles, which `screens/Map.tsx` loads from OpenStreetMap. Missing here until
-  // `smoke:web` was written, and the symptom was as quiet as this sort of thing gets: the map view
-  // laid out correctly, drew its markers and its controls, and rendered every tile as blank grey.
-  // Nothing errored on screen — the refusals go to the console — so it read as a map of somewhere
-  // with no streets rather than as a policy blocking the images.
-  "img-src 'self' data: blob: https://media.rightmove.co.uk https://*.rightmove.co.uk https://tile.openstreetmap.org",
-  "font-src 'self' data:",
-  `connect-src 'self' ${SUPABASE_ORIGIN}`.trim(),
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'",
-].join('; ');
+/** React's development build calls `eval()` — for callstack reconstruction, nothing that ships —
+ *  and the production CSP has no `'unsafe-eval'`, so under `next dev` the console fills with a
+ *  refusal and the devtools overlay opens over the page. Granted for the dev server and nowhere
+ *  else: the header a built app serves is the one below, unchanged, which is what `smoke:web`
+ *  asserts against because it serves a production build for exactly this reason.
+ *
+ *  Keyed on the build phase rather than on `NODE_ENV`. Next preserves a `NODE_ENV` that was set
+ *  explicitly — `next build` with `NODE_ENV=development` in the environment warns and carries on —
+ *  so a host that exports it for any other reason would have put `'unsafe-eval'` into a production
+ *  artifact, and the header would have said so with nothing else looking wrong.
+ *  `PHASE_DEVELOPMENT_SERVER` is only ever `next dev`. */
+function cspFor(phase: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline'${phase === PHASE_DEVELOPMENT_SERVER ? " 'unsafe-eval'" : ''}`,
+    "style-src 'self' 'unsafe-inline'",
+    // Rightmove's own photo URLs. We link to them and never re-host them (their terms, 13.4), which
+    // means the images load from their origin and this has to say so.
+    //
+    // And the map's tiles, which `screens/Map.tsx` loads from OpenStreetMap. Missing here until
+    // `smoke:web` was written, and the symptom was as quiet as this sort of thing gets: the map view
+    // laid out correctly, drew its markers and its controls, and rendered every tile as blank grey.
+    // Nothing errored on screen — the refusals go to the console — so it read as a map of somewhere
+    // with no streets rather than as a policy blocking the images.
+    "img-src 'self' data: blob: https://media.rightmove.co.uk https://*.rightmove.co.uk https://tile.openstreetmap.org",
+    "font-src 'self' data:",
+    `connect-src 'self' ${SUPABASE_ORIGIN}`.trim(),
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+  ].join('; ');
+}
 
-const nextConfig: NextConfig = {
+const nextConfig = (phase: string): NextConfig => ({
   // The packages are TypeScript source rather than a build, so Next compiles them like app code.
   transpilePackages: ['@house-hunt/core', '@house-hunt/ui'],
   // Said outright because Next guesses by walking up for a lockfile, and ~/GitHub happens to have
@@ -82,7 +96,7 @@ const nextConfig: NextConfig = {
       {
         source: '/:path*',
         headers: [
-          { key: 'Content-Security-Policy', value: csp },
+          { key: 'Content-Security-Policy', value: cspFor(phase) },
           { key: 'Referrer-Policy', value: 'same-origin' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           // A private house hunt has no business in a search index.
@@ -91,6 +105,6 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-};
+});
 
 export default nextConfig;

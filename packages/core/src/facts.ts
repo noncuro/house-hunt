@@ -294,6 +294,36 @@ export interface HuntPreferences {
   search?: SweepCriteria;
 }
 
+/** The address as it reads when the full postcode is printed beside it.
+ *
+ *  Rightmove's `displayAddress` ends in the outward code — "Pond Street, Hampstead, NW3" — and the
+ *  shortlist card states "NW3 2NW" a few pixels away, so the district was on screen twice. The full
+ *  postcode is the half worth keeping: it names the street as well as the district, and it is what
+ *  every travel time is routed from.
+ *
+ *  Only for a view that shows both. The panel and the compare table print the address alone and
+ *  must keep it whole — this is not "the address", it is the address minus something already said.
+ *
+ *  Every comma-separated part that is nothing but the outward code goes, not only the last: agents
+ *  file addresses like "Greencroft Gardens, NW6, South Hampstead, London, NW6", which put the
+ *  district on screen three times between the address and the chip beside it.
+ *
+ *  Dropped only where the two agree. A part carrying a *different* outward code from the postcode
+ *  we hold is two sources disagreeing about where a flat is, which is worth seeing rather than
+ *  tidying away; and an address that is nothing but its outward code is returned untouched, since a
+ *  blank line where the address goes is worse than a repetition. */
+export function addressBesidePostcode(displayAddress: string, postcode: string | null): string {
+  const outward = postcode?.trim().split(/\s+/)[0]?.toUpperCase();
+  if (!outward) return displayAddress;
+  const kept = displayAddress
+    .split(',')
+    .filter((part) => part.trim().toUpperCase() !== outward)
+    .join(',')
+    .trim()
+    .replace(/,$/, '');
+  return kept || displayAddress;
+}
+
 /** A station distance in the unit Rightmove actually supplied.
  *
  *  Every view printed "mi" regardless. `unit` is extracted and stored, so a listing served in
@@ -431,8 +461,16 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
   // A hunt can set its own bar for what counts as a great room; without one, the default stands.
   const bigThreshold = prefs?.greatRoomMinSqft ?? BIGGEST_ROOM_BIG_SQFT;
   if (room !== null && room < BIGGEST_ROOM_SMALL_SQFT) {
-    // Yellow: a small main room is a real objection, but one you can settle by standing in it.
-    flags.push({ key: 'rooms', severity: 'yellow', icon: AMBER, text: claimLabel('rooms-small', rooms), confidence: rooms });
+    // Yellow: a small main room is a real objection, but one you can settle by standing in it —
+    // and the number is what tells you whether it is worth the trip. "Small" spans a bedsit and a
+    // 440 sq ft reception, which are not the same objection.
+    flags.push({
+      key: 'rooms',
+      severity: 'yellow',
+      icon: AMBER,
+      text: `${claimLabel('rooms-small', rooms)} · ${room} sq ft`,
+      confidence: rooms,
+    });
   } else if (room !== null && room >= bigThreshold) {
     // At or above the bar counts — "450 sq ft or bigger" includes exactly 450.
     // When the bar is the hunt's own, name it a great room and say the size — that is the number
@@ -575,8 +613,12 @@ function forgetAmenitiesNobodyMinds(flags: Flag[], prefs: HuntPreferences | unde
  *  but they treat every hunt the same. A hunt that has said it *must* have a dishwasher wants that
  *  amber to be a red, and a flat that is missing something the hunt merely said would be *nice* stays
  *  a reservation rather than a dealbreaker. So this only ever raises the stakes of an absence the
- *  hunt cares about, never lowers one the defaults already called serious, and it says which
- *  preference it was. A present or unknown amenity is left exactly as the defaults had it. */
+ *  hunt cares about, and never lowers one the defaults already called serious. A present or unknown
+ *  amenity is left exactly as the defaults had it.
+ *
+ *  The severity is the whole of what it has to say. Flags used to be suffixed "· must have", which
+ *  spelled out in words what the red circle beside it already meant, on the one line of the card
+ *  where every character competes with another fact about the flat. */
 function applyAmenityWants(
   flags: Flag[],
   analysis: NonNullable<FlagSource['analysis']>,
@@ -604,13 +646,12 @@ function applyAmenityWants(
         existing.severity = target;
         existing.icon = FLAG_ICON[target];
       }
-      existing.text = `${existing.text} · ${want} have`;
     } else {
       flags.push({
         key: spec.flagKey,
         severity: target,
         icon: FLAG_ICON[target],
-        text: `no ${spec.label} · ${want} have`,
+        text: `no ${spec.label}`,
         confidence: null,
       });
     }
