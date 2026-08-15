@@ -44,13 +44,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
 
-      - name: Build the extension and stamp it
+      # Written before install, not after: `pnpm install` runs `wxt prepare`, which reads the root
+      # `.env` and refuses without it. And it has to be the real values rather than `.env.ci` — a
+      # zip built against the test project is an extension that loads and then talks to the wrong
+      # database, which is worse than one that fails.
+      - name: Write the configuration the bundle bakes in
         env:
           WXT_SUPABASE_URL: ${{ vars.WXT_SUPABASE_URL }}
           WXT_SUPABASE_PUBLISHABLE_KEY: ${{ vars.WXT_SUPABASE_PUBLISHABLE_KEY }}
@@ -58,12 +63,26 @@ jobs:
         run: |
           for name in WXT_SUPABASE_URL WXT_SUPABASE_PUBLISHABLE_KEY WXT_WEB_APP_URL; do
             if [ -z "${!name}" ]; then
-              echo "$name is not set as a repository variable — the zip would ship with no config," >&2
-              echo "which is an extension that loads and then does nothing. See this workflow's header." >&2
+              echo "::error::$name is not set as a repository variable. The zip would ship with no" >&2
+              echo "configuration, which is an extension that installs and then quietly does" >&2
+              echo "nothing. See the header of this workflow for why these are variables." >&2
               exit 1
             fi
           done
-          pnpm package
+          {
+            printf 'WXT_SUPABASE_URL=%s\n' "$WXT_SUPABASE_URL"
+            printf 'WXT_SUPABASE_PUBLISHABLE_KEY=%s\n' "$WXT_SUPABASE_PUBLISHABLE_KEY"
+            printf 'WXT_WEB_APP_URL=%s\n' "$WXT_WEB_APP_URL"
+          } > .env
+
+      - run: pnpm install --frozen-lockfile
+
+      # `package` builds, zips and stamps as one command — see tools/package-extension.ts for why
+      # those cannot be separate steps.
+      - run: pnpm package
+
+      # The `.env` is not the repository's and must not be committed with the artefact.
+      - run: rm -f .env
 
       - name: Commit it if the sources changed
         run: |
