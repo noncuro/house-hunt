@@ -1,0 +1,100 @@
+# Rebuild the zip the install page serves, whenever the code in it changes.
+#
+# The download is a committed static asset: Vercel builds only `apps/web` and cannot build the
+# extension, so the artefact in git is the artefact people install. Refreshing it was a manual step
+# and manual steps are not done — the served zip sat at 0.1.0 through three version bumps while the
+# site told everybody who downloaded it that their copy was out of date.
+#
+# So it is rebuilt here instead. `pnpm package` also writes a stamp of every source file that went
+# into the build (`tools/package-stamp.ts`), and the stamp is what decides whether to commit: two
+# builds of identical code differ in the archive's modification times, so comparing the zip itself
+# would commit on every run forever.
+#
+# The `WXT_*` values are repository *variables*, not secrets, and that is not an oversight. They are
+# the Supabase URL, the publishable key and the website's origin, and all three are compiled into
+# every copy of the extension that anybody has installed — a value shipped to every user is not a
+# secret, and pretending otherwise hides where it actually lives. The service-role key and the
+# database password are secrets and are nowhere near this.
+name: package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/extension/**'
+      - 'packages/core/src/**'
+      - 'packages/ui/src/**'
+  workflow_dispatch:
+
+permissions:
+  # To push the rebuilt zip back to main. Nothing else here writes anything.
+  contents: write
+
+concurrency:
+  # One at a time, and the later push wins: two of these racing would both build from their own
+  # commit and the loser would overwrite the newer artefact with an older one.
+  group: package-main
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Written before install, not after: `pnpm install` runs `wxt prepare`, which reads the root
+      # `.env` and refuses without it. And it has to be the real values rather than `.env.ci` — a
+      # zip built against the test project is an extension that loads and then talks to the wrong
+      # database, which is worse than one that fails.
+      - name: Write the configuration the bundle bakes in
+        env:
+          WXT_SUPABASE_URL: ${{ vars.WXT_SUPABASE_URL }}
+          WXT_SUPABASE_PUBLISHABLE_KEY: ${{ vars.WXT_SUPABASE_PUBLISHABLE_KEY }}
+          WXT_WEB_APP_URL: ${{ vars.WXT_WEB_APP_URL }}
+        run: |
+          for name in WXT_SUPABASE_URL WXT_SUPABASE_PUBLISHABLE_KEY WXT_WEB_APP_URL; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set as a repository variable. The zip would ship with no" >&2
+              echo "configuration, which is an extension that installs and then quietly does" >&2
+              echo "nothing. See the header of this workflow for why these are variables." >&2
+              exit 1
+            fi
+          done
+          {
+            printf 'WXT_SUPABASE_URL=%s\n' "$WXT_SUPABASE_URL"
+            printf 'WXT_SUPABASE_PUBLISHABLE_KEY=%s\n' "$WXT_SUPABASE_PUBLISHABLE_KEY"
+            printf 'WXT_WEB_APP_URL=%s\n' "$WXT_WEB_APP_URL"
+          } > .env
+
+      - run: pnpm install --frozen-lockfile
+
+      # `package` builds, zips and stamps as one command — see tools/package-extension.ts for why
+      # those cannot be separate steps.
+      - run: pnpm package
+
+      # The `.env` is not the repository's and must not be committed with the artefact.
+      - run: rm -f .env
+
+      - name: Commit it if the sources changed
+        run: |
+          # The stamp, not the zip: the archive's bytes differ between two builds of identical code.
+          if git diff --quiet -- apps/web/public/rightmove-house-hunt.sources.json; then
+            echo "the served zip is already a build of this commit"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/public/rightmove-house-hunt.zip apps/web/public/rightmove-house-hunt.sources.json
+          git commit -m "Repackage the extension the install page serves
+
+          Built from $GITHUB_SHA."
+          git push

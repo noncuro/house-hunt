@@ -11,7 +11,7 @@
     "zip:store": "STORE=1 wxt zip",
     "compile": "tsc --noEmit",
     "postinstall": "wxt prepare",
-    "package": "wxt build && cd .output/chrome-mv3 && zip -qr ../../../../house-hunt.zip . && echo \"wrote house-hunt.zip\""
+    "package": "pnpm exec tsx ../../tools/package-extension.ts"
   },
   "dependencies": {
     "@house-hunt/core": "workspace:*",

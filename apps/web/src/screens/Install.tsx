@@ -19,9 +19,11 @@ import { EXPECTED_EXTENSION_VERSION, extensionBehind } from '@/lib/extension-ver
  *
  *  The zip is a committed static asset at `apps/web/public/rightmove-house-hunt.zip`, served from
  *  `/rightmove-house-hunt.zip`. Vercel builds only apps/web and cannot build the extension, so the
- *  file cannot be generated at deploy time — it is refreshed by hand with `pnpm package:web`
- *  whenever the extension changes. The steps are lifted from SETUP.md's "Installing it" so the page
- *  and the printed instructions cannot drift. */
+ *  file cannot be generated at deploy time — `.github/workflows/package.yml` rebuilds and commits
+ *  it when extension or shared-package source lands on main. It used to be refreshed by hand, and
+ *  so it was not: the served zip stayed at 0.1.0 through three version bumps while this page told
+ *  everybody who downloaded it that their copy was out of date. The steps below are lifted from
+ *  SETUP.md's "Installing it" so the page and the printed instructions cannot drift. */
 export function Install({ email }: { email: string }) {
   const [state, setState] = useState<ExtensionState | null>(null);
 

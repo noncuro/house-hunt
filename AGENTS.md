@@ -57,6 +57,14 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   last week's extension — which is how eleven withdrawn listings stayed on a worklist that had
   already been taught to drop them. A stale unpacked copy is the most common bug in this project
   and it never looks like one.
+
+  The zip is the third copy of that number and the one people actually run, and it is **not** yours
+  to refresh — `.github/workflows/package.yml` rebuilds and commits it when a change reaches main.
+  It used to be a hand copy, which is a step that does not get done: it sat at 0.1.0 through three
+  bumps while the site said 0.3.1 and told everybody who downloaded it that they were out of date,
+  which is the message they had just acted on. `pnpm package` still works and is what to run if you
+  want the zip now; `pnpm check:zip` says when it is behind, as a note on a pull request and a
+  failure anywhere else.
 - **Rightmove's own mark may be used on the buttons that go to Rightmove**, and nowhere else. It
   labels an outbound link with the thing it opens, which is what a trademark is for, and it is the
   owner's decision on the owner's product. What stays forbidden is unchanged and is a different
@@ -212,7 +220,11 @@ instead (`.github/workflows/check.yml`: `check:all`, `check:rls`, `check:spend`,
   The panel is in a Shadow DOM — go through `.shadowRoot`.
 - Read the database directly when a view disagrees with reality:
   `PGPASSWORD="$SUPABASE_DB_PASSWORD" psql -h aws-1-eu-west-1.pooler.supabase.com -p 5432 -U "postgres.$SUPABASE_PROJECT_REF" -d postgres`
-  (source `.env` first). Migrations are applied with `psql -f` and committed either way.
+  (source `.env` first). **Migrations reach production on merge** —
+  `.github/workflows/migrate.yml` runs `supabase db push` when anything under `supabase/migrations/`
+  lands on main, and `supabase_migrations.schema_migrations` records what has run. Applying one by
+  hand with `psql -f` still works and is what you want mid-review, but the table has to agree
+  afterwards or the workflow will run it a second time.
 - Admin identity and the first project's name are deployment data, not schema: copy
   `supabase/seed.example.sql` to the untracked `supabase/seed.sql`.
 - Extraction broke after a Rightmove deploy? `pnpm check:extractor`, then
@@ -224,8 +236,17 @@ instead (`.github/workflows/check.yml`: `check:all`, `check:rls`, `check:spend`,
 
 ## Packaging
 
-`pnpm package` → `rightmove-house-hunt.zip` (gitignored). `SETUP.md` goes with it. The manifest
-carries a fixed `key` so the extension id survives moving the folder.
+`pnpm package` → `apps/web/public/rightmove-house-hunt.zip`, which is **committed**: Vercel builds
+only `apps/web` and cannot build the extension, so the install page serves it as a static asset and
+the artefact in git is the artefact people download — rebuilt and committed by
+`.github/workflows/package.yml` when extension or shared-package source lands on main, so it is
+never a step somebody has to remember. `pnpm package` also writes
+`rightmove-house-hunt.sources.json`, the hash of every source file it was built from, and
+`pnpm check:zip` recomputes those and compares. The version strings are checked too, but they are
+the weaker half and were never the problem: three of them agreed perfectly while the zip beside them
+was a month old. `tools/package-stamp.ts` says why this is a stamp rather than a rebuild — the
+bundle bakes in `WXT_*`, so CI's `.env.ci` build could never match a zip built against the real one. `SETUP.md` goes with it. The manifest carries a fixed `key` so the
+extension id survives moving the folder.
 
 ## Code Review
 

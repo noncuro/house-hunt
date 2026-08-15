@@ -1,0 +1,73 @@
+# Apply new migrations to production when they land on main.
+#
+# Every migration in this repo up to 20260815140000 was applied by hand with `psql -f`, and the
+# database kept no record of which had run. That worked until it didn't: #17 merged, Vercel deployed
+# the website within a minute, and the schema it needed was still an hour away from being applied by
+# somebody remembering to. `supabase_migrations.schema_migrations` now exists and is backfilled with
+# all 27, so `db push` applies only what is new.
+#
+# Deliberately narrow. It runs on main only, only when a file under supabase/migrations/ changed,
+# and it never touches Edge Functions — those hold secrets, are deployed with `pnpm deploy:function`,
+# and refuse stale copies of the shared sources, which is a check that wants a person in front of it.
+#
+# The race this does not close: Vercel builds on the same push, so there is a window where the new
+# website is live against the old schema. It is a minute or two and the alternative is gating
+# deploys on this job, which trades a short window for a long one every time a migration is slow.
+# Write migrations that the previous version of the site survives.
+name: migrate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never two of these at once. Migrations are ordered, and a second run starting while the first is
+  # mid-`db push` would apply them interleaved. Not cancel-in-progress for the same reason: a run
+  # killed partway leaves the database somewhere no version describes.
+  group: migrate-production
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    # main and nothing else. `workflow_dispatch` lets whoever runs it pick any branch or tag, and
+    # `checkout` would take them at their word — so a migration sitting on an unmerged branch could
+    # be applied to production by choosing it from a dropdown, without ever having been reviewed.
+    # The environment does not do this on its own: it gates *who* may deploy, not *what*.
+    if: github.ref == 'refs/heads/main'
+    # So a migration reaching production is a thing somebody approved, not a thing that happened.
+    # Set the required reviewers on the environment if you want it to stop and ask.
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 1.145.4
+
+      # `db push` reads supabase_migrations.schema_migrations and applies only the versions missing
+      # from it, in order, each in its own transaction. `--include-all` is deliberately absent: it
+      # would apply a migration whose timestamp sorts before one already run, which is how a rebase
+      # that renamed a file silently re-runs history.
+      - name: Apply pending migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "SUPABASE_DB_URL is not set — see .github/workflows/migrate.yml" >&2
+            exit 1
+          fi
+          supabase db push --db-url "$SUPABASE_DB_URL"
+
+      # What ran, in the log, so the answer to "is production on this schema" is one click rather
+      # than a psql session.
+      - name: What production is on now
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: supabase migration list --db-url "$SUPABASE_DB_URL"

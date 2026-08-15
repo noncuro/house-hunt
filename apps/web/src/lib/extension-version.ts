@@ -1,10 +1,13 @@
 /** The extension build the website currently ships, and how to tell an older one apart.
  *
  *  There is no automatic link between this and the extension: Vercel builds only `apps/web` and
- *  cannot build or read the extension, so the committed download (`public/rightmove-house-hunt.zip`)
- *  and this constant are both refreshed by hand in the same step that runs `pnpm package:web`. Keep
- *  this equal to `apps/extension/package.json`'s `version` — the value WXT writes into the shipped
- *  manifest, which is what an installed extension reports back over the bridge on `hello`.
+ *  cannot build or read it. Keep this equal to `apps/extension/package.json`'s `version` — the value
+ *  WXT writes into the shipped manifest, which is what an installed extension reports back over the
+ *  bridge on `hello`. `pnpm check:zip` compares the two and fails when they disagree.
+ *
+ *  The committed download (`public/rightmove-house-hunt.zip`) is not yours to refresh:
+ *  `.github/workflows/package.yml` rebuilds and commits it when the source it contains lands on
+ *  main. Doing that by hand is what stopped being done.
  *
  *  When they drift, the website tells the reader their extension is out of date. That is the whole
  *  point, so the failure of forgetting to bump this is a false "up to date", never a false alarm —
