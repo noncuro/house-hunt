@@ -1,0 +1,290 @@
+-- ------------------------------------------------------------------------------------------------
+-- The travel backlog: every journey the hunt needs and does not have.
+--
+-- Until now a travel time existed only where somebody had opened the listing that needed it. That is
+-- fine for the flat you are looking at and wrong for every other one: add a sixth place and the
+-- compare table grows a column of dashes that fills in only as each flat is opened by hand, one at a
+-- time, forever. `cachedTravelTimes` is right to refuse to fetch on mount — a table that fires a
+-- journey request per empty cell is a herd on TfL — but "do not fetch on mount" was silently also
+-- "never fetch", because nothing else was going to.
+--
+-- The backlog is **derived, not enqueued**. There is no jobs table to insert into when a place is
+-- added, because a queue you write to is a queue that can drift: a failed insert, a place added by a
+-- surface that forgot to enqueue, or a row deleted by hand, and the gap is invisible forever. The
+-- gap set is instead computed from the data that already states the requirement — the project's
+-- properties, the project's places, the modes we route — minus the rows `travel_time` already holds.
+-- Adding a place therefore enqueues nothing and needs to do nothing: the gaps exist the moment the
+-- place does, and they stop existing when the answers land. Nothing can be lost because nothing is
+-- stored.
+-- ------------------------------------------------------------------------------------------------
+
+-- Somewhere to remember that a pair keeps failing.
+--
+-- Without this, one origin TfL will never answer for is retried in every run forever, and because a
+-- run has a fixed budget it eats the same slots every time — the backlog stops draining and the log
+-- shows a healthy "60 attempted" while nothing at all is progressing. A settled no-route needs none
+-- of this: it is cached in `travel_time` as `no_route` and leaves the gap set like any other answer.
+-- This table is only ever about transient failure.
+create table if not exists travel_backoff (
+  origin_postcode text not null,
+  dest_postcode   text not null,
+  mode            text not null,
+  attempts        int not null default 0,
+  last_error      text,
+  next_attempt_at timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  primary key (origin_postcode, dest_postcode, mode)
+);
+
+alter table travel_backoff enable row level security;
+
+-- No policy, deliberately: `service_role` bypasses RLS and nothing else has any business here. The
+-- revoke is belt and braces against Supabase's default grants on the public schema — RLS with no
+-- policy already denies, and a table that is invisible to clients cannot become one they depend on.
+revoke all on table travel_backoff from anon, authenticated;
+
+comment on table travel_backoff is
+  'Transient travel-lookup failures, so a pair that keeps failing stops consuming every backfill run. A settled no-route lives in travel_time instead.';
+
+-- ------------------------------------------------------------------------------------------------
+-- The gap set.
+-- ------------------------------------------------------------------------------------------------
+
+-- Every (origin, destination, mode) the hunt wants and `travel_time` does not have, in postcode
+-- order, with the total outstanding carried on every row.
+--
+-- Postcode order rather than anything resembling age, because a derived gap set has no age: the
+-- only date within reach is when the *property* was first seen, which says nothing about when the
+-- leg became outstanding — adding a place makes gaps against flats first seen months ago. What the
+-- ordering has to be is stable and cheap, and this is both: the `distinct on` has already sorted
+-- the rows this way, so it costs no second sort, and it keeps the three modes of a pair together.
+-- Nothing starves behind it. An answered leg leaves the gap set, so each run resumes where the last
+-- one stopped rather than re-drawing the same slice, and a leg that keeps failing is held out by
+-- `travel_backoff` until its next attempt is due instead of eating a slot every run.
+--
+-- `remaining` is `count(*) over ()`, which Postgres computes over the whole matching set *before*
+-- `limit` applies — so one call answers both "what should I work on" and "how much is left", and the
+-- cron log shows a backlog draining rather than a number of attempts with no denominator.
+--
+-- The modes are the three we route (`TRAVEL_MODES` in packages/core/src/types.ts). Driving is
+-- deliberately absent here as everywhere else: TfL cannot answer it, and asking would cache a
+-- transit number under a driving label. `pnpm check:travel` reads this literal and compares it to
+-- that constant: a mode named there and forgotten here is never backfilled at all, and no runtime
+-- check can see the absence of rows it was never going to be sent.
+--
+-- Archived flats are skipped. The funnel says they are done with — spending TfL's goodwill to learn
+-- the commute to a flat somebody else took is the one clearly wasted call in the set. A flat with no
+-- stage row at all is *not* archived and is included, which is the normal state of a new listing.
+--
+-- Two properties can share a postcode and two places can share one, so the set is distinct on the
+-- postcode pair rather than on the rows behind it — the cache is keyed on postcodes (design D5) and
+-- one lookup answers for every property and place at those two points.
+--
+-- Every postcode is trimmed, on both sides of every join and on the way out, because that is what
+-- `cache_travel` stores: it writes `nullif(trim(...), '')`. Comparing the raw column against the
+-- trimmed key makes a leg with a stray space in its postcode permanently outstanding — resolved,
+-- written under the trimmed key, not matched here, and asked for again every quarter of an hour
+-- forever, spending the run's budget on the one leg that can never leave the set.
+--
+-- Dropped and recreated rather than replaced: the return type differs from the one this deployment
+-- may already be holding, and `create or replace function` refuses to change it.
+drop function if exists public.travel_gaps(int);
+
+create function public.travel_gaps(p_limit int default 50)
+returns table (
+  origin_postcode text,
+  dest_postcode   text,
+  dest_lat        double precision,
+  dest_lon        double precision,
+  mode            text,
+  remaining       bigint
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  -- The same guard as every other function in this file, and needed more than they are: this one
+  -- reads across every project with RLS off and hands back the postcode of every flat and every
+  -- saved place in the deployment. The revoke above already refuses a client, but a grant is a line
+  -- somebody can add and a `security definer` function that leaks the whole deployment when they do
+  -- should say no itself.
+  if not public.is_service_role() then
+    raise exception 'travel_gaps: the travel function reads the backlog, not clients';
+  end if;
+
+  return query
+  with pairs as (
+    select distinct on (trim(p.postcode), trim(pl.postcode), m.mode)
+           trim(p.postcode)  as origin_postcode,
+           trim(pl.postcode) as dest_postcode,
+           pl.lat            as dest_lat,
+           pl.lon            as dest_lon,
+           m.mode            as mode
+      from project_property pp
+      join property p  on p.rightmove_id = pp.rightmove_id
+      join place    pl on pl.project_id  = pp.project_id
+      cross join unnest(array['walking', 'cycling', 'transit']) as m(mode)
+      left join property_stage ps
+        on ps.project_id   = pp.project_id
+       and ps.rightmove_id = pp.rightmove_id
+      left join travel_time tt
+        on tt.origin_postcode = trim(p.postcode)
+       and tt.dest_postcode   = trim(pl.postcode)
+       and tt.mode            = m.mode
+      left join travel_backoff tb
+        on tb.origin_postcode = trim(p.postcode)
+       and tb.dest_postcode   = trim(pl.postcode)
+       and tb.mode            = m.mode
+     where nullif(trim(p.postcode), '') is not null
+       -- A place with no postcode is not a destination: routing is postcode to postcode, and a
+       -- neighbourhood the hunt searches around has no journey to ask about (`travelDestinations`).
+       and nullif(trim(pl.postcode), '') is not null
+       and tt.origin_postcode is null
+       and (ps.stage is null or ps.stage <> 'archived')
+       and (tb.next_attempt_at is null or tb.next_attempt_at <= now())
+     -- `distinct on` needs the ordering to start with its own expressions; `pl.id` after them only
+     -- decides *which* of two places at one postcode lends its coordinates, and they are the same
+     -- point either way.
+     order by trim(p.postcode), trim(pl.postcode), m.mode, pl.id
+  )
+  -- Qualified with the CTE name throughout: the `returns table` columns are parameters in scope
+  -- here, and an unqualified `mode` would be ambiguous against them.
+  select pairs.origin_postcode,
+         pairs.dest_postcode,
+         pairs.dest_lat,
+         pairs.dest_lon,
+         pairs.mode,
+         count(*) over () as remaining
+    from pairs
+   order by pairs.origin_postcode, pairs.dest_postcode, pairs.mode
+   limit greatest(p_limit, 0);
+end;
+$$;
+
+comment on function public.travel_gaps(int) is
+  'Journeys the hunt needs and travel_time lacks, derived from project_property x place x mode. remaining carries the full outstanding count before the limit.';
+
+revoke execute on function public.travel_gaps(int) from public, anon, authenticated;
+grant execute on function public.travel_gaps(int) to service_role;
+
+-- ------------------------------------------------------------------------------------------------
+-- Backoff, written only by the function that made the call.
+-- ------------------------------------------------------------------------------------------------
+
+-- Five minutes, doubling, capped at a day. The cap matters more than the curve: TfL being down for
+-- an afternoon should not push a leg's next attempt into next week, and a postcode that is genuinely
+-- unroutable should still be re-asked occasionally in case it was us.
+create or replace function public.record_travel_failure(
+  p_origin_postcode text,
+  p_dest_postcode   text,
+  p_mode            text,
+  p_error           text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+-- Keyed exactly as `cache_travel` keys the answer, because these two tables are looked up against
+-- each other and a backoff is only ever about a pair the cache might hold. Comparing raw arguments
+-- against trimmed cache rows would make ` N1 1AA ` miss the answer it has and insert a backoff row
+-- under a key nothing will ever match or clear — outstanding forever, invisible, and impossible to
+-- attribute a year later. Today's only caller passes trimmed postcodes (`travel_gaps` trims on the
+-- way out), so this is the RPC contract rather than a live path; it is written down here because
+-- the next caller will not know that.
+declare
+  v_origin text := nullif(trim(p_origin_postcode), '');
+  v_dest   text := nullif(trim(p_dest_postcode), '');
+begin
+  if not public.is_service_role() then
+    raise exception 'record_travel_failure: the travel function records these, not clients';
+  end if;
+  if v_origin is null or v_dest is null then
+    raise exception 'record_travel_failure: both postcodes are required';
+  end if;
+
+  -- A failure that arrives after the answer did is not a failure to back off on. Two runs can draw
+  -- the same leg; if one succeeds and caches while the other is still waiting on TfL, the loser's
+  -- report describes a journey the deployment already knows. Recording it anyway leaves a backoff
+  -- row standing against a cached pair — the exact state the unconditional `clear_travel_failure`
+  -- on the success path exists to prevent, reached from the other side — and it also charges the
+  -- pair an attempt, so its next genuine failure starts a doubling higher than it earned.
+  --
+  -- The existence test is part of the insert rather than an `if exists ... then return` above it,
+  -- because a check and a write as two statements are two snapshots, which is the same shape of bug
+  -- one order down. As one statement it is as tight as read committed goes, and not tighter: the
+  -- `not exists` cannot see a `cache_travel` insert that has not committed yet, so a loser whose
+  -- statement snapshot predates the winner's commit still records a backoff the winner's `clear`
+  -- has already been and gone for. Accepted, not overlooked (TODO.md). Shutting it would mean a
+  -- transaction-scoped advisory lock on the journey key in *both* functions, which puts a lock on
+  -- every cached journey — including the interactive path, which is most of them — to save an
+  -- `attempts` counter one higher than earned on a row that suppresses nothing while the answer it
+  -- sits beside exists. Nothing in the application deletes a `travel_time` row; only the fixture
+  -- and RLS harnesses do.
+  insert into public.travel_backoff as tb (
+    origin_postcode, dest_postcode, mode, attempts, last_error, next_attempt_at, updated_at)
+  select v_origin, v_dest, p_mode, 1, p_error, now() + interval '5 minutes', now()
+   where not exists (
+     select 1 from public.travel_time tt
+      where tt.origin_postcode = v_origin
+        and tt.dest_postcode   = v_dest
+        and tt.mode            = p_mode)
+  on conflict (origin_postcode, dest_postcode, mode) do update set
+    attempts        = tb.attempts + 1,
+    last_error      = excluded.last_error,
+    -- Capped at 8 doublings before the `least` so the interval arithmetic stays small whatever the
+    -- attempt count reaches.
+    next_attempt_at = now() + least(interval '24 hours', interval '5 minutes' * power(2, least(tb.attempts, 8))),
+    updated_at      = now();
+
+  -- Said out loud rather than returned silently: declining to record is the right answer to a race
+  -- and the wrong answer to anything else, and the two are told apart only by how often this
+  -- appears in the log.
+  if not found then
+    raise notice 'record_travel_failure: % -> % (%) is already answered; not backing off a failure the cache overtook',
+      v_origin, v_dest, p_mode;
+  end if;
+end;
+$$;
+
+revoke execute on function public.record_travel_failure(text, text, text, text) from public, anon, authenticated;
+grant execute on function public.record_travel_failure(text, text, text, text) to service_role;
+
+-- Called when a leg finally answers — including a settled no-route, which is an answer. Leaving the
+-- row instead would be harmless today, because a cached leg is no longer a gap, but it would quietly
+-- delay the pair by hours the day a `travel_time` row is deleted.
+--
+-- Trimmed on the same argument as `record_travel_failure`: this deletes by the key that one wrote,
+-- and a clear that normalises differently from the insert is a row that cannot be cleared by the
+-- caller that made it.
+create or replace function public.clear_travel_failure(
+  p_origin_postcode text,
+  p_dest_postcode   text,
+  p_mode            text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_origin text := nullif(trim(p_origin_postcode), '');
+  v_dest   text := nullif(trim(p_dest_postcode), '');
+begin
+  if not public.is_service_role() then
+    raise exception 'clear_travel_failure: the travel function clears these, not clients';
+  end if;
+  if v_origin is null or v_dest is null then
+    raise exception 'clear_travel_failure: both postcodes are required';
+  end if;
+
+  delete from public.travel_backoff
+   where origin_postcode = v_origin
+     and dest_postcode   = v_dest
+     and mode            = p_mode;
+end;
+$$;
+
+revoke execute on function public.clear_travel_failure(text, text, text) from public, anon, authenticated;
+grant execute on function public.clear_travel_failure(text, text, text) to service_role;

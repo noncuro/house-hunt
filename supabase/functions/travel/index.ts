@@ -27,7 +27,7 @@
  *  project data it reads under RLS. This function decides what is cached, what is stale, what to
  *  call TfL for, and what the answer is.
  */
-import { body, HttpError, requireEnv, rest, rpc, serve } from '../_shared/http.ts';
+import { body, HttpError, requireEnv, rest, rpc, SERVICE_KEY, serve } from '../_shared/http.ts';
 import { requireCaller, type Caller } from '../_shared/caller.ts';
 import {
   journeyTime,
@@ -39,7 +39,7 @@ import {
   type StationInfo,
 } from '../_shared/tfl.ts';
 import { lookupPostcode } from '../_shared/postcode.ts';
-import type { JourneyOption, TravelMode } from '../_shared/types.ts';
+import { TRAVEL_MODES, type JourneyOption, type TravelMode } from '../_shared/types.ts';
 
 requireEnv({
   SUPABASE_URL: Deno.env.get('SUPABASE_URL'),
@@ -47,8 +47,19 @@ requireEnv({
 });
 
 /** Optional, and deliberately so. TfL answers unkeyed requests at a lower rate limit, so a missing
- *  key degrades rather than breaks — which is what you want on the day somebody rotates it. */
-const TFL_APP_KEY = Deno.env.get('TFL_APP_KEY') ?? undefined;
+ *  key degrades rather than breaks — which is what you want on the day somebody rotates it.
+ *
+ *  The difference is worth more than "a lower rate limit" suggests, and it is *per minute*, not per
+ *  hour: unkeyed is 50 requests a minute, keyed is 500. Both are far above what one person browsing
+ *  does and the unkeyed one is not far above what the backfill below does, which is why the backfill
+ *  is paced rather than trusted to stay small.
+ *
+ *  TfL issues a subscription two keys, primary and secondary, so one can be rotated while the other
+ *  keeps serving. They are two credentials against **one** quota — alternating them buys no extra
+ *  allowance — so the primary is what we send and the secondary is the standby a rotation swaps in.
+ *  `TFL_APP_KEY` is still read last so a deployment set up before the pair existed keeps working. */
+const TFL_APP_KEY =
+  Deno.env.get('TFL_PRIMARY_KEY') ?? Deno.env.get('TFL_SECONDARY_KEY') ?? Deno.env.get('TFL_APP_KEY') ?? undefined;
 
 /** A ceiling on concurrent TfL calls, with the rest queued behind them.
  *
@@ -63,19 +74,52 @@ const TFL_APP_KEY = Deno.env.get('TFL_APP_KEY') ?? undefined;
  *  spans them and the bound is on this instance's outbound TfL concurrency rather than on any single
  *  request's fan-out. */
 const MAX_TFL_CONCURRENCY = 6;
-let activeTfl = 0;
-const tflQueue: Array<() => void> = [];
 
-function withTflSlot<T>(run: () => Promise<T>): Promise<T> {
-  const slot = activeTfl < MAX_TFL_CONCURRENCY ? Promise.resolve() : new Promise<void>((resolve) => tflQueue.push(resolve));
-  return slot.then(() => {
-    activeTfl++;
-    return run().finally(() => {
-      activeTfl--;
-      tflQueue.shift()?.();
-    });
-  });
+/** How many of those slots the backlog may hold at once.
+ *
+ *  The backfill goes through `withTflSlot` like everything else, so it queues fairly against TfL —
+ *  but "fairly" is the problem when it has sixty legs to work and somebody has just opened a
+ *  listing. Without a second, tighter bound of its own, a backfill run fills all six slots and the
+ *  person waiting on a panel queues behind a batch job they cannot see. Two leaves four for whoever
+ *  is actually looking at something.
+ *
+ *  Nested acquisition is always backfill-slot then TfL-slot and never the reverse, so there is no
+ *  cycle to deadlock on. */
+const MAX_BACKFILL_CONCURRENCY = 2;
+
+/** A plain counting semaphore. Two of these exist and they behaved identically when each was
+ *  written out by hand, which is the argument for the parameter.
+ *
+ *  The count is taken **synchronously**, at the moment the slot is granted. Incrementing it a
+ *  microtask later — inside the `.then` that runs the work — is a bound that does not exist: the
+ *  backfill hands sixty legs to this in one synchronous `map`, no microtask runs between them, so
+ *  all sixty read `active === 0`, all sixty take the fast path, and sixty TfL calls leave at once
+ *  under a comment promising two. It looked correct because it is correct for a caller that awaits
+ *  between acquisitions, which is the one caller nobody writes. */
+function semaphore(limit: number): <T>(run: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  /** Hand the slot to the next waiter rather than freeing it and letting them re-take it: between
+   *  the decrement and a woken waiter's increment there is a microtask in which a fresh caller can
+   *  slip past the limit and the waiter is left queued behind work that arrived after it. */
+  const release = () => {
+    const next = waiting.shift();
+    if (next) next();
+    else active--;
+  };
+  return <T>(run: () => Promise<T>): Promise<T> => {
+    const queued = active >= limit;
+    if (!queued) active++;
+    const slot = queued ? new Promise<void>((resolve) => waiting.push(resolve)) : Promise.resolve();
+    // `slot.then(run)` rather than calling `run()` here: it turns a synchronous throw inside `run`
+    // into a rejection, so `finally` still runs and the slot is not lost for the life of the
+    // instance — a leaked slot is a queue that quietly stops draining.
+    return slot.then(run).finally(release);
+  };
 }
+
+const withTflSlot = semaphore(MAX_TFL_CONCURRENCY);
+const withBackfillSlot = semaphore(MAX_BACKFILL_CONCURRENCY);
 
 /** What a caller may ask for in one call. Batched rather than one request per leg: a listing with
  *  five saved places and three modes is fifteen journeys, and fifteen round trips through a
@@ -181,6 +225,80 @@ async function cachedJourneys(origin: string): Promise<Map<string, TravelRow>> {
   return new Map(rows.map((r) => [`${r.dest_postcode}:${r.mode}`, r]));
 }
 
+/** What asking TfL about one leg produced, before anybody decides what to do with it. */
+interface LegOutcome {
+  /** Null when there is no duration: TfL settled it, or we could not ask. */
+  seconds: number | null;
+  changes: number | null;
+  options?: JourneyOption[];
+  /** Present when the leg could not be answered with a duration. */
+  error?: string;
+  /** True when TfL settled the question — there is no such journey — and the negative has been
+   *  cached. False means try again later. Only meaningful alongside `error`. */
+  settled: boolean;
+  /** Set when the answer was right and storing it was not. */
+  cacheWriteFailure?: string;
+}
+
+/** One leg: ask TfL, cache whatever comes back, and report what happened.
+ *
+ *  Shared by the two things that need a journey — a caller asking about a listing they are looking
+ *  at, and the backlog working through the ones nobody has opened. They differ entirely in what they
+ *  do with the outcome, and not at all in how a leg is resolved, which is the half carrying the
+ *  cache-write rules that took a deploy to get right. */
+async function resolveLeg(origin: string, destPostcode: string, to: string, mode: TravelMode): Promise<LegOutcome> {
+  const outcome: LegOutcome = { seconds: null, changes: null, settled: false };
+  try {
+    // No `now` argument: `journeyTime` pins transit to the next weekday 09:00 itself, and this is
+    // the only place that calls it, so the basis is a property of the system rather than of whoever
+    // asked (design D4). Through the queue so one request's fifteen legs, and a grid's worth of
+    // requests at once, do not all hit TfL in the same instant.
+    const journey = await withTflSlot(() => journeyTime(origin, to, mode, TFL_APP_KEY));
+    // A failed cache write must not turn a good answer into a permanent "no route", which is what
+    // happened when this sat inside the catch. It must still be *loud*: a write that silently fails
+    // means every lookup costs a fresh TfL call forever, and the only visible symptom is that
+    // nothing is ever cached — which is exactly how the service role being refused by these RPCs
+    // survived its first deploy.
+    await rpc('cache_travel', {
+      p_origin_postcode: origin,
+      p_dest_postcode: destPostcode,
+      p_mode: mode,
+      p_seconds: journey.seconds,
+      p_changes: journey.changes,
+      p_no_route: false,
+      p_journeys: journey.options ?? null,
+      p_basis: TRAVEL_BASIS[mode],
+    }).catch((e) => {
+      outcome.cacheWriteFailure = `cache_travel ${origin} -> ${destPostcode} ${mode}: ${e}`;
+    });
+    outcome.seconds = journey.seconds;
+    outcome.changes = journey.changes;
+    outcome.options = journey.options;
+    return outcome;
+  } catch (e) {
+    // Only a TflError carries a considered verdict on whether TfL settled the question. Anything
+    // else — a parse failure, a bug here — is transient, because caching a negative is permanent and
+    // being wrong about it is expensive.
+    outcome.settled = e instanceof TflError && !e.transient;
+    outcome.error = e instanceof Error ? e.message : String(e);
+    if (outcome.settled) {
+      await rpc('cache_travel', {
+        p_origin_postcode: origin,
+        p_dest_postcode: destPostcode,
+        p_mode: mode,
+        p_seconds: null,
+        p_changes: null,
+        p_no_route: true,
+        p_journeys: null,
+        p_basis: TRAVEL_BASIS[mode],
+      }).catch((err) => {
+        outcome.cacheWriteFailure = `cache_travel no-route ${origin} -> ${destPostcode} ${mode}: ${err}`;
+      });
+    }
+    return outcome;
+  }
+}
+
 async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journeys' }>) {
   const origin = ask.origin.trim();
   if (!origin) throw new HttpError(400, 'bad-request', 'a journey needs an origin postcode');
@@ -231,66 +349,27 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
             : destination.postcode;
 
         made++;
-        try {
-          // No `now` argument: `journeyTime` pins transit to the next weekday 09:00 itself, and
-          // this is the only place that calls it, so the basis is a property of the system rather
-          // than of whoever asked (design D4). Through the queue so one request's fifteen legs, and
-          // a grid's worth of requests at once, do not all hit TfL in the same instant.
-          const journey = await withTflSlot(() => journeyTime(origin, to, mode, TFL_APP_KEY));
-          // A failed cache write must not turn a good answer into a permanent "no route", which is
-          // what happened when this sat inside the catch. It must still be *loud*: a write that
-          // silently fails means every lookup costs a fresh TfL call forever, and the only visible
-          // symptom is that nothing is ever cached — which is exactly how the service role being
-          // refused by these RPCs survived its first deploy.
-          await rpc('cache_travel', {
-            p_origin_postcode: origin,
-            p_dest_postcode: destination.postcode,
-            p_mode: mode,
-            p_seconds: journey.seconds,
-            p_changes: journey.changes,
-            p_no_route: false,
-            p_journeys: journey.options ?? null,
-            p_basis: TRAVEL_BASIS[mode],
-          }).catch((e) => {
-            cacheWriteFailures.push(`cache_travel ${origin} -> ${destination.postcode} ${mode}: ${e}`);
-          });
-          return {
-            destPostcode: destination.postcode,
-            mode,
-            seconds: journey.seconds,
-            changes: journey.changes,
-            options: journey.options,
-            cached: false,
-          };
-        } catch (e) {
-          // Only a TflError carries a considered verdict on whether TfL settled the question.
-          // Anything else — a parse failure, a bug here — is transient, because caching a negative
-          // is permanent and being wrong about it is expensive.
-          const settled = e instanceof TflError && !e.transient;
-          if (settled) {
-            await rpc('cache_travel', {
-              p_origin_postcode: origin,
-              p_dest_postcode: destination.postcode,
-              p_mode: mode,
-              p_seconds: null,
-              p_changes: null,
-              p_no_route: true,
-              p_journeys: null,
-              p_basis: TRAVEL_BASIS[mode],
-            }).catch((e) => {
-              cacheWriteFailures.push(`cache_travel no-route ${origin} -> ${destination.postcode} ${mode}: ${e}`);
-            });
-          }
+        const leg = await resolveLeg(origin, destination.postcode, to, mode);
+        if (leg.cacheWriteFailure) cacheWriteFailures.push(leg.cacheWriteFailure);
+        if (leg.error) {
           return {
             destPostcode: destination.postcode,
             mode,
             seconds: 0,
             changes: null,
-            error: e instanceof Error ? e.message : String(e),
-            transient: !settled,
+            error: leg.error,
+            transient: !leg.settled,
             cached: false,
           };
         }
+        return {
+          destPostcode: destination.postcode,
+          mode,
+          seconds: leg.seconds ?? 0,
+          changes: leg.changes,
+          options: leg.options,
+          cached: false,
+        };
       }),
     ),
   );
@@ -402,6 +481,178 @@ async function resolvePostcode(ask: Extract<Ask, { kind: 'postcode' }>) {
   return { point };
 }
 
+// ------------------------------------------------------------------------------------------------
+// The backlog.
+//
+// Everything above answers a question somebody asked. This answers the ones nobody has: the journeys
+// the hunt needs and has never had a reason to look up, which is every leg of every flat nobody has
+// opened since the place was added. `travel_gaps` derives them (see the migration for why it is
+// derived rather than enqueued); this works through as many as one run's budget allows and is called
+// on a schedule, so the backlog drains on its own instead of waiting for somebody to click a flat.
+// ------------------------------------------------------------------------------------------------
+
+/** What one scheduled run may spend, in TfL calls.
+ *
+ *  Sized against the wall clock rather than the rate limit: two at a time at roughly a second each
+ *  is about a minute of work, comfortably inside a function invocation, and at the every-15-minutes
+ *  cadence in `.github/workflows/travel-backfill.yml` it is ~240 legs an hour — a few thousand a
+ *  day, which clears any backlog a household hunt can generate within a day of adding a place.
+ *  Against TfL's 500-a-minute keyed allowance it is not close to anything. */
+const DEFAULT_BACKFILL_CALLS = 60;
+
+/** A ceiling on what a caller may ask for, because the budget is a parameter and a function
+ *  invocation has a wall clock. A one-off catch-up run can ask for more than the default; it cannot
+ *  ask for a number that will be killed halfway and report nothing. */
+const MAX_BACKFILL_CALLS = 200;
+
+/** The only thing the service role may ask for. Deliberately a separate type from `Ask`: a signed-in
+ *  caller cannot reach this, and adding it to the union is how it would accidentally become
+ *  reachable. */
+interface SystemAsk {
+  kind: 'backfill';
+  /** TfL calls this run may make. Clamped to `MAX_BACKFILL_CALLS`. */
+  budget?: number;
+}
+
+interface Gap {
+  origin_postcode: string;
+  dest_postcode: string;
+  dest_lat: number | null;
+  dest_lon: number | null;
+  mode: TravelMode;
+  /** The whole outstanding count, carried on every row — see `travel_gaps`. */
+  remaining: number;
+}
+
+/** Refuses a mode the migration names and we do not route: it would fall through `journeyTime`'s
+ *  lookup to the planner's default and be cached as a transit number under whatever label the
+ *  migration invented, so the rows are checked rather than trusted.
+ *
+ *  Only that direction. A run sees the modes it happens to draw, and a mode with no outstanding
+ *  gaps returns no rows at all, so nothing here can tell that the migration is *missing* one we
+ *  route — that half is `pnpm check:travel`, which compares the two texts. */
+function checkModes(gaps: Gap[]): void {
+  const unknown = [...new Set(gaps.map((g) => g.mode).filter((mode) => !TRAVEL_MODES.includes(mode)))];
+  if (unknown.length > 0) {
+    throw new HttpError(
+      500,
+      'bad-gap',
+      `travel_gaps returned ${unknown.map((m) => `"${String(m)}"`).join(', ')}, which is not a mode we route — ` +
+        'the migration and TRAVEL_MODES have diverged',
+    );
+  }
+}
+
+/** Is this the service role itself calling, rather than a person?
+ *
+ *  Compared against the key rather than decoded, because the question is not "is this a valid JWT"
+ *  — `requireCaller` answers that for people — but "is this *our* server-side secret". Constant-time
+ *  so a wrong guess leaks nothing about how much of it was right; the cost is a loop over a few
+ *  hundred characters. */
+function isServiceRole(request: Request): boolean {
+  const token = /^Bearer\s+(\S+)$/i.exec(request.headers.get('Authorization') ?? '')?.[1];
+  if (token === undefined || !SERVICE_KEY) return false;
+  if (token.length !== SERVICE_KEY.length) return false;
+  let differences = 0;
+  for (let at = 0; at < token.length; at++) differences |= token.charCodeAt(at) ^ SERVICE_KEY.charCodeAt(at);
+  return differences === 0;
+}
+
+/** Work the backlog down by one run's budget.
+ *
+ *  Failures are recorded rather than thrown: one unroutable pair must not end a run that has
+ *  fifty-nine good legs left in it, and it must not be tried again immediately either, which is what
+ *  `record_travel_failure` is for.
+ *
+ *  Nothing here is written to `api_usage`. That table is the per-user hourly allowance, and a
+ *  scheduled job is not a user — charging it to somebody would spend the allowance of whoever
+ *  happened to be named, and charging it to nobody needs a row that means nothing. The bound on this
+ *  path is its budget times its cadence, which is fixed in advance and stronger than a counter read
+ *  after the fact. */
+async function runBackfill(ask: SystemAsk) {
+  const asked = Number(ask.budget);
+  const budget = Number.isFinite(asked) && asked > 0 ? Math.min(Math.floor(asked), MAX_BACKFILL_CALLS) : DEFAULT_BACKFILL_CALLS;
+
+  const gaps = await rpc<Gap[]>('travel_gaps', { p_limit: budget });
+  // `remaining` is identical on every row; an empty backlog has no rows to carry it.
+  const outstanding = gaps[0]?.remaining ?? 0;
+  if (gaps.length === 0) {
+    console.log('travel backfill: nothing outstanding');
+    return { attempted: 0, routed: 0, noRoute: 0, failed: 0, outstanding: 0 };
+  }
+  checkModes(gaps);
+
+  let routed = 0;
+  let noRoute = 0;
+  const failures: string[] = [];
+  const cacheWriteFailures: string[] = [];
+
+  await Promise.all(
+    gaps.map((gap) =>
+      withBackfillSlot(async () => {
+        // Coordinates where the place has them, for the same reason the interactive path prefers
+        // them: TfL's geocoder resolved a terminated postcode to a point in the wrong part of London.
+        const to = gap.dest_lat !== null && gap.dest_lon !== null ? `${gap.dest_lat},${gap.dest_lon}` : gap.dest_postcode;
+        const leg = await resolveLeg(gap.origin_postcode, gap.dest_postcode, to, gap.mode);
+        if (leg.cacheWriteFailure) cacheWriteFailures.push(leg.cacheWriteFailure);
+
+        if (leg.error && !leg.settled) {
+          failures.push(`${gap.origin_postcode} -> ${gap.dest_postcode} ${gap.mode}: ${leg.error}`);
+          await rpc('record_travel_failure', {
+            p_origin_postcode: gap.origin_postcode,
+            p_dest_postcode: gap.dest_postcode,
+            p_mode: gap.mode,
+            p_error: leg.error,
+          }).catch((e) => {
+            // A backoff that cannot be written means this pair returns in the next run and fails
+            // again — wasteful rather than wrong, and invisible unless it is said out loud.
+            console.error(`could not record travel failure for ${gap.origin_postcode} -> ${gap.dest_postcode}: ${e}`);
+          });
+          return;
+        }
+
+        // Answered, one way or the other: a duration, or TfL settling that there is no such journey.
+        // Both are cached, so both leave the gap set, and any backoff standing against the pair has
+        // served its purpose.
+        if (leg.settled) noRoute++;
+        else routed++;
+        // Unconditionally, though the delete is usually a no-op: the gap row was read before the
+        // call and cannot say what happened during it. Two overlapping runs can draw the same leg,
+        // and if one fails and writes a backoff while the other succeeds, skipping the clear on the
+        // stale snapshot leaves a backoff row standing over a cached answer — suppressing the leg
+        // later, for a failure that was already overtaken.
+        await rpc('clear_travel_failure', {
+          p_origin_postcode: gap.origin_postcode,
+          p_dest_postcode: gap.dest_postcode,
+          p_mode: gap.mode,
+        }).catch((e) => {
+          console.warn(`could not clear travel backoff for ${gap.origin_postcode} -> ${gap.dest_postcode}: ${e}`);
+        });
+      }),
+    ),
+  );
+
+  console.log(
+    `travel backfill: ${gaps.length} attempted, ${routed} routed, ${noRoute} no-route, ` +
+      `${failures.length} failed, ${outstanding} outstanding before this run`,
+  );
+  if (failures.length > 0) {
+    const line = `${failures.length} of ${gaps.length} backfilled legs failed:\n  ${failures.slice(0, 5).join('\n  ')}`;
+    // Every leg failing is an outage, not a set of bad postcodes — the distinction is the whole
+    // difference between "wait" and "go and look".
+    if (failures.length >= gaps.length) console.error(`ALL backfilled legs failed — upstream likely down. ${line}`);
+    else console.warn(line);
+  }
+  if (cacheWriteFailures.length > 0) {
+    console.error(
+      `CACHE NOT WRITTEN for ${cacheWriteFailures.length} of ${gaps.length} backfilled legs — they will ` +
+        `come back as gaps every run until this is fixed:\n  ${cacheWriteFailures.join('\n  ')}`,
+    );
+  }
+
+  return { attempted: gaps.length, routed, noRoute, failed: failures.length, outstanding };
+}
+
 function toCached(row: TravelRow) {
   return {
     destPostcode: row.dest_postcode,
@@ -417,6 +668,18 @@ function toCached(row: TravelRow) {
 
 
 serve(async (request) => {
+  // The scheduled backfill first, and settled from the header alone before anything is read or any
+  // round trip is made. Deliberately ahead of `requireCaller`: it is the only caller that is not a
+  // person, it holds no session and has no hourly allowance to check, and leaving the order below
+  // untouched means an unauthenticated request still gets its 401 before its body is parsed.
+  if (isServiceRole(request)) {
+    const ask = await body<SystemAsk>(request);
+    if (ask.kind !== 'backfill') {
+      throw new HttpError(400, 'bad-request', `the service role asks for backfill, not ${String(ask.kind)}`);
+    }
+    return await runBackfill(ask);
+  }
+
   const caller = await requireCaller(request);
   await checkRate(caller);
   const ask = await body<Ask>(request);

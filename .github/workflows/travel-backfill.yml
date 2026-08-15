@@ -1,0 +1,85 @@
+# Works the travel backlog down on a schedule.
+#
+# The travel function resolves a journey when somebody opens a listing, which leaves every flat
+# nobody has opened without one — a column of dashes in the compare table that only fills in by
+# hand. This asks the function to work through what is missing, a budget at a time.
+#
+# GitHub rather than pg_cron: the schedule is the only piece of this that lives outside Supabase,
+# the repo already runs its migrations and checks from here, and a cron in the database would mean
+# turning on pg_net and storing the function's own URL and service key in database settings to call
+# back into the project it lives in. This needs neither, and a run that fails is visible in the same
+# place every other failure here is.
+#
+# Needs two repository secrets, neither of which any other workflow uses yet:
+#   SUPABASE_FUNCTIONS_URL   e.g. https://<project-ref>.supabase.co/functions/v1  (no trailing slash)
+#   SUPABASE_SERVICE_ROLE_KEY  the project's service-role key — this is what authorises the call
+name: travel backfill
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub's scheduler is best-effort and skews under load, which is fine for a
+    # backlog: a run that starts late does the same work, and the budget is per run rather than per
+    # minute, so a skipped slot costs a delay and never a burst.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      budget:
+        description: 'TfL calls this run may make (capped at 200 by the function)'
+        required: false
+        default: '60'
+
+# Nothing at all. This job checks nothing out, reads no repository content and writes nowhere on
+# GitHub — it makes one HTTPS call to Supabase with a secret. Without the block the token inherits
+# whatever the repository default happens to be, which is a wider grant than a curl needs and one
+# that changes under you when somebody edits a settings page.
+permissions: {}
+
+# One run at a time. Two overlapping runs would draw the same gaps — `travel_gaps` reads what is
+# missing, and nothing is missing any less until the first run has written its answers — so they
+# would spend twice the calls on one set of legs.
+concurrency:
+  group: travel-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Work the backlog
+        env:
+          FUNCTIONS_URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
+          SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BUDGET: ${{ inputs.budget || '60' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${FUNCTIONS_URL:-}" ] || [ -z "${SERVICE_ROLE_KEY:-}" ]; then
+            echo "SUPABASE_FUNCTIONS_URL and SUPABASE_SERVICE_ROLE_KEY must both be set as repository secrets." >&2
+            exit 1
+          fi
+
+          # The budget is free text on the dispatch form and goes into the request body as a JSON
+          # number, so anything that is not one produces a body the function cannot parse — and the
+          # run then fails with "unexpected token", which reads like the function is broken rather
+          # than like the number was. Checked here so the message names the actual mistake.
+          case "${BUDGET}" in
+            ''|*[!0-9]*) echo "budget must be a whole number of TfL calls, not '${BUDGET}'." >&2; exit 1 ;;
+            # JSON forbids a leading zero, so `01` is digits all the way through and still builds a
+            # body the function refuses — exactly the failure this check exists to name rather than
+            # let through.
+            0?*) echo "budget must not have a leading zero, unlike '${BUDGET}'." >&2; exit 1 ;;
+          esac
+          if [ "${BUDGET}" -lt 1 ]; then
+            echo "budget must be at least 1 TfL call, not '${BUDGET}'." >&2
+            exit 1
+          fi
+
+          # --fail-with-body so a refusal exits non-zero *and* still prints what the function said;
+          # --fail alone would report a status and swallow the reason.
+          curl --silent --show-error --fail-with-body --max-time 300 \
+            -X POST "${FUNCTIONS_URL}/travel" \
+            -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+            -H "apikey: ${SERVICE_ROLE_KEY}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"kind\":\"backfill\",\"budget\":${BUDGET}}"
+          echo

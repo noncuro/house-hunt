@@ -118,6 +118,28 @@ is unproven end to end. Closing it means a `next dev` Playwright harness signed 
 fixture Supabase, plus a stub extension to answer the `open-tab` bridge call so a run can be watched
 opening background tabs.
 
+### Two backfill runs on one leg can leave a backoff row against a cached answer
+
+`record_travel_failure` declines to record a failure for a pair `travel_time` already answers, and
+the success path clears any backoff unconditionally, so both orderings of "one run succeeds while
+another fails" settle correctly. One case survives both. Under READ COMMITTED the guard's `not
+exists` cannot see a `cache_travel` insert that has not committed, so a losing run whose statement
+snapshot predates the winner's commit passes the guard, and if the winner's `clear_travel_failure`
+has already been and gone by the time the loser's insert lands, the backoff row stays.
+
+What it costs is an `attempts` counter one higher than the pair earned. The row suppresses nothing
+while the answer beside it exists — `travel_gaps` drops the leg on the cached row before it ever
+consults `next_attempt_at` — and nothing in the application deletes a `travel_time` row; only
+`tools/fixture-session.ts` and `check:rls` do, to their own fixtures. The window is inside a single
+statement, while the winner has to commit its cache write and then make a separate round trip to
+clear, so the loser's one statement has to straddle both.
+
+**Closing it** means a transaction-scoped advisory lock on the journey key in `cache_travel` as well
+as in `record_travel_failure` — a lock taken on every cached journey, most of which come from the
+interactive path rather than the backfill, to protect a counter. Not worth it at this size. Worth
+revisiting the day a `travel_time` row becomes something the application itself deletes, because
+that is when the leftover row stops being inert.
+
 ## Wanted, not yet built
 
 - **Customisable search criteria** (bedrooms, price, property type, radius, Let Agreed) — phase 7

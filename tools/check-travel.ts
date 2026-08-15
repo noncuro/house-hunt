@@ -3,8 +3,18 @@
  *  This is the file that decides whether to believe a number already in the database, so getting
  *  it wrong is silent in both directions: too strict and every page load re-asks TfL for
  *  everything, too loose and a commute measured at midnight during engineering works is shown
- *  forever as the answer. Neither looks like a bug on screen. */
+ *  forever as the answer. Neither looks like a bug on screen.
+ *
+ *  It also pins the one fact about travel that is stated twice: the set of modes we route, written
+ *  once as `TRAVEL_MODES` and once as an `array[...]` inside `travel_gaps`, with no way to share a
+ *  constant across the SQL boundary. The backfill's runtime check can only catch half of a
+ *  divergence — it sees the modes a run happens to return, and a mode with no outstanding gaps
+ *  legitimately returns nothing — so a mode added here and forgotten in the migration is never
+ *  backfilled, forever, with every check green. Comparing the two texts is the only way to see it. */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { NO_ROUTE_RETRY_DAYS, TRAVEL_BASIS, nextWeekdayMorning, staleTravel } from '../packages/core/src/tfl';
+import { TRAVEL_MODES } from '../packages/core/src/types';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -124,6 +134,89 @@ usable(
 usable(
   'an unreadable timestamp keeps the row rather than thrashing',
   staleTravel(row({ noRoute: true, options: undefined, computedAt: 'not a date' }), 'transit', NOW),
+);
+
+/** The modes `travel_gaps` unnests, or a sentence saying why they could not be read.
+ *
+ *  Deliberately fussy about finding exactly one literal in exactly one place. Taking the first
+ *  `unnest(array[...])` in the file would let a fragment in a comment, or a second query that
+ *  happened to unnest something else, answer on behalf of the real one — and a check that compares
+ *  the wrong array passes while the modes diverge, which is worse than not checking at all. So
+ *  comments go first, the search is scoped to the body of the function that matters, and anything
+ *  other than a single match is reported rather than resolved.
+ *
+ *  Stripping comments with a regex would misread a `--` inside a string literal, and the migration
+ *  has none. If one ever appears the truncation removes the `unnest` with it and this returns "no
+ *  literal", which is the loud direction. */
+function modesInTravelGaps(sql: string): { modes: string[] } | { problem: string } {
+  const uncommented = sql.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, '');
+  const body = /create\s+(?:or\s+replace\s+)?function\s+public\.travel_gaps\b[\s\S]*?\$\$([\s\S]*?)\$\$/i
+    .exec(uncommented)?.[1];
+  if (body === undefined) return { problem: 'no `create function public.travel_gaps ... $$ ... $$` body — did it move or change quoting?' };
+
+  const literals = [...body.matchAll(/unnest\(\s*array\s*\[([^\]]*)\]/gi)].map((m) => m[1]!);
+  if (literals.length === 0) return { problem: 'the travel_gaps body unnests no array — where did the mode list go?' };
+  if (literals.length > 1) {
+    return { problem: `the travel_gaps body unnests ${literals.length} arrays, so which one is the mode list is a guess: ${literals.map((l) => `array[${l.trim()}]`).join(' and ')}` };
+  }
+  return { modes: [...literals[0]!.matchAll(/'([^']*)'/g)].map((m) => m[1]!).sort() };
+}
+
+/** `check` against whichever half of that union came back, so a parse problem reads as a failure
+ *  rather than as a comparison nobody made. */
+function modes(name: string, sql: string, expected: string[] | string) {
+  const found = modesInTravelGaps(sql);
+  check(name, 'modes' in found ? found.modes : found.problem, expected);
+}
+
+console.log('travel_gaps modes');
+const MIGRATION = 'supabase/migrations/20260815160000_travel_backfill.sql';
+const migration = readFileSync(resolve(import.meta.dirname, '..', MIGRATION), 'utf8');
+modes('the migration routes exactly the modes TRAVEL_MODES names', migration, [...TRAVEL_MODES].sort());
+
+/** The migration with one edit made, refusing to make it ambiguously.
+ *
+ *  `String.replace` takes the first occurrence and says nothing about the rest, so a needle that
+ *  turns up twice would quietly test a different edit than the case is named for — which is the
+ *  same species of mistake as the parser bug these cases exist to pin. */
+function edited(needle: string, replacement: string): string {
+  const occurrences = migration.split(needle).length - 1;
+  if (occurrences !== 1) {
+    failures++;
+    console.log(`  FAIL the case editing \`${needle.slice(0, 48)}…\` found ${occurrences} of it in ${MIGRATION}, not 1`);
+  }
+  return migration.replace(needle, replacement);
+}
+
+const UNNEST = "cross join unnest(array['walking', 'cycling', 'transit']) as m(mode)";
+
+// ...and the parser that just said so, against the ways it could say it wrongly. A decoy in a
+// comment is the one that matters: it is what a restructure leaves behind, and it is the case where
+// the old parser answered from the wrong text and went green.
+modes(
+  'a decoy literal in a comment is not the mode list',
+  edited('create function public.travel_gaps', `-- once written as ${UNNEST}\ncreate function public.travel_gaps`),
+  [...TRAVEL_MODES].sort(),
+);
+modes(
+  'a decoy literal outside the function is not the mode list',
+  `select * from unnest(array['ferry']);\n${migration}`,
+  [...TRAVEL_MODES].sort(),
+);
+modes(
+  'two literals in the body are a question, not an answer',
+  edited(UNNEST, `${UNNEST}, unnest(array['ferry']) as f(x)`),
+  "the travel_gaps body unnests 2 arrays, so which one is the mode list is a guess: array['walking', 'cycling', 'transit'] and array['ferry']",
+);
+modes(
+  'no literal at all is a failure rather than a skip',
+  edited(UNNEST, 'cross join lateral routed_modes() as m(mode)'),
+  'the travel_gaps body unnests no array — where did the mode list go?',
+);
+modes(
+  'a renamed function is a failure rather than a skip',
+  edited('create function public.travel_gaps', 'create function public.travel_backlog'),
+  'no `create function public.travel_gaps ... $$ ... $$` body — did it move or change quoting?',
 );
 
 if (failures > 0) {

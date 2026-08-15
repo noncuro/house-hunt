@@ -18,7 +18,7 @@ export class TflError extends Error {
 
 const RETRY_DELAYS_MS = [400, 1200, 3000];
 
-/** Fetch with retries on the failures that pass. TfL rate-limits (429), has the occasional 5xx,
+/** Fetch with retries on the failures that pass. TfL rate-limits, has the occasional 5xx,
  *  and the service worker's network drops out; none of those mean anything about the journey.
  *  A 404 ("No journey found") and a 300 (ambiguous location) are real answers and are not
  *  retried — retrying them just makes the panel slower at being wrong. */
@@ -42,12 +42,18 @@ async function tflFetch(url: string, what: string): Promise<Response> {
   throw new TflError(`TfL unreachable for ${what} after ${RETRY_DELAYS_MS.length + 1} tries (${last})`, true);
 }
 
+/** 420 is the one worth spelling out: it is what TfL actually answers when a key is over its
+ *  per-minute allowance, not the 429 everything else in the world uses, and it was falling through
+ *  here as a settled refusal. A leg over the limit was therefore never retried — it surfaced as a
+ *  hard failure on the first hit, at exactly the moment a short wait would have fixed it. 429 stays
+ *  because a proxy in front of TfL may still send it. */
 function retryable(status: number): boolean {
-  return status === 429 || status === 408 || status >= 500;
+  return status === 420 || status === 429 || status === 408 || status >= 500;
 }
 
 /** TfL's journey planner takes a postcode directly, which is why we route from the postcode
- *  rather than the fuzzed map pin. Free, 500 req/min with a key. See RESEARCH.md §3. */
+ *  rather than the fuzzed map pin. Free either way, but the allowance is per minute and the two
+ *  tiers are far apart: 50 requests a minute unkeyed, 500 with a key. See RESEARCH.md §3. */
 const MODES: Record<TravelMode, string | null> = {
   transit: null, // planner default: tube, bus, rail, DLR, walking legs
   walking: 'walking',

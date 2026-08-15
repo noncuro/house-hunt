@@ -82,7 +82,7 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 | ext `entrypoints/background.ts` | All network + the only Supabase client in the extension |
 | web `screens/*.tsx` | Shortlist, Compare, Map, Detail, Settings, Sweep, SignIn, Project, Admin |
 | `packages/core/` | Facts, hubs, stage (the funnel), sweep, travel, analysis, db, bridge contract |
-| `supabase/functions/` | `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache), `invite`, `resolve-location`, `password` |
+| `supabase/functions/` | `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `invite`, `resolve-location`, `password` |
 
 ## Decisions an agent might otherwise "fix"
 
@@ -112,6 +112,13 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   a stage further along survives any change of mind. `packages/core/src/stage.ts` owns the funnel;
   `20260813000000_property_stage.sql` owns the coupling.
 - **Driving times deliberately throw** (TfL can't do them) rather than mislabel a transit number.
+- **The travel backlog is derived, not enqueued.** Nothing inserts a job when a place is added:
+  `travel_gaps` computes what is missing from a project's properties, its places and the modes we
+  route, minus what `travel_time` already holds, and `.github/workflows/travel-backfill.yml` has the
+  `travel` function work a budget of them every fifteen minutes. A queue written to on place-add is
+  a queue that drifts — one failed insert and the gap is invisible for good — while a derived set
+  cannot lose work it never stored. Lazy lookup alone never fetched anything for a flat nobody
+  opened, which is how adding a place left a column of dashes that filled in only by hand.
 
 **Every other decision is documented as a comment on the code that owns it** (`TRAVEL_BASIS` in
 `tfl.ts`, `SWEEP_MARGIN_HOURS` in `sweep.ts`, `DEFAULT_SHOWING` and `duplicateIds` in
