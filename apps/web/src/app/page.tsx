@@ -263,6 +263,13 @@ function App({
   // saved travel bar is thrown away — silently widening the triage filter to everything on the
   // first frame of every page load. Undefined means we do not know yet, and not knowing is a
   // reason to keep what somebody saved.
+  //
+  // Derived, and deliberately not written back to storage. A bar can be pruned for a state that
+  // reverses — a place whose postcode was cleared and later filled in again — and persisting would
+  // delete somebody's saved filter on the strength of a moment. The cost is that such a bar
+  // reappears when its place can answer it again, which is a surprise; the alternative is the same
+  // failure the paragraph above is about, made permanent, and it would be reached by any transient
+  // oddity in the places data rather than only by a loading frame.
   const triageFilterNow = useMemo(
     () =>
       placesQuery.data
