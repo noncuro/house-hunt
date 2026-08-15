@@ -20,7 +20,7 @@ import {
 import { Flags } from '@house-hunt/ui';
 import { webAppUrl } from '@/lib/web-app';
 import { HubFact } from '@house-hunt/ui';
-import { hubsFromProject, type Hub } from '@house-hunt/core';
+import { galleryFor, hubsFromProject, type Hub } from '@house-hunt/core';
 import { formatDuration, MapsButton, MODE_ICON, readTravel, Routes, TransitBasis } from '@house-hunt/ui';
 import { Stations, STATIONS_SHOWN } from '@house-hunt/ui';
 import { Gallery } from '@house-hunt/ui';
@@ -80,10 +80,10 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   const [note, setNote] = useState('');
   /** The panel's own element, only so the gallery knows which shadow root to portal into. */
   const root = useRef<HTMLDivElement | null>(null);
-  // The floorplan leads, exactly as it does on the shortlist. It is the single most useful image
-  // for deciding whether to view a place, and Rightmove buries it behind its own gallery.
+  // The floorplan leads, exactly as it does on the shortlist — Rightmove buries it behind its own
+  // gallery, and it is the one image that decides whether a viewing is worth booking.
   const plan = listing.floorplans[0]?.url;
-  const gallery = plan ? [plan, ...listing.imageUrls.filter((u) => u !== plan)] : listing.imageUrls;
+  const gallery = galleryFor({ floorplanUrl: plan ?? null, imageUrls: listing.imageUrls });
   const [error, setError] = useState<string | null>(null);
   /** The rating we've shown but haven't confirmed. Null means everything on screen is saved. */
   const [pending, setPending] = useState<Rating | null>(null);

@@ -11,6 +11,7 @@ import { RightmoveLink } from '@/components/RightmoveLink';
 import { useTravel } from '@/lib/queries';
 import {
   TRAVEL_MODES,
+  galleryFor,
   type ArchiveReason,
   type Place,
   type Rating,
@@ -44,11 +45,7 @@ export function Detail({
 }) {
   const [galleryAt, setGalleryAt] = useState<number | null>(null);
 
-  // The floorplan leads the gallery. It is the single most useful image for deciding whether to
-  // view a place, and keeping it as a separate link meant leaving the photos to look at it.
-  const gallery = entry.floorplanUrl
-    ? [entry.floorplanUrl, ...entry.imageUrls.filter((url) => url !== entry.floorplanUrl)]
-    : entry.imageUrls;
+  const gallery = galleryFor(entry);
   // At most one verdict per property now — the project shares one rating (design D6).
   const verdict = entry.verdicts[0] ?? null;
   // The funnel opens when somebody likes the place: liking it is what puts it there (`enter_funnel`

@@ -2,6 +2,7 @@
  *  a listing date reads back as elapsed time. These are pure functions, so they are cheap to
  *  pin down — and both are places where being quietly wrong looks exactly like being right. */
 import { claimLabel, flagsFor, relativeUpdate, resolveReading } from '../packages/core/src/facts';
+import { galleryFor } from '../packages/core/src/shortlist';
 import type { Analysis } from '../packages/core/src/types';
 
 let failures = 0;
@@ -159,6 +160,28 @@ check(
   sizeKeys({ analysis: null, floorplanUrl: null }, { minSqft: 600 }),
   [],
 );
+
+console.log('galleryFor');
+// The floorplan leads and is not repeated further down the set.
+check(
+  'the floorplan is first, and only once',
+  galleryFor({ floorplanUrl: 'plan.jpg', imageUrls: ['a.jpg', 'plan.jpg', 'b.jpg'] }),
+  ['plan.jpg', 'a.jpg', 'b.jpg'],
+);
+// Rightmove repeats the hero shot at the end of the set often enough, and the URL is what every
+// view keys its thumbnails on — two identical keys is a React warning and a thumbnail that can go
+// missing.
+check(
+  'a photo listed twice appears once',
+  galleryFor({ floorplanUrl: null, imageUrls: ['a.jpg', 'b.jpg', 'a.jpg'] }),
+  ['a.jpg', 'b.jpg'],
+);
+check(
+  'and the first occurrence keeps its place',
+  galleryFor({ floorplanUrl: null, imageUrls: ['a.jpg', 'b.jpg', 'a.jpg', 'c.jpg'] })[1],
+  'b.jpg',
+);
+check('no floorplan is not a blank first frame', galleryFor({ imageUrls: ['a.jpg'] }), ['a.jpg']);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');
