@@ -68,7 +68,9 @@ By hand, on any machine:
    **The folder has to stay where it is**; Chrome loads it from disk every time it starts.
 2. Go to `chrome://extensions`.
 3. Turn on **Developer mode**, top right.
-4. **Load unpacked**, and pick the unzipped folder.
+4. **Load unpacked**, and pick the unzipped folder. On macOS the picker opens on `/Applications`,
+   which is not `~/Applications` and does not contain it — press <kbd>⌘⇧G</kbd> and type the path
+   to go straight there.
 5. Click the extension icon. It opens the shortlist page, which will ask you to sign in.
 6. Type the email address the invite went to. A six-digit code arrives; type that in.
 7. If you were invited to a house hunt, you are in it. If you belong to more than one, pick which

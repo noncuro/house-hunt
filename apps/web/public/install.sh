@@ -304,6 +304,10 @@ main() {
     echo "  2. Turn on Developer mode, top right"
     echo "  3. Click 'Load unpacked' and pick:"
     echo "       $DIR"
+    # The picker opens on /Applications, and ~/Applications is a different folder that it does not
+    # contain — so the path printed above is not on the list, which reads as the install having gone
+    # somewhere else.
+    echo "       (in the picker press Cmd-Shift-G and paste that path — it will not be in the list)"
     echo "  4. Check the card says House hunt $version"
     echo "  5. Click the extension's icon, sign in on the website, then open any Rightmove listing"
   else
