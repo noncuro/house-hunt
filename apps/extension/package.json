@@ -11,7 +11,7 @@
     "zip:store": "STORE=1 wxt zip",
     "compile": "tsc --noEmit",
     "postinstall": "wxt prepare",
-    "package": "wxt build && rm -f ../web/public/rightmove-house-hunt.zip && cd .output/chrome-mv3 && zip -qr ../../../web/public/rightmove-house-hunt.zip . && echo \"wrote apps/web/public/rightmove-house-hunt.zip\""
+    "package": "wxt build && cd .output/chrome-mv3 && rm -f ../../../web/public/.rightmove-house-hunt.zip.tmp && zip -qr ../../../web/public/.rightmove-house-hunt.zip.tmp . && mv ../../../web/public/.rightmove-house-hunt.zip.tmp ../../../web/public/rightmove-house-hunt.zip && echo \"wrote apps/web/public/rightmove-house-hunt.zip\""
   },
   "dependencies": {
     "@house-hunt/core": "workspace:*",

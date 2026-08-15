@@ -36,6 +36,11 @@ concurrency:
 jobs:
   migrate:
     runs-on: ubuntu-latest
+    # main and nothing else. `workflow_dispatch` lets whoever runs it pick any branch or tag, and
+    # `checkout` would take them at their word — so a migration sitting on an unmerged branch could
+    # be applied to production by choosing it from a dropdown, without ever having been reviewed.
+    # The environment does not do this on its own: it gates *who* may deploy, not *what*.
+    if: github.ref == 'refs/heads/main'
     # So a migration reaching production is a thing somebody approved, not a thing that happened.
     # Set the required reviewers on the environment if you want it to stop and ask.
     environment: Production
