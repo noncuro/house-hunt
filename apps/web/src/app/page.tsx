@@ -81,6 +81,21 @@ import {
  *  a card's props do not change identity every render. */
 const EMPTY: ReadonlySet<string> = new Set();
 
+/** Scroll to a card once it exists. Waits for it rather than for one frame: revealing the unrated
+ *  pile renders two hundred cards, which does not fit in the frame after the state change, so a
+ *  single rAF scrolled to nothing at all and left you at the top of a page with the flat you asked
+ *  for thirteen thousand pixels below. Gives up after a second — by then the id is not on screen
+ *  for a reason this cannot undo. */
+function scrollToCard(id: string): void {
+  const deadline = performance.now() + 1000;
+  const tryScroll = () => {
+    const card = document.getElementById(`card-${id}`);
+    if (card) card.scrollIntoView({ block: 'center' });
+    else if (performance.now() < deadline) requestAnimationFrame(tryScroll);
+  };
+  requestAnimationFrame(tryScroll);
+}
+
 /** What the page is at all is decided here, and by one question: who is signed in.
  *
  *  Not being signed in is a state with a screen of its own, never a blank and never a stack trace
@@ -358,17 +373,7 @@ function App({
     // The ask carries its own withdrawal, so that the pile that answers it and the three that do
     // not all cancel the same request the moment the reader turns a page — see `Reveal.spend`.
     setReveal({ id, spend: () => setReveal(null) });
-    // Wait for the card, rather than for one frame. Revealing the unrated pile renders two hundred
-    // cards, which does not fit in the frame after the state change — so the single rAF scrolled
-    // to nothing at all and left you at the top of a page with the flat you asked for thirteen
-    // thousand pixels below. Give up after a second: by then the id is not in this shortlist.
-    const deadline = performance.now() + 1000;
-    const tryScroll = () => {
-      const card = document.getElementById(`card-${id}`);
-      if (card) card.scrollIntoView({ block: 'center' });
-      else if (performance.now() < deadline) requestAnimationFrame(tryScroll);
-    };
-    requestAnimationFrame(tryScroll);
+    scrollToCard(id);
   }
 
   // An updater rather than a value. Two place writes that complete out of order both derived their
@@ -426,6 +431,7 @@ function App({
    *  found nothing: the list does not exist until the shortlist read lands. Runs once per id, so
    *  scrolling away and toggling a pile does not yank you back. */
   const jumped = useRef<string | null>(null);
+  const owed = useRef<string | null>(null);
   useEffect(() => {
     if (!all) return;
     const id = /^#card-(\d+)$/.exec(window.location.hash)?.[1];
@@ -433,6 +439,9 @@ function App({
     const entry = all.find((e) => e.rightmoveId === id);
     if (!entry) return;
     jumped.current = id;
+    // Jumping on what we have. If the exclusions have not landed, this jump may be to a flat that
+    // is about to be hidden, and the effect below finishes the job when they do.
+    owed.current = offMarket === null ? id : null;
     // A link to a flat has to land on it. Somebody who left the shortlist filtered to "viewed" and
     // then opened a link to a flat that is not would otherwise be scrolled to nothing at all.
     if (!matchesStage(entry.stage, stageFilter)) setStageFilter('all');
@@ -440,19 +449,22 @@ function App({
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [all]);
 
-  /** The same link, once the exclusions arrive. They are a second read and usually the slower one,
-   *  so the jump above has often already happened by the time we know the flat is off the market —
-   *  and it is then removed from under whoever followed the link. Waiting for this read instead
-   *  would make a deep link depend on a request that can stay pending indefinitely, so it jumps on
-   *  what it has and comes back for the rest. */
-  const revealed = useRef<string | null>(null);
+  /** The rest of that jump, for the one case the jump could not finish: it landed before we knew
+   *  which flats are off the market, and the flat it landed on turns out to be one of them — so the
+   *  card is about to be taken away from whoever followed the link.
+   *
+   *  Owed to a particular jump rather than watched for on the hash, and cleared the first time it is
+   *  paid. Keyed on the hash it would reconcile whatever the exclusions happen to say next: marking
+   *  a flat off the market refreshes them, and this would then haul the reader back to the flat they
+   *  had just put away — from another tab, minutes later, on somebody else's write. */
   useEffect(() => {
     if (!offMarket) return;
-    const id = /^#card-(\d+)$/.exec(window.location.hash)?.[1];
-    if (!id || revealed.current === id || !offMarket.has(id)) return;
-    revealed.current = id;
-    openCard(id, byId.get(id) ? groupOf(byId.get(id)!.verdicts) : undefined);
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
+    const id = owed.current;
+    if (id === null) return;
+    owed.current = null;
+    if (!offMarket.has(id)) return;
+    setShowOffMarket(true);
+    scrollToCard(id);
   }, [offMarket]);
   // Every entry's P(yes) under the current model, computed once and shared by the cards, the
   // triage sort and the mismatch marker. Null while there is no model (never trained, or too few
