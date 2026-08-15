@@ -187,9 +187,24 @@ export function criteriaFromUrl(href: string): { criteria: SweepCriteria; ignore
       ignored.push(key);
       continue;
     }
+    // Rightmove routinely emits `minPrice=&maxPrice=` for a filter nobody set. Kept, those are
+    // filters in name only: `sweepSearchUrl` would count the hunt as having chosen something (the
+    // object is not empty) while nothing is actually narrowed, and the summary would read
+    // "Rent £–£". An empty value is the absence of a filter, so it is recorded as dropped.
+    if (value === '') {
+      ignored.push(key);
+      continue;
+    }
+    // A repeated parameter cannot survive a flat record, and the last one silently winning is the
+    // same class of failure this function exists to prevent — a search that looks like the one you
+    // pasted and is not. Say so rather than lose it quietly.
+    if (key in criteria) {
+      ignored.push(key);
+      continue;
+    }
     criteria[key] = value;
   }
-  return { criteria, ignored };
+  return { criteria, ignored: [...new Set(ignored)] };
 }
 
 /** The saved criteria in words, so the page can show what a sweep will actually search without
@@ -213,8 +228,6 @@ export function describeCriteria(criteria: SweepCriteria): string[] {
   range('Bedrooms', ...(take('minBedrooms', 'maxBedrooms') as [string?, string?]));
   range('Bathrooms', ...(take('minBathrooms', 'maxBathrooms') as [string?, string?]));
 
-  const [radius] = take('radius');
-  if (radius) lines.push(`Within ${radius} miles of each neighbourhood`);
   const [types] = take('propertyTypes');
   if (types) lines.push(`Property types: ${types.split(',').join(', ')}`);
   const [furnish] = take('furnishTypes');
@@ -224,7 +237,11 @@ export function describeCriteria(criteria: SweepCriteria): string[] {
   const [dont] = take('dontShow');
   if (dont) lines.push(`Not shown: ${dont.split(',').join(', ')}`);
   const [letAgreed] = take('_includeLetAgreed');
+  // `on` is the only value Rightmove sends, and it is a checkbox, so anything else is a URL nobody
+  // here has seen. Printed as itself rather than swallowed — `take` has already claimed the key, so
+  // the unknown-parameter loop below would never reach it.
   if (letAgreed === 'on') lines.push('Including let-agreed');
+  else if (letAgreed !== undefined) lines.push(`_includeLetAgreed: ${letAgreed}`);
   const [letType] = take('letType');
   if (letType) lines.push(`Let type: ${letType}`);
 

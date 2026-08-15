@@ -72,7 +72,7 @@ export function Project({
 }: {
   notify: Notify;
   places: Place[];
-  setPlaces: (places: Place[]) => void;
+  setPlaces: (update: (current: Place[]) => Place[]) => void;
 }) {
   const auth = useAuth();
 
@@ -176,6 +176,9 @@ function SqftBar({
         <span className="hunt-pref-greatroom-size">
           <input
             type="number"
+            // The <label> wraps two controls, so its implicit association binds to the checkbox and
+            // this one is announced as a bare spin button.
+            aria-label={`${label} — ${suffix}`}
             min={min}
             max={max}
             disabled={busy}
@@ -645,7 +648,7 @@ function YourProjects({ projects, activeId }: { projects: ProjectSummary[]; acti
       <p className="dim">
         {projects.length === 1
           ? 'The one you are in. Leaving it takes its shortlist, verdicts and sweeps off this laptop — the hunt itself carries on without you.'
-          : 'Only one is live at a time. Switching changes the shortlist, the panels, the search badges and the sweep together.'}
+          : 'Only one is live at a time; switch between them at the top of the page. Switching changes the shortlist, the panels, the search badges and the sweep together.'}
       </p>
       <ProjectRows projects={projects} activeId={activeId} />
     </section>
@@ -657,6 +660,46 @@ function YourProjects({ projects, activeId }: { projects: ProjectSummary[]; acti
  *  Failures are printed here rather than pushed as toasts: the picker is mounted by the shell in
  *  the no-project state, which has no toast host, and a switch that silently did nothing is the
  *  worst reading of this list. */
+/** Which hunt you are looking at, in the one place you are always looking.
+ *
+ *  It was a list of rows on the Your Hunt page, three clicks from anywhere — which is a long way
+ *  for the control that decides what every other screen is showing. A plain select beside the
+ *  account, and it is not rendered at all when there is only one hunt, because a picker with one
+ *  option is a question with one answer. */
+export function HuntSwitch({ projects, activeId }: { projects: ProjectSummary[]; activeId: string }) {
+  const client = useQueryClient();
+  const setActive = useMutation({
+    mutationFn: async (projectId: string) => {
+      await setActiveProject(projectId);
+      return await authState();
+    },
+    // Same two lines, and the same reasoning, as `ProjectRows.reload` — see the long note there
+    // about why this writes the auth query and resets the rest rather than clearing the cache.
+    onSuccess: (state) => {
+      client.setQueryData<AuthState>(shellKeys.auth, state);
+      void client.resetQueries({ predicate: (query) => query.queryKey[0] !== shellKeys.auth[0] });
+    },
+  });
+
+  if (projects.length < 2) return null;
+
+  return (
+    <select
+      className="hunt-switch"
+      aria-label="Which house hunt"
+      value={activeId}
+      disabled={setActive.isPending}
+      onChange={(e) => setActive.mutate(e.target.value)}
+    >
+      {projects.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function ProjectRows({ projects, activeId }: { projects: ProjectSummary[]; activeId: string | null }) {
   const client = useQueryClient();
   const [leaving, setLeaving] = useState<string | null>(null);
@@ -729,17 +772,25 @@ function ProjectRows({ projects, activeId }: { projects: ProjectSummary[]; activ
                 Open
               </button>
             )}
-            {/* Leaving is asked twice on purpose: it drops every verdict, place and sweep in that
-                hunt out of view, and there is no undo button that puts a membership back. */}
-            {leaving === p.id ? (
-              <button className="key" disabled={leave.isPending} onClick={() => leave.mutate(p.id)}>
-                Really leave?
-              </button>
-            ) : (
-              <button className="key" onClick={() => setLeaving(p.id)}>
-                Leave
-              </button>
-            )}
+            {/* Only the hunt you are in. Leaving one you are not looking at is a destructive act
+                performed on something off screen — the shortlist and verdicts it drops are ones you
+                cannot see to reconsider — and a row of Leave buttons makes the dangerous one no
+                more prominent than the rest.
+                Asked twice on purpose: there is no undo button that puts a membership back. */}
+            {p.id === activeId &&
+              (leaving === p.id ? (
+                <button
+                  className="danger"
+                  disabled={leave.isPending}
+                  onClick={() => leave.mutate(p.id)}
+                >
+                  {leave.isPending ? 'Leaving…' : 'Yes, leave this hunt'}
+                </button>
+              ) : (
+                <button className="danger danger-quiet" onClick={() => setLeaving(p.id)}>
+                  Leave
+                </button>
+              ))}
           </span>
         </div>
       ))}
@@ -957,7 +1008,7 @@ function Places({
   notify,
 }: {
   places: Place[];
-  setPlaces: (places: Place[]) => void;
+  setPlaces: (update: (current: Place[]) => Place[]) => void;
   notify: Notify;
 }) {
   const [label, setLabel] = useState('');
@@ -967,14 +1018,14 @@ function Places({
    *  in different states at once and a shared line would attribute one's failure to the other. */
   const [located, setLocated] = useState<Record<string, LocationResult>>({});
 
-  const replace = (next: Place) => setPlaces(places.map((p) => (p.id === next.id ? next : p)));
+  const replace = (next: Place) => setPlaces((current) => current.map((p) => (p.id === next.id ? next : p)));
 
   async function addPlace() {
     setBusy(true);
     const place = await attempt(() => addPlaceRow(label, postcode.toUpperCase()), notify);
     setBusy(false);
     if (!place) return;
-    setPlaces([...places, place]);
+    setPlaces((current) => [...current, place]);
     setLabel('');
     setPostcode('');
   }
@@ -990,7 +1041,7 @@ function Places({
       return true;
     }, notify);
     if (!gone) return;
-    setPlaces(places.filter((p) => p.id !== place.id));
+    setPlaces((current) => current.filter((p) => p.id !== place.id));
   }
 
   const patch = async (place: Place, change: PlacePatch) => {
@@ -1095,7 +1146,12 @@ function Places({
               </>
             )}
 
-            <button className="remove" title="Remove" onClick={() => void removePlace(place)}>
+            <button
+              className="remove"
+              title="Remove"
+              aria-label={`Remove ${place.label}`}
+              onClick={() => void removePlace(place)}
+            >
               ×
             </button>
           </span>

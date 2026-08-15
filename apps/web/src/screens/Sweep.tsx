@@ -200,9 +200,10 @@ function HubRow({ hub, sweep, criteria }: { hub: Place; sweep: HubSweep | null; 
   return (
     <div className="sweep-hub">
       <div className="sweep-hub-head">
-        {/* A hub whose Rightmove identifier we could not verify gets no link at all. A search URL
-            with the wrong identifier still returns a page full of plausible flats somewhere else,
-            which is the failure that looks like success. */}
+        {/* No link unless there is a real search behind it. A URL built from an unverified
+            identifier returns a page full of plausible flats somewhere else, which is the failure
+            that looks like success — and one built with no criteria returns every rental in the
+            radius. The line underneath says which of the three is missing. */}
         {url ? (
           <a className="sweep-go" href={url} target="_blank" rel="noopener">
             {hub.label} ↗
@@ -215,15 +216,29 @@ function HubRow({ hub, sweep, criteria }: { hub: Place; sweep: HubSweep | null; 
         )}
       </div>
       <div className={choice.covered ? 'dim sweep-window' : 'sweep-window sweep-gap'}>
+        {/* A null URL has three causes and they need three different things doing about them.
+            Collapsed into "no verified Rightmove location" they read as a fault with this place,
+            and two thirds of the time that is wrong and the advice is to redo something already
+            done. */}
         {url ? (
           windowLabel(choice)
+        ) : criteria === null ? (
+          <>
+            Nothing to search for yet — this hunt has not said what it is looking for. Set the
+            Rightmove filters on Your Hunt and this becomes a link.
+          </>
+        ) : hub.sweepRadiusMiles === null ? (
+          <>
+            Not swept: nobody has said how far around {hub.label} to look. Tick{' '}
+            <em>search around</em> on Your Hunt → Places.
+          </>
         ) : (
           <>
-            Not searchable: this neighbourhood has no verified Rightmove location, so there is no
-            search to open.{' '}
+            Not searchable: this place has no verified Rightmove location, so there is no search to
+            open.{' '}
             {hub.lat === null
               ? 'It has no coordinates either — it is carrying old sweep history and nothing else.'
-              : 'It can still say what a listing is near. Resolve it in Settings to sweep it.'}
+              : 'It can still say what a listing is near. Resolve it on Your Hunt to sweep it.'}
           </>
         )}
       </div>

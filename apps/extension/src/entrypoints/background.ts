@@ -253,7 +253,7 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       void requestAnalysis(request.listing.rightmoveId);
       return null;
 
-    case 'listing:withdrawn':
+    case 'listing:withdrawn': {
       await forgetSightings(request.rightmoveId);
       // And say so about the flat itself, not only about the sighting. Forgetting the sighting takes
       // it off the fill-in worklist, which is the right answer for something nobody has opened — but
@@ -264,9 +264,15 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       //
       // Off the market, not archived. Archiving carries a reason — lost it, walked away — and that
       // is somebody's account of what happened, not a background tab's to write. This records the
-      // fact and leaves the story to them.
-      await setOffMarket(request.rightmoveId, true, 'Withdrawn from Rightmove');
+      // fact and leaves the story to them — which means not writing over one they have already
+      // written. A listing somebody excluded as "lost it" keeps that sentence; this only records
+      // the fact for one nobody had excluded yet.
+      const excluded = await listOffMarket();
+      if (!excluded.includes(request.rightmoveId)) {
+        await setOffMarket(request.rightmoveId, true, 'Withdrawn from Rightmove');
+      }
       return null;
+    }
 
     case 'analysis:get':
       await requireSession();

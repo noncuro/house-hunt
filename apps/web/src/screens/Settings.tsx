@@ -51,7 +51,7 @@ export function Settings({
             className="inline-name"
             value={person ?? ''}
             label="yourself"
-            onSave={(next) => void saveName(next)}
+            onSave={saveName}
           />{' '}
           on your verdicts and in the members list, to everyone in the hunt.
         </p>

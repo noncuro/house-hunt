@@ -49,7 +49,7 @@ import { Install } from '@/screens/Install';
 import { Compare } from '@/screens/Compare';
 import { Detail } from '@/screens/Detail';
 import { Admin } from '@/screens/Admin';
-import { Project, ProjectPicker } from '@/screens/Project';
+import { HuntSwitch, Project, ProjectPicker } from '@/screens/Project';
 import { Settings } from '@/screens/Settings';
 import { SignIn } from '@/screens/SignIn';
 import { ShortlistMap } from '@/screens/Map';
@@ -122,7 +122,7 @@ export default function Page() {
     );
   }
 
-  return <App user={state.user} project={state.activeProject} />;
+  return <App user={state.user} project={state.activeProject} projects={state.projects} />;
 }
 
 /** Everything the two of you have looked at, in the order you'd want to think about it: the
@@ -171,7 +171,15 @@ function useUrlView(): [View, (next: View) => void] {
   return [view, setView];
 }
 
-function App({ user, project }: { user: SessionUser; project: ProjectSummary }) {
+function App({
+  user,
+  project,
+  projects,
+}: {
+  user: SessionUser;
+  project: ProjectSummary;
+  projects: ProjectSummary[];
+}) {
   const [view, setView] = useUrlView();
   const [showMaybes, setShowMaybes] = useState(true);
   const [showUnrated, setShowUnrated] = useState(false);
@@ -230,13 +238,19 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
   // A stored filter can name a place somebody has since deleted, and a bar with no place is one the
   // panel cannot draw and nobody can clear. Pruned on the way in rather than on the way out of
   // storage, because which places exist is a query that has not answered yet when the filter is
-  // read — and pruning against an empty list would throw away every bar on the first frame.
-  // Keyed off the query's own array rather than the `?? []` above, which is a new empty array on
-  // every render and would make this memo do the work every time regardless.
-  const placeIds = useMemo(() => (placesQuery.data ?? []).map((p) => p.id), [placesQuery.data]);
+  // read.
+  //
+  // Only against a *successful* read. `placesQuery.data ?? []` looked like the same thing and was
+  // not: while the query is loading, and after it fails, an empty list means "no places" and every
+  // saved travel bar is thrown away — silently widening the triage filter to everything on the
+  // first frame of every page load. Undefined means we do not know yet, and not knowing is a
+  // reason to keep what somebody saved.
   const triageFilterNow = useMemo(
-    () => withKnownPlaces(triageFilter, placeIds),
-    [triageFilter, placeIds],
+    () =>
+      placesQuery.data
+        ? withKnownPlaces(triageFilter, placesQuery.data.map((p) => p.id))
+        : triageFilter,
+    [triageFilter, placesQuery.data],
   );
   // Three states, and the difference matters: still reading, read and failed, read. `HubFact`
   // renders each as itself rather than letting a failure read as "nothing near this flat".
@@ -289,7 +303,11 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     requestAnimationFrame(tryScroll);
   }
 
-  const setPlaces = (next: Place[]) => client.setQueryData(keys.places, next);
+  // An updater rather than a value. Two place writes that complete out of order both derived their
+  // next list from the same rendered snapshot, so the second could restore a place the first had
+  // already deleted — and the travel-bar filters keyed on it would stay live until a refetch.
+  const setPlaces = (update: (current: Place[]) => Place[]) =>
+    client.setQueryData(keys.places, (current: Place[] | undefined) => update(current ?? []));
 
   /** Renaming yourself is a change to the session, not to a local setting — every verdict this
    *  page attributes to you reads the same field. Patched in place rather than refetched so the
@@ -470,7 +488,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
               value={project.name}
               label="this house hunt"
               busy={rename.isPending}
-              onSave={(next) => rename.mutate(next)}
+              onSave={(next) => rename.mutateAsync(next).catch(() => {})}
             />
           </h1>
           <p className="dim">
@@ -499,6 +517,9 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
               in the one place that made the top of the page read as three headings. The moment you
               want it is the moment you notice the wrong name, which is why it is not in Settings. */}
           <p className="dim who">
+            {/* Beside the account rather than three clicks into Your Hunt: this is the control that
+                decides what every other screen is showing. */}
+            <HuntSwitch projects={projects} activeId={project.id} />
             {user.displayName}{' '}
             {user.displayName !== user.email && <span className="who-email">{user.email}</span>}
             <button className="linkish" disabled={signOut.isPending} onClick={() => signOut.mutate()}>

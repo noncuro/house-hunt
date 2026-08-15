@@ -65,7 +65,9 @@ export function recheckTargets(entries: ShortlistEntry[], now: Date = new Date()
       // A timestamp we cannot read is not a recent one. Treating an unparseable date as fresh would
       // silently exclude the flat for good, and it is the rows with something odd about them that
       // most want looking at.
-      return Number.isNaN(seen) || seen < cutoff;
+      // `<=`, not `<`: the view says "three days or more", so a listing read exactly three days
+      // ago is in. An exclusive bound would leave the one on the boundary invisible to both halves.
+      return Number.isNaN(seen) || seen <= cutoff;
     })
     .map((entry) => ({
       rightmoveId: entry.rightmoveId,

@@ -19,8 +19,13 @@ export function InlineName({
   className,
 }: {
   value: string;
-  /** Called only with a non-empty, changed name. Errors are the caller's to report. */
-  onSave: (next: string) => void;
+  /** Called only with a non-empty, changed name. Errors are the caller's to report.
+   *
+   *  Awaited, and the control stays busy until it settles. Two renames in flight at once can land
+   *  out of order, leaving the stored name and the one on screen disagreeing with nothing to say
+   *  so — and a rename is the kind of thing you retype immediately when the first attempt looks
+   *  like it did nothing. */
+  onSave: (next: string) => void | Promise<unknown>;
   /** What is being renamed, for the pencil's tooltip and the field's accessible name. */
   label: string;
   busy?: boolean;
@@ -28,7 +33,9 @@ export function InlineName({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
   const field = useRef<HTMLInputElement>(null);
+  const locked = busy || saving;
 
   // The name can change from the other laptop while this is open. A draft left holding the old one
   // would rename it back on the next save, so an edit in progress is the only thing that keeps it.
@@ -43,8 +50,12 @@ export function InlineName({
   const commit = () => {
     setEditing(false);
     const next = draft.trim();
-    if (next && next !== value) onSave(next);
-    else setDraft(value);
+    if (!next || next === value) {
+      setDraft(value);
+      return;
+    }
+    setSaving(true);
+    void Promise.resolve(onSave(next)).finally(() => setSaving(false));
   };
 
   if (!editing) {
@@ -56,7 +67,7 @@ export function InlineName({
           className="inline-name-edit"
           title={`Rename ${label}`}
           aria-label={`Rename ${label}`}
-          disabled={busy}
+          disabled={locked}
           onClick={() => setEditing(true)}
         >
           ✎
@@ -72,7 +83,7 @@ export function InlineName({
         className="inline-name-field"
         aria-label={label}
         value={draft}
-        disabled={busy}
+        disabled={locked}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {

@@ -1721,7 +1721,7 @@ h1:hover .inline-name-edit,
   color: inherit;
   padding: 0 0.2em;
   border: 0;
-  border-bottom: 2px solid currentColor;
+  border-bottom: 2px solid currentcolor;
   background: none;
   min-width: 8ch;
 }
@@ -1740,4 +1740,38 @@ h1:hover .inline-name-edit,
   content: '·';
   margin-right: 0.6em;
   opacity: 0.5;
+}
+
+/* Which hunt, beside the account. Deliberately plain — it is a picker you use twice a week, not a
+   feature, and it only appears at all when there is more than one hunt to pick. */
+.hunt-switch {
+  font: inherit;
+  font-size: 0.9em;
+  margin-right: 0.6em;
+  padding: 1px 4px;
+  max-width: 14rem;
+}
+
+/* Leaving a hunt. Red because there is no undo that puts a membership back, and the quiet variant
+   for the resting state so the row is not shouting until it is asked to be. */
+.danger {
+  font: inherit;
+  padding: 2px 10px;
+  border: 1px solid #c0392b;
+  border-radius: 5px;
+  background: #c0392b;
+  color: #fff;
+  cursor: pointer;
+}
+.danger[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+.danger-quiet {
+  background: none;
+  color: #c0392b;
+}
+.danger-quiet:hover {
+  background: #c0392b;
+  color: #fff;
 }
