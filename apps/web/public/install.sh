@@ -50,23 +50,6 @@ manifest_field() {
   tr -d '\n\r\t' < "$1" | sed -n "s/.*[,{][ ]*\"$2\"[ ]*:[ ]*\"\([^\"]*\)\".*/\1/p"
 }
 
-# The files a manifest points at, destination-relative. Chrome manifests spell asset paths as
-# ordinary strings, so this is every quoted string shaped like a filename; leading slashes are how
-# the icon entries are written and mean the extension root, not the filesystem's.
-#
-# A shape rather than the allow-list of suffixes this used to be. That list held four, so a
-# declarative-net-request `rules.json`, an `.svg`, a `.wasm` or a locale file could be named by the
-# manifest, be absent from the archive, and install clean into a folder Chrome then refuses to
-# load. The shape is what excludes everything else a manifest holds: match patterns and URLs carry
-# a `:` or a `*`, the name and the description carry spaces, the extension id `key` is base64 and
-# so has no dot in it anywhere, and a version is dot-separated integers — which is why the suffix
-# has to begin with a letter. A string that satisfied all of that and still was not a file would
-# fail an install loudly rather than silently, and `smoke:web` runs this same function over the
-# real archive on every CI run, so it would be caught here rather than in somebody's terminal.
-manifest_refs() {
-  grep -oE '"[^":*?[:space:]]+\.[A-Za-z][A-Za-z0-9]{0,4}"' "$1" | tr -d '"' | sed 's|^/||' | sort -u
-}
-
 main() {
   # Where to fetch the zip from. The one-liner on the Install tab passes the site's own origin, so
   # the same line works against production, a preview deployment and localhost. There is
@@ -175,21 +158,33 @@ main() {
   echo "Downloading from $ORIGIN"
   curl -fsSL "$ORIGIN/rightmove-house-hunt.zip" -o "$STAGE/extension.zip" \
     || die "Could not download $ORIGIN/rightmove-house-hunt.zip"
+  # Every entry checked against the CRC the archive carries for it, before anything is unpacked.
+  # This is the exact form of the question that used to be asked by guesswork — is what arrived
+  # whole — and it is not one a truncated download, a cut connection or a proxy's error page can
+  # answer wrongly.
+  unzip -tq "$STAGE/extension.zip" >/dev/null 2>&1 \
+    || die "The download did not survive the trip — the archive's own checksums do not match. Nothing has been changed; try again."
   unzip -q "$STAGE/extension.zip" -d "$STAGE/unpacked" || die "The download is not a readable zip."
   local NEW="$STAGE/unpacked"
   [ -f "$NEW/manifest.json" ] || die "The download has no manifest.json in it — that is not the extension."
 
-  # A manifest on its own is not an extension. An archive truncated after its first entry, or a
-  # proxy that answered with something else entirely, still unzips to a readable manifest, and
-  # installing that replaces a working copy with a folder Chrome refuses to load — reported, up to
-  # here, as a successful install. So every file the manifest names has to be in the archive.
-  local refs missing="" ref
-  refs="$(manifest_refs "$NEW/manifest.json" || true)"
-  [ -n "$refs" ] || die "The downloaded manifest.json names no scripts or icons at all — that is not a complete extension."
-  while IFS= read -r ref; do
-    [ -e "$NEW/$ref" ] || missing="$missing $ref"
-  done <<< "$refs"
-  [ -z "$missing" ] || die "The download is missing files its own manifest.json asks for:$missing. Nothing has been changed — try again, and if it keeps happening the copy on $ORIGIN is broken."
+  # A floor, and deliberately only a floor: an archive holding a manifest and nothing else passes
+  # everything above — the CRC of one file is fine — and installing it replaces a working copy with
+  # a folder Chrome refuses to load, reported as a success.
+  #
+  # What is no longer here is the check this used to carry: read the paths out of the manifest and
+  # require each to be in the archive. Doing that correctly needs a JSON parser, and this script can
+  # count on `curl` and `unzip` and nothing else. Every shell approximation of one has both false
+  # negatives and false positives on manifests Chrome accepts — a `short_name` of `House.hunt` is
+  # hunted for as a file, a path written `content-scripts\/panel.js` is legal JSON and is looked up
+  # with the backslash still in it, a filename with a space is skipped in silence — and a false
+  # positive here refuses a good install on somebody's laptop. So the exhaustive version lives in
+  # `smoke:web`, which has a real parser, knows which fields hold paths, and refuses to guess at a
+  # manifest shaped in a way it does not recognise. It runs against this same archive on every CI
+  # run: the committed zip and the served zip are one file, so it covers what people download, and
+  # it covers it before they download it.
+  [ "$(find "$NEW" -type f | wc -l)" -gt 1 ] \
+    || die "The download holds a manifest.json and nothing else — that is not a complete extension. Nothing has been changed; if it keeps happening the copy on $ORIGIN is broken."
 
   # The version Chrome will show, read from the build itself rather than from anything this script
   # or the page believes.
@@ -216,11 +211,15 @@ main() {
   # for — a folder this script wrote whose manifest a failed run or a bad build has taken away —
   # and even then only if every last thing in the folder is something the build being installed
   # would itself have put there. One stray file of somebody's own and this is not that folder.
+  # The whole tree, not the first level of it. Matching top-level names only was a hole of the
+  # same shape as the one above: a folder holding `icon/private.txt` passes a check that asks
+  # whether the build has an `icon`, and the folder is then deleted with that file in it.
   holds_only_build_files() {
     local entry
     while IFS= read -r entry; do
+      entry="${entry#./}"
       if [ "$entry" != "$MARKER" ] && [ ! -e "$NEW/$entry" ]; then return 1; fi
-    done < <(ls -A "$1")
+    done < <(cd "$1" && find . -mindepth 1)
   }
   is_ours() {
     [ -d "$1" ] || return 1

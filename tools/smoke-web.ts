@@ -26,8 +26,9 @@
  *  leaves the counts `table` and `triage` assert unchanged — so no section is quietly reading state
  *  an earlier one left behind.
  */
-import { lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
 import {
@@ -665,7 +666,6 @@ async function checkOneLiner(page: Page): Promise<void> {
  *  before replacing anybody's copy, asked here of the copy actually being served. */
 async function checkInstallAssets(page: Page): Promise<void> {
   const response = await page.request.get(`${ORIGIN}/install.sh`);
-  let inert: string | null = null;
   console.log(`/install.sh: ${response.ok() ? 'ok' : response.status()}`);
   if (!response.ok()) {
     note(`/install.sh is not served (${response.status()}) — the install tab points people at it`);
@@ -673,7 +673,7 @@ async function checkInstallAssets(page: Page): Promise<void> {
     const body = await response.text();
     if (!body.startsWith('#!')) note('/install.sh is served but is not a script — no shebang, so something else is answering that path');
     else if (!body.includes('rightmove-house-hunt.zip')) note('/install.sh is served but never mentions the zip — that is not the installer');
-    else inert = checkTruncationIsInert(body);
+    else checkTruncationIsInert(body);
   }
 
   const archive = await page.request.get(`${ORIGIN}/rightmove-house-hunt.zip`);
@@ -699,26 +699,131 @@ async function checkInstallAssets(page: Page): Promise<void> {
     note('the served zip has no manifest.json — Chrome would refuse to load it');
     return;
   }
-  // Read by the installer's own `manifest_refs`, not by a copy of it here. A second implementation
-  // of the same rule is two things that can agree on the same wrong answer — the parser is the part
-  // most likely to be quietly incomplete, and a reimplementation is quietly incomplete in exactly
-  // the same way, so it would pass. Sourcing the served script is safe for the same reason the
-  // truncation sweep above works: everything it defines is inert until `main` is called.
-  if (inert === null) return;
-  const manifest = resolve(SHOTS, 'served-manifest.json');
-  writeFileSync(manifest, execFileSync('unzip', ['-p', saved, 'manifest.json']));
-  const refs = execFileSync('bash', ['-c', '. "$1"; manifest_refs "$2"', '_', inert, manifest], {
-    encoding: 'utf8',
-  })
-    .split('\n')
-    .filter(Boolean);
-  const missing = refs.filter((ref) => !names.has(ref));
-  console.log(`served zip: ${refs.length} files referenced, ${missing.length} missing`);
-  if (refs.length === 0) note('the served zip\'s manifest.json references no scripts or icons at all');
+  // The whole of the completeness check now lives here rather than in `install.sh`. The installer
+  // verifies the archive's own CRCs, which is exact and needs no parser; knowing which *files* a
+  // manifest asks Chrome for needs one, and a shell has none it can count on. This side has
+  // `JSON.parse`, and the archive it reads is the committed zip, which is the file people download.
+  const refs = referencedPaths(JSON.parse(execFileSync('unzip', ['-p', saved, 'manifest.json'], { encoding: 'utf8' })));
+  const missing = refs.filter((ref) => (ref.includes('*') ? !matchesAny(ref, names) : !names.has(ref)));
+  console.log(`served zip: ${refs.length} path(s) referenced, ${missing.length} missing`);
+  if (refs.length === 0) note("the served zip's manifest.json asks Chrome to load nothing at all");
   for (const ref of missing) note(`the served zip's manifest.json asks Chrome to load ${ref}, which is not in the zip`);
 }
 
-/** Every prefix of the installer, run against a sandbox, proving none of them does anything.
+/** Every file the manifest asks Chrome to load, extension-root-relative.
+ *
+ *  Field-aware, because a scan for path-shaped strings is wrong in both directions on manifests
+ *  Chrome accepts. It claims things that are not files — a `short_name` of `House.hunt` — and it
+ *  misses things that are: a path with a space in it, or one written `content-scripts\/panel.js`,
+ *  which is legal JSON for the same path and which a text scan looks up with the backslash still in
+ *  place. `JSON.parse` settles the escapes, and reading named fields settles the rest.
+ *
+ *  A manifest carrying a key this does not know about stops the run rather than being checked in
+ *  part. That is the whole point of the finding this answers: a parser that silently covers less
+ *  than it claims reports a green tick about the half it looked at. Adding a field here is a
+ *  deliberate act, and the failure tells you which field to add. */
+function referencedPaths(manifest: Record<string, unknown>): string[] {
+  /** Top-level manifest keys that hold no path, so finding one is not a reason to stop. Anything not
+   *  here and not read below is a key this parser has never seen, which is the case it must refuse:
+   *  a new field holding a filename would otherwise be checked by not being checked. */
+  const pathless = new Set([
+    'manifest_version', 'name', 'short_name', 'description', 'version', 'version_name', 'key',
+    'permissions', 'optional_permissions', 'host_permissions', 'optional_host_permissions',
+    'content_security_policy', 'externally_connectable', 'incognito', 'minimum_chrome_version',
+    'offline_enabled', 'update_url', 'homepage_url', 'author', 'omnibox', 'commands',
+    'cross_origin_embedder_policy', 'cross_origin_opener_policy',
+  ]);
+  const found: string[] = [];
+  const add = (value: unknown, where: string): void => {
+    if (typeof value !== 'string') {
+      note(`the served manifest's ${where} is not a string — this check cannot read that shape`);
+      return;
+    }
+    found.push(value.replace(/^\//, ''));
+  };
+
+  for (const [key, value] of Object.entries(manifest)) {
+    if (pathless.has(key)) continue;
+    switch (key) {
+      case 'background': {
+        const background = value as Record<string, unknown>;
+        if ('service_worker' in background) add(background.service_worker, 'background.service_worker');
+        for (const [i, script] of ((background.scripts as unknown[]) ?? []).entries()) add(script, `background.scripts[${i}]`);
+        break;
+      }
+      case 'content_scripts':
+        for (const [i, entry] of (value as Record<string, unknown>[]).entries()) {
+          for (const kind of ['js', 'css'] as const) {
+            for (const [j, path] of ((entry[kind] as unknown[]) ?? []).entries()) add(path, `content_scripts[${i}].${kind}[${j}]`);
+          }
+        }
+        break;
+      case 'icons':
+        for (const [size, path] of Object.entries(value as Record<string, unknown>)) add(path, `icons["${size}"]`);
+        break;
+      case 'action':
+      case 'browser_action':
+      case 'page_action': {
+        const action = value as Record<string, unknown>;
+        if ('default_popup' in action) add(action.default_popup, `${key}.default_popup`);
+        if (typeof action.default_icon === 'string') add(action.default_icon, `${key}.default_icon`);
+        else if (action.default_icon) {
+          for (const [size, path] of Object.entries(action.default_icon as Record<string, unknown>)) add(path, `${key}.default_icon["${size}"]`);
+        }
+        break;
+      }
+      case 'web_accessible_resources':
+        for (const [i, entry] of (value as Record<string, unknown>[]).entries()) {
+          for (const [j, path] of ((entry.resources as unknown[]) ?? []).entries()) add(path, `web_accessible_resources[${i}].resources[${j}]`);
+        }
+        break;
+      case 'default_locale':
+        // Not a path itself; it is the one field that names a file only by implication, and the
+        // file it implies is the one whose absence breaks every `__MSG_` in the manifest.
+        add(`_locales/${String(value)}/messages.json`, 'default_locale');
+        break;
+      case 'options_page':
+        add(value, 'options_page');
+        break;
+      case 'options_ui':
+        add((value as Record<string, unknown>).page, 'options_ui.page');
+        break;
+      case 'side_panel':
+        add((value as Record<string, unknown>).default_path, 'side_panel.default_path');
+        break;
+      case 'devtools_page':
+        add(value, 'devtools_page');
+        break;
+      case 'chrome_url_overrides':
+        for (const [page, path] of Object.entries(value as Record<string, unknown>)) add(path, `chrome_url_overrides.${page}`);
+        break;
+      case 'declarative_net_request':
+        for (const [i, rule] of (((value as Record<string, unknown>).rule_resources as Record<string, unknown>[]) ?? []).entries()) {
+          add(rule.path, `declarative_net_request.rule_resources[${i}].path`);
+        }
+        break;
+      case 'storage':
+        add((value as Record<string, unknown>).managed_schema, 'storage.managed_schema');
+        break;
+      case 'sandbox':
+        for (const [i, path] of (((value as Record<string, unknown>).pages as unknown[]) ?? []).entries()) add(path, `sandbox.pages[${i}]`);
+        break;
+      default:
+        note(`the served manifest has a "${key}" this check does not know how to read — it may name files that nothing is verifying (add it to referencedPaths)`);
+    }
+  }
+  return [...new Set(found)];
+}
+
+/** Chrome allows a glob in `web_accessible_resources`, so a literal lookup would report a pattern
+ *  as missing. Matched rather than resolved: `*` spans path separators there, and the only question
+ *  is whether the archive holds anything the pattern would serve. */
+function matchesAny(pattern: string, names: Set<string>): boolean {
+  const rx = new RegExp(`^${pattern.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+  return [...names].some((name) => rx.test(name));
+}
+
+/** Every prefix of the installer, run in a scrubbed environment, changing nothing in its sandbox.
  *
  *  `curl | bash` hands bash the bytes as they arrive and bash runs each command the moment it has a
  *  complete one, so a dropped connection executes a prefix of the script — and the prefix that
@@ -726,21 +831,31 @@ async function checkInstallAssets(page: Page): Promise<void> {
  *  old one away. The installer's answer is that everything lives in `main`, called on the last
  *  line, so a prefix defines functions and does nothing.
  *
- *  Checking for a shebang and a closing `main "$@"` is not that assertion. It says the shape is
- *  right; it cannot see a stray top-level command added in the middle, which is the way this gets
- *  broken. So the real test is the one worth running: cut the served script at every line boundary
- *  and run each prefix for real, against a sandbox holding a decoy install and a config pointing at
- *  it, and require the tree to come back identical every time. A prefix that mutates anything is a
- *  prefix that had a mutating statement outside `main`.
+ *  Checking for a shebang and a closing `main "$@"` does not test that. It says the shape is right;
+ *  it cannot see a stray top-level command added in the middle, which is how this gets broken. So
+ *  each prefix is run for real, against a sandbox holding a decoy install and a config pointing at
+ *  it, and the tree has to come back identical.
  *
- *  It is affordable because it is self-proving: no prefix reaches the network or the disk, so each
- *  run is bash parsing a small file. The last line is excluded — that one is the whole script, and
- *  running it would install the extension into the sandbox, which is the behaviour under test
- *  rather than a violation of it.
+ *  What that establishes, exactly, and it is worth being plain because the assertion is narrower
+ *  than the sentence it is tempting to write:
  *
- *  Returns the path to the inert prefix, which is also what lets the archive check below call the
- *  installer's own manifest parser instead of reimplementing it. */
-function checkTruncationIsInert(body: string): string | null {
+ *  - Cuts fall on line boundaries. A real cut falls on a byte, so a prefix ending mid-line is not
+ *    covered. Bash would refuse to run most of those as a syntax error, which is the same outcome,
+ *    but not all of them and this does not check which.
+ *  - A mutation that undoes itself inside a single line — renaming the decoy away and back — leaves
+ *    an identical tree and passes, while a download cut between those two commands would strand the
+ *    install. Nothing here can see that.
+ *  - The tree is compared by path, type, mode, symlink target and a hash of every file's contents,
+ *    so a same-length rewrite, a chmod or a re-pointed symlink is caught. Timestamps are not.
+ *  - It says nothing about what a prefix does *outside* the sandbox. The environment is scrubbed to
+ *    a PATH and a HOME inside it and the working directory is the sandbox, so there is little for a
+ *    stray statement to reach or to read, but "did not touch this directory" is the whole claim.
+ *
+ *  It is affordable because no prefix reaches the network or the disk: each run is bash parsing a
+ *  small file, and the sweep costs about two seconds. The final line is excluded — that one is the
+ *  whole script, and running it would install the extension, which is the behaviour under test
+ *  rather than a violation of it. */
+function checkTruncationIsInert(body: string): void {
   const lines = body.split('\n');
   const inert = resolve(SHOTS, 'install-prefix.sh');
   const sandbox = resolve(SHOTS, 'install-sandbox');
@@ -759,7 +874,7 @@ function checkTruncationIsInert(body: string): string | null {
   const call = lines[lines.length - 1] === '' ? lines.length - 2 : lines.length - 1;
   if (lines[call] !== 'main "$@"') {
     note(`install.sh ends on \`${lines[call]}\` rather than \`main "$@"\` — the truncation guard is gone`);
-    return null;
+    return;
   }
 
   // Descending, so the first prefix reported is the longest one that misbehaved — the deepest cut,
@@ -768,32 +883,46 @@ function checkTruncationIsInert(body: string): string | null {
     writeFileSync(inert, lines.slice(0, cut).join('\n'));
     // The real origin, so a prefix that did reach `main` would genuinely install rather than fail
     // at a download and look inert for the wrong reason.
+    // The environment is built rather than inherited. This harness runs in CI, where the real
+    // environment holds the tokens CI was given, and handing those to a script whose whole point
+    // is that it might contain a statement nobody meant to put there is the wrong way round. PATH
+    // because bash needs to find `curl` and the coreutils; HOME and XDG_CONFIG_HOME because the
+    // installer reads both and they must land inside the sandbox. The real origin, so a prefix
+    // that did reach `main` would genuinely install rather than fail at a download and look inert
+    // for the wrong reason.
     spawnSync('bash', [inert, ORIGIN], {
-      env: { ...process.env, HOME: sandbox, XDG_CONFIG_HOME: resolve(sandbox, 'config') },
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: sandbox, XDG_CONFIG_HOME: resolve(sandbox, 'config') },
+      cwd: sandbox,
       stdio: 'ignore',
       timeout: 10_000,
     });
     if (treeOf(sandbox) !== before) {
-      note(`install.sh truncated after line ${cut} of ${call} changed something on disk — a mutating statement is outside \`main\``);
-      return null;
+      note(`install.sh truncated after line ${cut} of ${call} changed something in its sandbox — a mutating statement is outside \`main\``);
+      return;
     }
   }
-  console.log(`install.sh: ${call} truncated prefix(es), none touched the sandbox`);
-
-  // The whole script, minus only its final call. Everything it defines is therefore inert, which
-  // is what makes it safe to source for the parser check below.
-  writeFileSync(inert, lines.slice(0, call).join('\n'));
-  return inert;
+  console.log(`install.sh: ${call} truncated prefix(es), none changed the sandbox`);
 }
 
-/** Every path under a directory with its size, sorted — enough to notice a file added, removed,
- *  renamed or rewritten, which is all this needs to see. In node rather than `find -exec stat`,
- *  whose format flag is `-f` on macOS and `-c` on the Linux this runs on in CI. */
+/** Every path under a directory with enough about it to notice a change, sorted.
+ *
+ *  Contents are hashed rather than measured: a size catches a file that grew or shrank and misses
+ *  one rewritten to the same length, which is the easiest of these to do by accident. Mode comes
+ *  along because a chmod is a change, and a symlink is recorded by where it points rather than
+ *  followed — a re-pointed link is otherwise invisible. Timestamps are left out; they move for
+ *  reasons that are not this script's doing.
+ *
+ *  In node rather than `find -exec stat`, whose format flag is `-f` on macOS and `-c` on the Linux
+ *  this runs on in CI. */
 function treeOf(dir: string): string {
   return readdirSync(dir, { recursive: true, encoding: 'utf8' })
     .map((entry) => {
-      const found = lstatSync(resolve(dir, entry));
-      return `${entry} ${found.isDirectory() ? 'dir' : found.size}`;
+      const path = resolve(dir, entry);
+      const found = lstatSync(path);
+      const mode = found.mode.toString(8);
+      if (found.isSymbolicLink()) return `${entry} link ${mode} ${readlinkSync(path)}`;
+      if (found.isDirectory()) return `${entry} dir ${mode}`;
+      return `${entry} file ${mode} ${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
     })
     .sort()
     .join('\n');
