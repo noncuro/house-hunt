@@ -26,9 +26,9 @@
  *  leaves the counts `table` and `triage` assert unchanged — so no section is quietly reading state
  *  an earlier one left behind.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
 import {
   createInvite,
@@ -618,13 +618,10 @@ async function checkTabs({ page }: Stage): Promise<void> {
     // Sweeping folded into Triage. `?v=sweep` still lands here — the redirect is deliberate, since
     // the extension and people's bookmarks point at it — so this covers both.
     ['sweep', ['Scan']],
-    // The one-liner is built from `window.location.origin` after mount, so a landmark that includes
-    // this run's own origin says both that the section rendered and that it addressed the site the
-    // reader is on rather than a baked-in one.
-    // The whole line, not its first half. What the reader copies is the argument as much as the
-    // URL — the script refuses to guess an origin — so an assertion that stopped at the curl would
-    // pass on a line that downloads the installer and then tells it nothing.
-    ['install', ['Install the browser extension', `curl -fsSL "${ORIGIN}/install.sh" | bash -s -- "${ORIGIN}"`]],
+    // The one-liner is built from `window.location.origin` after mount, so the heading says the
+    // section rendered; the line itself is asserted on its own below, where it can be compared
+    // whole rather than searched for.
+    ['install', ['Install the browser extension']],
   ] as const) {
     await openView(page, view);
     // Case-insensitively, because `innerText` returns text as *rendered* and these headings are
@@ -637,7 +634,22 @@ async function checkTabs({ page }: Stage): Promise<void> {
     await page.screenshot({ path: resolve(SHOTS, `web-${view}.png`), fullPage: true });
   }
 
+  await checkOneLiner(page);
   await checkInstallAssets(page);
+}
+
+/** The line the reader copies, compared whole.
+ *
+ *  `includes` was the wrong test: the right command followed by anything at all contains the right
+ *  command, so a line that curled the installer and then went on to do something else would have
+ *  passed. What is on the clipboard is the entire element, so that is what is read — the element
+ *  rather than the tab, because the tab's text has the prose around it. */
+async function checkOneLiner(page: Page): Promise<void> {
+  await openView(page, 'install');
+  const expected = `curl -fsSL "${ORIGIN}/install.sh" | bash -s -- "${ORIGIN}"`;
+  const shown = (await page.locator('.install-command code').innerText()).trim();
+  console.log(`one-liner: ${shown === expected ? 'ok' : `"${shown}"`}`);
+  if (shown !== expected) note(`the install tab draws \`${shown}\` where it should draw \`${expected}\``);
 }
 
 /** The two files the install tab hands out, fetched rather than read off disk: they are committed
@@ -652,17 +664,16 @@ async function checkTabs({ page }: Stage): Promise<void> {
  *  files its own manifest asks Chrome to load — which is the same question `install.sh` puts to it
  *  before replacing anybody's copy, asked here of the copy actually being served. */
 async function checkInstallAssets(page: Page): Promise<void> {
-  const script = await page.request.get(`${ORIGIN}/install.sh`);
-  console.log(`/install.sh: ${script.ok() ? 'ok' : script.status()}`);
-  if (!script.ok()) {
-    note(`/install.sh is not served (${script.status()}) — the install tab points people at it`);
+  const response = await page.request.get(`${ORIGIN}/install.sh`);
+  let inert: string | null = null;
+  console.log(`/install.sh: ${response.ok() ? 'ok' : response.status()}`);
+  if (!response.ok()) {
+    note(`/install.sh is not served (${response.status()}) — the install tab points people at it`);
   } else {
-    const body = await script.text();
+    const body = await response.text();
     if (!body.startsWith('#!')) note('/install.sh is served but is not a script — no shebang, so something else is answering that path');
     else if (!body.includes('rightmove-house-hunt.zip')) note('/install.sh is served but never mentions the zip — that is not the installer');
-    // `curl | bash` runs what has arrived, so the installer does its work inside a function called
-    // on the last line. Lose that line and a half-downloaded script still runs half an install.
-    else if (!/\nmain "\$@"\n?$/.test(body)) note('/install.sh does not end on `main "$@"` — a truncated download would execute part of it');
+    else inert = checkTruncationIsInert(body);
   }
 
   const archive = await page.request.get(`${ORIGIN}/rightmove-house-hunt.zip`);
@@ -688,16 +699,104 @@ async function checkInstallAssets(page: Page): Promise<void> {
     note('the served zip has no manifest.json — Chrome would refuse to load it');
     return;
   }
-  // Chrome manifests spell asset paths as ordinary strings; a leading slash means the extension
-  // root. Same reading as `install.sh`'s, and deliberately so — if this is wrong, so is that.
-  const manifest = execFileSync('unzip', ['-p', saved, 'manifest.json'], { encoding: 'utf8' });
-  const refs = [
-    ...new Set((manifest.match(/"[^"]*\.(?:js|css|png|html)"/g) ?? []).map((s) => s.slice(1, -1).replace(/^\//, ''))),
-  ];
+  // Read by the installer's own `manifest_refs`, not by a copy of it here. A second implementation
+  // of the same rule is two things that can agree on the same wrong answer — the parser is the part
+  // most likely to be quietly incomplete, and a reimplementation is quietly incomplete in exactly
+  // the same way, so it would pass. Sourcing the served script is safe for the same reason the
+  // truncation sweep above works: everything it defines is inert until `main` is called.
+  if (inert === null) return;
+  const manifest = resolve(SHOTS, 'served-manifest.json');
+  writeFileSync(manifest, execFileSync('unzip', ['-p', saved, 'manifest.json']));
+  const refs = execFileSync('bash', ['-c', '. "$1"; manifest_refs "$2"', '_', inert, manifest], {
+    encoding: 'utf8',
+  })
+    .split('\n')
+    .filter(Boolean);
   const missing = refs.filter((ref) => !names.has(ref));
   console.log(`served zip: ${refs.length} files referenced, ${missing.length} missing`);
   if (refs.length === 0) note('the served zip\'s manifest.json references no scripts or icons at all');
   for (const ref of missing) note(`the served zip's manifest.json asks Chrome to load ${ref}, which is not in the zip`);
+}
+
+/** Every prefix of the installer, run against a sandbox, proving none of them does anything.
+ *
+ *  `curl | bash` hands bash the bytes as they arrive and bash runs each command the moment it has a
+ *  complete one, so a dropped connection executes a prefix of the script — and the prefix that
+ *  matters is the one ending just before the new copy is put in place, having already renamed the
+ *  old one away. The installer's answer is that everything lives in `main`, called on the last
+ *  line, so a prefix defines functions and does nothing.
+ *
+ *  Checking for a shebang and a closing `main "$@"` is not that assertion. It says the shape is
+ *  right; it cannot see a stray top-level command added in the middle, which is the way this gets
+ *  broken. So the real test is the one worth running: cut the served script at every line boundary
+ *  and run each prefix for real, against a sandbox holding a decoy install and a config pointing at
+ *  it, and require the tree to come back identical every time. A prefix that mutates anything is a
+ *  prefix that had a mutating statement outside `main`.
+ *
+ *  It is affordable because it is self-proving: no prefix reaches the network or the disk, so each
+ *  run is bash parsing a small file. The last line is excluded — that one is the whole script, and
+ *  running it would install the extension into the sandbox, which is the behaviour under test
+ *  rather than a violation of it.
+ *
+ *  Returns the path to the inert prefix, which is also what lets the archive check below call the
+ *  installer's own manifest parser instead of reimplementing it. */
+function checkTruncationIsInert(body: string): string | null {
+  const lines = body.split('\n');
+  const inert = resolve(SHOTS, 'install-prefix.sh');
+  const sandbox = resolve(SHOTS, 'install-sandbox');
+  const decoy = resolve(sandbox, 'extension');
+
+  rmSync(sandbox, { recursive: true, force: true });
+  mkdirSync(resolve(sandbox, 'config/rightmove-house-hunt'), { recursive: true });
+  mkdirSync(decoy, { recursive: true });
+  writeFileSync(resolve(decoy, 'manifest.json'), '{"name":"House hunt","version":"0.0.0"}');
+  writeFileSync(resolve(decoy, '.rightmove-house-hunt-install'), 'decoy');
+  writeFileSync(resolve(sandbox, 'config/rightmove-house-hunt/install.conf'), `dir=${decoy}\n`);
+  const before = treeOf(sandbox);
+
+  // The call itself, which is the one line that must never be in a prefix — running it would
+  // install into the sandbox, which is the script working rather than the script leaking.
+  const call = lines[lines.length - 1] === '' ? lines.length - 2 : lines.length - 1;
+  if (lines[call] !== 'main "$@"') {
+    note(`install.sh ends on \`${lines[call]}\` rather than \`main "$@"\` — the truncation guard is gone`);
+    return null;
+  }
+
+  // Descending, so the first prefix reported is the longest one that misbehaved — the deepest cut,
+  // which is the one that says where the stray statement is.
+  for (let cut = call; cut > 0; cut--) {
+    writeFileSync(inert, lines.slice(0, cut).join('\n'));
+    // The real origin, so a prefix that did reach `main` would genuinely install rather than fail
+    // at a download and look inert for the wrong reason.
+    spawnSync('bash', [inert, ORIGIN], {
+      env: { ...process.env, HOME: sandbox, XDG_CONFIG_HOME: resolve(sandbox, 'config') },
+      stdio: 'ignore',
+      timeout: 10_000,
+    });
+    if (treeOf(sandbox) !== before) {
+      note(`install.sh truncated after line ${cut} of ${call} changed something on disk — a mutating statement is outside \`main\``);
+      return null;
+    }
+  }
+  console.log(`install.sh: ${call} truncated prefix(es), none touched the sandbox`);
+
+  // The whole script, minus only its final call. Everything it defines is therefore inert, which
+  // is what makes it safe to source for the parser check below.
+  writeFileSync(inert, lines.slice(0, call).join('\n'));
+  return inert;
+}
+
+/** Every path under a directory with its size, sorted — enough to notice a file added, removed,
+ *  renamed or rewritten, which is all this needs to see. In node rather than `find -exec stat`,
+ *  whose format flag is `-f` on macOS and `-c` on the Linux this runs on in CI. */
+function treeOf(dir: string): string {
+  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
+    .map((entry) => {
+      const found = lstatSync(resolve(dir, entry));
+      return `${entry} ${found.isDirectory() ? 'dir' : found.size}`;
+    })
+    .sort()
+    .join('\n');
 }
 
 /** The two refusals a person actually meets, and which sentence each one gets.

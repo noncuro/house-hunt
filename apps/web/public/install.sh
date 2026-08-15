@@ -51,10 +51,20 @@ manifest_field() {
 }
 
 # The files a manifest points at, destination-relative. Chrome manifests spell asset paths as
-# ordinary strings, so this is every quoted string with an extension Chrome can load; leading
-# slashes are how the icon entries are written and mean the extension root, not the filesystem's.
+# ordinary strings, so this is every quoted string shaped like a filename; leading slashes are how
+# the icon entries are written and mean the extension root, not the filesystem's.
+#
+# A shape rather than the allow-list of suffixes this used to be. That list held four, so a
+# declarative-net-request `rules.json`, an `.svg`, a `.wasm` or a locale file could be named by the
+# manifest, be absent from the archive, and install clean into a folder Chrome then refuses to
+# load. The shape is what excludes everything else a manifest holds: match patterns and URLs carry
+# a `:` or a `*`, the name and the description carry spaces, the extension id `key` is base64 and
+# so has no dot in it anywhere, and a version is dot-separated integers — which is why the suffix
+# has to begin with a letter. A string that satisfied all of that and still was not a file would
+# fail an install loudly rather than silently, and `smoke:web` runs this same function over the
+# real archive on every CI run, so it would be caught here rather than in somebody's terminal.
 manifest_refs() {
-  grep -oE '"[^"]*\.(js|css|png|html)"' "$1" | tr -d '"' | sed 's|^/||' | sort -u
+  grep -oE '"[^":*?[:space:]]+\.[A-Za-z][A-Za-z0-9]{0,4}"' "$1" | tr -d '"' | sed 's|^/||' | sort -u
 }
 
 main() {
@@ -120,15 +130,27 @@ main() {
     announce="No terminal to ask on, so installing to"
   fi
 
-  # Said after expansion rather than before, so the line names the folder that is about to be
-  # written and not the `~/…` somebody typed a run ago.
+  # Both branches above land here, which is the point: the prompt and the saved file are two ways
+  # of naming the same folder and there must be one spelling of it downstream.
+  #
   # shellcheck disable=SC2088  # the tilde is a literal being matched, not one meant to expand:
   # what arrives here is text somebody typed at a prompt, where the shell never saw it.
   case "$DIR" in
     "~") DIR="$HOME" ;;
     "~/"*) DIR="$HOME/${DIR#\~/}" ;;
   esac
+  # A trailing slash is what a shell's own tab-completion offers, so it is typed constantly, and
+  # kept verbatim it strands the install: `mv src dst/` requires dst to exist, so the rename that
+  # puts the new copy in place fails *after* the old one has been moved aside, and the rollback
+  # fails for exactly the same reason — leaving the only real copy under a random hidden
+  # `.previous.*` name. The config is never reached, so the next run aims at the missing path and
+  # fails identically. Normalised here, once, before anything has been read or written, and it is
+  # this form that is stored. `${DIR%/}` in a loop rather than once because `dir//` is a path too;
+  # `/` itself normalises to nothing and is refused on the next line, which is the right answer.
+  while [ "$DIR" != "${DIR%/}" ]; do DIR="${DIR%/}"; done
   [ -n "$DIR" ] || die "No folder given."
+  # Said after expansion rather than before, so the line names the folder that is about to be
+  # written and not the `~/…` somebody typed a run ago.
   [ -z "$announce" ] || echo "$announce $DIR"
 
   local PARENT
@@ -185,13 +207,31 @@ main() {
   # pinned `key` come from the copy being installed rather than from a constant here, so the two
   # answers cannot drift apart. A function because the question is asked twice — here, and again
   # immediately before the folder is renamed away.
+  #
+  # The manifest is what authorises the deletion, and the marker file is not a second way of
+  # granting it. A marker is evidence that a folder was ours once: it is a file, so it copies, and
+  # it survives the folder being emptied and put to another use. Letting it short-circuit the
+  # identity check made any directory containing one deletable, which is the same hole as trusting
+  # a bare manifest.json, arrived at from the other side. So it answers only the case it exists
+  # for — a folder this script wrote whose manifest a failed run or a bad build has taken away —
+  # and even then only if every last thing in the folder is something the build being installed
+  # would itself have put there. One stray file of somebody's own and this is not that folder.
+  holds_only_build_files() {
+    local entry
+    while IFS= read -r entry; do
+      if [ "$entry" != "$MARKER" ] && [ ! -e "$NEW/$entry" ]; then return 1; fi
+    done < <(ls -A "$1")
+  }
   is_ours() {
     [ -d "$1" ] || return 1
     [ ! -L "$1" ] || return 1
-    [ ! -e "$1/$MARKER" ] || return 0
-    [ -f "$1/manifest.json" ] || return 1
-    [ "$(manifest_field "$1/manifest.json" name)" = "$name" ] || return 1
-    [ "$(manifest_field "$1/manifest.json" key)" = "$key" ]
+    if [ -f "$1/manifest.json" ] && [ -n "$(manifest_field "$1/manifest.json" name)" ]; then
+      [ "$(manifest_field "$1/manifest.json" name)" = "$name" ] || return 1
+      [ "$(manifest_field "$1/manifest.json" key)" = "$key" ]
+      return
+    fi
+    [ -e "$1/$MARKER" ] || return 1
+    holds_only_build_files "$1"
   }
 
   local first_install=1
@@ -202,6 +242,9 @@ main() {
       if ! is_ours "$DIR"; then
         if [ -f "$DIR/manifest.json" ]; then
           die "$DIR holds a manifest.json for something else, not House hunt. Refusing to replace it — pick another folder."
+        fi
+        if [ -e "$DIR/$MARKER" ]; then
+          die "$DIR carries this installer's marker but also holds files that are not part of the extension, and no manifest.json to identify it by. Refusing to replace it — pick another folder."
         fi
         die "$DIR is not empty and does not look like the extension (no manifest.json). Refusing to replace it — pick another folder."
       fi
