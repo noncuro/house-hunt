@@ -126,6 +126,30 @@ check('nobody could tell, stays', matchesFilter(flat({ analysis: analysis({}) })
 // amenity at once under a `=== true` test, and those are the newest listings in the hunt.
 check('never analysed, stays', matchesFilter(flat({ analysis: null }), wantOutdoor), true);
 
+// ------------------------------------------------------------------------------------------- //
+console.log('\nfloorplan: the one bar where a missing value is an answer');
+
+const wantPlan = only({ hasFloorplan: true });
+check(
+  'a listing with a floorplan stays',
+  matchesFilter(flat({ floorplanUrl: 'https://media.rightmove.co.uk/plan.png' }), wantPlan),
+  true,
+);
+// The whole point of the control, and the one place this file's governing rule is deliberately
+// inverted. Everywhere else a missing value clears the bar, because everywhere else it means the
+// model has not looked. `floorplanUrl` is read off the listing when the flat is first seen, so null
+// means the agent published none — and a filter that kept those would remove nothing at all.
+check('one without goes', matchesFilter(flat({ floorplanUrl: null }), wantPlan), false);
+// It asks about the listing, not about the analysis: a flat nobody has run the vision pass over
+// still has a floorplan if the agent published one.
+check(
+  'and it does not wait for the photos to be read',
+  matchesFilter(flat({ floorplanUrl: 'https://media.rightmove.co.uk/plan.png', analysis: null }), wantPlan),
+  true,
+);
+check('off means don\'t mind, not "must not have"', matchesFilter(flat({ floorplanUrl: null }), NO_FILTER), true);
+check('and it counts as a filter being on', filterIsOn(wantPlan), true);
+
 // Laundry and light are the two whose "has it" is narrower than "is not null" — in-building laundry
 // is not in-unit laundry, and medium light is the model hedging rather than saying yes.
 check(
@@ -337,6 +361,10 @@ check(
   only({ maxPrice: 3000, minBedrooms: 2 }),
 );
 check('an amenity we no longer have is dropped', parseFilter({ amenities: ['outdoor', 'helipad'] }), only({ amenities: ['outdoor'] }));
+check('the floorplan toggle survives a round trip', parseFilter({ hasFloorplan: true }), only({ hasFloorplan: true }));
+// A filter stored before this field existed, and one holding something that is not a boolean, both
+// read as off — the direction that shows more flats rather than fewer.
+check('anything but a stored true is off', parseFilter({ hasFloorplan: 'yes' }), NO_FILTER);
 check('a bar of nought is not a bar', parseFilter({ minSqft: 0 }), NO_FILTER);
 check('nor is one that is not a number', parseFilter({ minSqft: '700' }), NO_FILTER);
 check(

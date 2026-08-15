@@ -124,6 +124,15 @@ export interface TriageFilter {
   /** Amenities the flat must be *known* to have. Absent from the list means "don't mind" — there is
    *  deliberately no "must not have": nothing here is something a hunt wants less of. */
   amenities: AmenityKey[];
+  /** Only listings that published a floorplan. `false` means "don't mind", never "must not have".
+   *
+   *  Not an amenity, and deliberately its own field. `AMENITIES` is a shared vocabulary — it drives
+   *  the Your Hunt preferences and the flag chips on every card — and a floorplan is a fact about
+   *  the *listing*, not about the flat. Folded in there, a place with no floorplan would be flagged
+   *  as though the building were missing something.
+   *
+   *  It is also the one bar here that a missing value does *not* clear; see `matchesFilter`. */
+  hasFloorplan: boolean;
   /** How far it may be from the places this hunt saved. Several, because "twenty minutes to work
    *  *and* a walk to the park" is one hunt's actual requirement rather than two alternatives. */
   travel: TravelBar[];
@@ -135,6 +144,7 @@ export const NO_FILTER: TriageFilter = {
   minSqft: null,
   minGreatRoomSqft: null,
   amenities: [],
+  hasFloorplan: false,
   travel: [],
 };
 
@@ -145,6 +155,7 @@ export function filterIsOn(filter: TriageFilter): boolean {
     filter.minSqft !== null ||
     filter.minGreatRoomSqft !== null ||
     filter.amenities.length > 0 ||
+    filter.hasFloorplan ||
     filter.travel.length > 0
   );
 }
@@ -171,6 +182,13 @@ export function matchesFilter(
     const room = entry.analysis?.biggestRoomSqft ?? null;
     if (room !== null && room < filter.minGreatRoomSqft) return false;
   }
+  // The one bar on this screen where a missing value is an answer rather than a shrug, so it is the
+  // one that drops a flat outright. Everything else here is read off photographs by the model, and
+  // `null` there means nobody has looked yet — hence the rule that unknown clears every bar.
+  // `floorplanUrl` is not that: it is read straight off the listing when the flat is first seen, so
+  // null means the agent published no floorplan. Treating it as unknown would make this filter keep
+  // every flat it was meant to remove, which is a control that appears to do nothing.
+  if (filter.hasFloorplan && !entry.floorplanUrl) return false;
   for (const key of filter.amenities) {
     // `false` is the only answer that drops a flat. `null` is the model saying it could not tell,
     // and a flat with no photos analysed yet would otherwise fail every amenity at once — which is
@@ -278,6 +296,10 @@ export function parseFilter(raw: unknown): TriageFilter {
     amenities: (Array.isArray(source.amenities) ? source.amenities : []).filter(
       (key): key is AmenityKey => typeof key === 'string' && amenityKeys.has(key),
     ),
+    // Anything but a stored `true` is "don't mind", which is the direction that shows more flats
+    // rather than fewer — the same safe failure every field here takes. A filter saved before this
+    // field existed reads as off.
+    hasFloorplan: source.hasFloorplan === true,
     travel: (Array.isArray(source.travel) ? source.travel : []).flatMap((entry) => {
       if (!entry || typeof entry !== 'object') return [];
       const { placeId, mode, max, maxMinutes } = entry as Record<string, unknown>;
