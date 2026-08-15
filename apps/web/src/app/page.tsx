@@ -10,6 +10,7 @@ import { Toasts, useToasts } from '@house-hunt/ui';
 import { Sweep } from '@/screens/Sweep';
 import {
   applyFilter,
+  placePoints,
   duplicateIds,
   addressBesidePostcode,
   enthusiasm,
@@ -264,10 +265,17 @@ function App({
   // saved travel bar is thrown away — silently widening the triage filter to everything on the
   // first frame of every page load. Undefined means we do not know yet, and not knowing is a
   // reason to keep what somebody saved.
+  //
+  // Derived, and deliberately not written back to storage. A bar can be pruned for a state that
+  // reverses — a place whose postcode was cleared and later filled in again — and persisting would
+  // delete somebody's saved filter on the strength of a moment. The cost is that such a bar
+  // reappears when its place can answer it again, which is a surprise; the alternative is the same
+  // failure the paragraph above is about, made permanent, and it would be reached by any transient
+  // oddity in the places data rather than only by a loading frame.
   const triageFilterNow = useMemo(
     () =>
       placesQuery.data
-        ? withKnownPlaces(triageFilter, placesQuery.data.map((p) => p.id))
+        ? withKnownPlaces(triageFilter, placesQuery.data)
         : triageFilter,
     [triageFilter, placesQuery.data],
   );
@@ -848,7 +856,10 @@ function Triage({
   // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave
   // the ranking meaning something about flats that are no longer on screen. `unknowns` is what the
   // filter kept without an answer either way, which the bar says out loud.
-  const { kept, unknowns } = applyFilter(entries, filter, travel.data);
+  // Where the places are, for the bars measured as the crow flies rather than by a journey. Memoed
+  // because the pile is refiltered on every keystroke in the bar's number box.
+  const points = useMemo(() => placePoints(cardProps.places), [cardProps.places]);
+  const { kept, unknowns } = applyFilter(entries, filter, travel.data, points);
   const shown = sortForTriage(kept, cardProps.scores, sortMode);
   const metrics = storedModel?.model.metrics;
 

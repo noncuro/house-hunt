@@ -230,6 +230,21 @@ export function travelDestinations<T extends { postcode: string | null }>(places
   return places.filter((p) => p.postcode !== null);
 }
 
+/** The places a straight line can be drawn to, and where they are.
+ *
+ *  The complement of the rule above rather than a second copy of it: routing needs a postcode
+ *  because that is what TfL is asked with, and measuring on the map needs a coordinate because that
+ *  is what a distance is between. A neighbourhood folded in from the old hub list has the second and
+ *  not the first, which is why the travel picker stopped offering it and why it can be offered again
+ *  for a bar measured in miles. */
+export function placePoints(places: Place[]): Record<string, Point> {
+  const points: Record<string, Point> = {};
+  for (const place of places) {
+    if (place.lat !== null && place.lon !== null) points[place.id] = { lat: place.lat, lon: place.lon };
+  }
+  return points;
+}
+
 /** The places a project goes looking through — everywhere somebody has said to search around,
  *  whether or not Rightmove's own name for it has been resolved yet.
  *

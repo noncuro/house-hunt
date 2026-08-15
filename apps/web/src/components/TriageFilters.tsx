@@ -2,14 +2,16 @@
 
 import {
   AMENITIES,
+  CROW,
   NO_FILTER,
-  TRAVEL_MODES,
+  barModesFor,
+  defaultMax,
   filterIsOn,
-  travelDestinations,
+  startingBar,
   type AmenityKey,
+  type BarMode,
   type Place,
   type TravelBar,
-  type TravelMode,
   type TriageFilter,
 } from '@house-hunt/core';
 import { MODE_ICON } from '@house-hunt/ui';
@@ -44,9 +46,12 @@ export function TriageFilters({
    *  travel row at all — an empty picker is a control that cannot be used and does not say why. */
   places: Place[];
 }) {
-  // A place with no postcode cannot be routed to, so a bar against it would keep every listing on
-  // the "we don't know" rule and quietly do no filtering at all.
-  const destinations = travelDestinations(places);
+  // Every place we can measure to at all. A postcode is what TfL is asked with and a coordinate is
+  // what a straight line is drawn between, so a neighbourhood folded in from the old hub list has
+  // no journey time and does have a distance — filtering it out of the picker entirely was how it
+  // disappeared from this control without explanation. The mode select below is what narrows it,
+  // and `barModesFor` is the one place that decides which is which.
+  const destinations = places.filter((p) => barModesFor(p).length > 0);
   const on = filterIsOn(filter);
   const set = (patch: Partial<TriageFilter>) => setFilter({ ...filter, ...patch });
 
@@ -126,7 +131,7 @@ export function TriageFilters({
               set({
                 travel: [
                   ...filter.travel,
-                  { placeId: destinations[0]!.id, mode: 'transit', maxMinutes: 30 },
+                  { placeId: destinations[0]!.id, ...startingBar(destinations[0]!)! },
                 ],
               })
             }
@@ -168,27 +173,47 @@ function TravelRow({
   onChange: (next: TravelBar) => void;
   onRemove: () => void;
 }) {
+  const miles = bar.mode === CROW;
+  // Only what this place can answer. A place saved without a postcode — every neighbourhood folded
+  // in from the old hub list — has a coordinate and nothing to ask TfL with, so the straight line is
+  // the only honest option and the journeys are not offered.
+  const place = places.find((p) => p.id === bar.placeId);
+  const modes = place ? barModesFor(place) : [bar.mode];
   return (
     <span className="triage-travel-bar" data-testid={`travel-filter-${bar.placeId}-${bar.mode}`}>
       <input
         type="number"
-        min={1}
-        step={5}
+        min={miles ? 0.1 : 1}
+        // Quarter-mile steps, because that is the granularity the distance is any use at: half a
+        // mile and three quarters are different neighbourhoods, five minutes of a bus ride is not.
+        step={miles ? 0.25 : 5}
         className="triage-travel-minutes"
-        value={bar.maxMinutes}
-        aria-label="Minutes"
+        value={bar.max}
+        aria-label={miles ? 'Miles' : 'Minutes'}
         onChange={(e) => {
           const next = Number(e.target.value);
           // Kept as it was rather than falling back to a default: a half-typed box is on its way to
           // a number, and snapping it back mid-keystroke fights whoever is typing.
-          if (Number.isFinite(next) && next > 0) onChange({ ...bar, maxMinutes: next });
+          if (Number.isFinite(next) && next > 0) onChange({ ...bar, max: next });
         }}
       />
-      <span className="dim">min of</span>
+      <span className="dim">{bar.mode === CROW ? 'mi of' : 'min of'}</span>
       <select
         value={bar.placeId}
         aria-label="Place"
-        onChange={(e) => onChange({ ...bar, placeId: e.target.value })}
+        onChange={(e) => {
+          const place = places.find((p) => p.id === e.target.value);
+          if (!place) return;
+          // Moving a bar onto a place measured differently has to move the mode too, or it would
+          // sit there asking a question that can never be answered — every flat unknown, the whole
+          // pile kept, and a control that looks like it is filtering.
+          const start = startingBar(place);
+          onChange(
+            start && !barModesFor(place).includes(bar.mode)
+              ? { placeId: place.id, ...start }
+              : { ...bar, placeId: place.id },
+          );
+        }}
       >
         {places.map((place) => (
           <option key={place.id} value={place.id}>
@@ -199,11 +224,19 @@ function TravelRow({
       <select
         value={bar.mode}
         aria-label="How"
-        onChange={(e) => onChange({ ...bar, mode: e.target.value as TravelMode })}
+        onChange={(e) => {
+          const mode = e.target.value as BarMode;
+          // The number does not come along when the unit changes. Thirty minutes and thirty miles
+          // are the same digits and nothing like the same filter — carrying it across widened a
+          // half-hour commute to most of the South East, with the control reading exactly as it did
+          // before.
+          const crossing = (mode === CROW) !== (bar.mode === CROW);
+          onChange({ ...bar, mode, max: crossing ? defaultMax(mode) : bar.max });
+        }}
       >
-        {TRAVEL_MODES.map((mode) => (
+        {modes.map((mode) => (
           <option key={mode} value={mode}>
-            {MODE_ICON[mode]} {MODE_LABEL[mode]}
+            {BAR_ICON[mode]} {BAR_LABEL[mode]}
           </option>
         ))}
       </select>
@@ -216,11 +249,16 @@ function TravelRow({
 
 /** The modes in words. `MODE_ICON` is the shared symbol both surfaces draw; a picker needs the
  *  name as well, since an emoji alone in a dropdown is a guess. */
-const MODE_LABEL: Record<TravelMode, string> = {
+const BAR_LABEL: Record<BarMode, string> = {
   walking: 'walk',
   cycling: 'cycle',
   transit: 'public transport',
+  [CROW]: 'straight line',
 };
+
+const BAR_ICON: Record<BarMode, string> = { ...MODE_ICON, [CROW]: '📏' };
+
+
 
 /** One numeric bar. Empty is "don't mind", which is a different thing from nought — typing a zero
  *  into "min size" is a filter that passes everything and looks like one that is off. */

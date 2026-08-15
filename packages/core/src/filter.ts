@@ -17,8 +17,27 @@ import { parseMonthlyPrice } from './predict';
 import type { ShortlistEntry } from './db/supabase';
 import { sizeOf } from './shortlist';
 import { TRAVEL_MODES, type TravelMode, type TravelTime } from './types';
+import { distanceMiles } from './hubs';
+import type { Point } from './postcode';
 
-/** "No more than twenty minutes to the office, on the tube."
+/** How far a place may be from somewhere this hunt saved, measured on the map rather than by any
+ *  journey. Miles as the crow flies, between two coordinates.
+ *
+ *  Here because a journey time is not always available and sometimes not the question. Every
+ *  neighbourhood folded in from the old hub list has a coordinate and no postcode, and TfL is asked
+ *  for a route between postcodes — so "twenty minutes to Belsize Park" can never be answered, and a
+ *  bar naming it would keep the whole pile on the unknown rule while looking like it was filtering.
+ *  A straight line to it is answerable for every flat whose own position we have, which is nearly
+ *  all of them. It is also the honest measure for "somewhere round here": half a mile of Angel is a
+ *  thing people mean, and it does not depend on what the Northern line is doing. */
+export const CROW = 'crow';
+
+/** What a bar can be measured in. The three journeys, and the straight line. */
+export type BarMode = TravelMode | typeof CROW;
+
+export const BAR_MODES: BarMode[] = [...TRAVEL_MODES, CROW];
+
+/** "No more than twenty minutes to the office, on the tube." Or half a mile of Angel.
  *
  *  A place and a mode together, because neither answers on its own: forty minutes to work is a
  *  different flat depending on whether it is forty minutes of walking or forty on the Victoria
@@ -28,9 +47,64 @@ import { TRAVEL_MODES, type TravelMode, type TravelTime } from './types';
 export interface TravelBar {
   /** The saved place, by id — `place.id`, the same key the compare table's columns use. */
   placeId: string;
-  mode: TravelMode;
-  maxMinutes: number;
+  mode: BarMode;
+  /** Minutes for a mode you travel by, miles for `crow`. One number rather than two, because the
+   *  bar is one control and its unit is whatever the mode measures in — the screen writes "min" or
+   *  "mi" beside it from the same fact. */
+  max: number;
 }
+
+/** Enough of a place to know what can be asked about it. */
+export interface Measurable {
+  postcode: string | null;
+  lat: number | null;
+  lon: number | null;
+}
+
+/** The bars this place can actually answer.
+ *
+ *  A journey needs a postcode, because that is what TfL is asked with. A straight line needs a
+ *  coordinate, because that is what a distance is between. Most places have both; the neighbourhoods
+ *  folded in from the old hub list have only the second, and a place whose postcode never resolved
+ *  to a point has only the first.
+ *
+ *  Empty is a real answer and means this place cannot be measured to at all. A bar against one would
+ *  read `unknown` for every flat in the hunt — which keeps the whole pile, so the control sits there
+ *  looking like a filter and doing nothing, and that is the one failure this file exists to refuse.
+ *  The picker offers only these, and `withKnownPlaces` drops a stored bar that has stopped being
+ *  one of them. */
+export function barModesFor(place: Measurable): BarMode[] {
+  const modes: BarMode[] = place.postcode === null ? [] : [...TRAVEL_MODES];
+  if (place.lat !== null && place.lon !== null) modes.push(CROW);
+  return modes;
+}
+
+/** What a new bar against this place starts as, and what an existing one becomes when it is moved
+ *  onto a place measured differently.
+ *
+ *  Thirty minutes on public transport where there is a postcode to route from — the commute is what
+ *  people save a place for. A mile as the crow flies where there is not.
+ *
+ *  The number comes with the mode and is never carried across. Thirty minutes and thirty miles are
+ *  the same digits and nothing like the same filter: switching one to the other silently widened a
+ *  half-hour commute to most of the South East, and switching back turned half a mile into thirty
+ *  seconds and excluded every journey ever measured. Either way the control reads exactly as it did
+ *  before, which is what makes it worth throwing the number away. */
+export function startingBar(place: Measurable): { mode: BarMode; max: number } | null {
+  const modes = barModesFor(place);
+  if (modes.length === 0) return null;
+  return modes.includes('transit') ? { mode: 'transit', max: 30 } : { mode: CROW, max: 1 };
+}
+
+/** The default for one mode, for when only the mode is changing. */
+export function defaultMax(mode: BarMode): number {
+  return mode === CROW ? 1 : 30;
+}
+
+/** Where the places are, by id, for the bars measured in miles. Only the ones with a coordinate:
+ *  a place we cannot put on the map is one no straight line can be drawn to, and guessing a point
+ *  would silently move every flat's answer. */
+export type PlacePoints = Record<string, Point>;
 
 /** Every travel time we have, keyed by the flat's own postcode — `cachedTravelTimes`' shape,
  *  handed in rather than fetched here because the pile is filtered on every keystroke and the
@@ -80,6 +154,7 @@ export function matchesFilter(
   entry: ShortlistEntry,
   filter: TriageFilter,
   travel?: TravelIndex,
+  points?: PlacePoints,
 ): boolean {
   if (filter.maxPrice !== null) {
     const price = parseMonthlyPrice(entry.price);
@@ -103,7 +178,7 @@ export function matchesFilter(
     if (amenityPresent(key, entry.analysis) === false) return false;
   }
   for (const bar of filter.travel) {
-    if (reach(entry, bar, travel) === 'beyond') return false;
+    if (reach(entry, bar, travel, points) === 'beyond') return false;
   }
   return true;
 }
@@ -117,7 +192,19 @@ export function matchesFilter(
  *  a headline number, and the wrong reading here, because a ninety-minute walk is precisely a known
  *  failure of "walk to the park in twenty" rather than something we could not tell. A filter asks a
  *  narrower question than a renderer does. */
-function reach(entry: ShortlistEntry, bar: TravelBar, travel: TravelIndex | undefined): Reach {
+function reach(
+  entry: ShortlistEntry,
+  bar: TravelBar,
+  travel: TravelIndex | undefined,
+  points: PlacePoints | undefined,
+): Reach {
+  // Measured on the map, so neither postcode nor cache comes into it — only whether we know where
+  // both ends are. A flat with no coordinate is unknown for the same reason everything else here is.
+  if (bar.mode === CROW) {
+    const place = points?.[bar.placeId];
+    if (!place || entry.lat === null || entry.lon === null) return 'unknown';
+    return distanceMiles({ lat: entry.lat, lon: entry.lon }, place) <= bar.max ? 'within' : 'beyond';
+  }
   if (!entry.postcode) return 'unknown';
   const rows = (travel?.[entry.postcode] ?? []).filter(
     (t) => t.placeId === bar.placeId && t.mode === bar.mode,
@@ -126,7 +213,7 @@ function reach(entry: ShortlistEntry, bar: TravelBar, travel: TravelIndex | unde
   // Rounded, because the rounded figure is the one on the card. Comparing raw seconds would drop a
   // flat that says "20m" against a bar of twenty, which reads as the filter being broken — and on
   // this screen you cannot check, since a dropped row leaves nothing behind.
-  if (measured) return Math.round(measured.seconds / 60) <= bar.maxMinutes ? 'within' : 'beyond';
+  if (measured) return Math.round(measured.seconds / 60) <= bar.max ? 'within' : 'beyond';
   // TfL was asked and said there is no such journey: settled, not missing. A place you cannot reach
   // by this mode at all is not within twenty minutes of it. A transient failure is a different
   // thing — that is us not having asked successfully yet, and it stays unknown.
@@ -144,16 +231,22 @@ export function applyFilter(
   entries: ShortlistEntry[],
   filter: TriageFilter,
   travel?: TravelIndex,
+  points?: PlacePoints,
 ): { kept: ShortlistEntry[]; unknowns: number } {
-  const kept = entries.filter((entry) => matchesFilter(entry, filter, travel));
+  const kept = entries.filter((entry) => matchesFilter(entry, filter, travel, points));
   if (!filterIsOn(filter)) return { kept, unknowns: 0 };
-  const unknowns = kept.filter((entry) => unknownTo(entry, filter, travel)).length;
+  const unknowns = kept.filter((entry) => unknownTo(entry, filter, travel, points)).length;
   return { kept, unknowns };
 }
 
 /** True when this flat clears the filter with a shrug rather than an answer — at least one bar it
  *  was measured against has no measurement. */
-function unknownTo(entry: ShortlistEntry, filter: TriageFilter, travel?: TravelIndex): boolean {
+function unknownTo(
+  entry: ShortlistEntry,
+  filter: TriageFilter,
+  travel?: TravelIndex,
+  points?: PlacePoints,
+): boolean {
   if (filter.maxPrice !== null && parseMonthlyPrice(entry.price) === null) return true;
   if (filter.minBedrooms !== null && entry.bedrooms === null) return true;
   if (filter.minSqft !== null && !resolveSize(sizeOf(entry))) return true;
@@ -163,7 +256,7 @@ function unknownTo(entry: ShortlistEntry, filter: TriageFilter, travel?: TravelI
   // pairings somebody has already looked up, so on a fresh sweep almost the whole pile is unmeasured
   // — a travel bar that dropped those would empty the screen and look like a hunt with nowhere to
   // live in it.
-  return filter.travel.some((bar) => reach(entry, bar, travel) === 'unknown');
+  return filter.travel.some((bar) => reach(entry, bar, travel, points) === 'unknown');
 }
 
 /** A filter as it comes back out of storage: anything unrecognised falls back to "don't mind".
@@ -187,11 +280,14 @@ export function parseFilter(raw: unknown): TriageFilter {
     ),
     travel: (Array.isArray(source.travel) ? source.travel : []).flatMap((entry) => {
       if (!entry || typeof entry !== 'object') return [];
-      const { placeId, mode, maxMinutes } = entry as Record<string, unknown>;
-      const minutes = bar(maxMinutes);
+      const { placeId, mode, max, maxMinutes } = entry as Record<string, unknown>;
+      // `maxMinutes` is what this was called before the bar could be measured in miles. Read as a
+      // fallback so a filter somebody left in localStorage survives the rename rather than silently
+      // widening to "any distance" on their next visit.
+      const value = bar(max) ?? bar(maxMinutes);
       if (typeof placeId !== 'string' || !placeId) return [];
-      if (!TRAVEL_MODES.includes(mode as TravelMode) || minutes === null) return [];
-      return [{ placeId, mode: mode as TravelMode, maxMinutes: minutes }];
+      if (!BAR_MODES.includes(mode as BarMode) || value === null) return [];
+      return [{ placeId, mode: mode as BarMode, max: value }];
     }),
   };
 }
@@ -207,8 +303,18 @@ function bar(value: unknown): number | null {
  *  cannot draw and nobody can clear — it would sit there narrowing the pile with no control on
  *  screen to say so. Dropping it widens the filter, which is the direction that shows you more
  *  rather than less. */
-export function withKnownPlaces(filter: TriageFilter, placeIds: Iterable<string>): TriageFilter {
-  const known = new Set(placeIds);
-  const travel = filter.travel.filter((t) => known.has(t.placeId));
+export function withKnownPlaces(
+  filter: TriageFilter,
+  places: Iterable<Measurable & { id: string }>,
+): TriageFilter {
+  const known = new Map([...places].map((p) => [p.id, p]));
+  const travel = filter.travel.filter((t) => {
+    const place = known.get(t.placeId);
+    // And a bar whose place can no longer answer it goes the same way, for the same reason: a
+    // postcode removed from a place leaves its transit bars reading `unknown` for every flat in the
+    // hunt, so the pile is unfiltered and the control says otherwise. The picker would not offer
+    // that combination, but a filter restored from storage was never offered anything.
+    return place !== undefined && barModesFor(place).includes(t.mode);
+  });
   return travel.length === filter.travel.length ? filter : { ...filter, travel };
 }
