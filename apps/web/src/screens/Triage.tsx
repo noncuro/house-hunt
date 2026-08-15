@@ -8,6 +8,7 @@ import {
   placePoints,
   resolveSize,
   sizeOf,
+  splitByHuntFloor,
   type ArchiveReason,
   type Hub,
   type HuntPreferences,
@@ -89,6 +90,7 @@ export function Triage({
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState<Rating | null>(null);
   const [at, setAt] = useState<string | null>(null);
+  const [showBelowFloor, setShowBelowFloor] = useState(false);
 
   // The cache and nothing else, for the same reason the compare table reads it that way: a
   // read-through here would fire a journey-planner request for every gap in a pile of two hundred,
@@ -96,9 +98,16 @@ export function Triage({
   const travel = useCachedTravel(entries.map((e) => e.postcode));
   const points = useMemo(() => placePoints(places), [places]);
 
+  // The hunt's own must-haves come off the pile before this sitting's filter touches it — a flat
+  // under a bar everybody agreed on is not work waiting to be done, and it was being counted as
+  // some. Gone rather than merely marked, but never silently: the line below says how many and
+  // hands them back, which is the same bargain `unknowns` strikes.
+  const { above, below } = useMemo(() => splitByHuntFloor(entries, prefs), [entries, prefs]);
+  const pile = showBelowFloor ? entries : above;
+
   // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave the
   // ranking meaning something about flats no longer on screen.
-  const { kept, unknowns } = applyFilter(entries, filter, travel.data, points);
+  const { kept, unknowns } = applyFilter(pile, filter, travel.data, points);
   const shown = useMemo(() => sortForTriage(kept, scores, sortMode), [kept, scores, sortMode]);
 
   // The flat on the right. Follows the pile when what you were reading leaves it — which is what
@@ -183,7 +192,7 @@ export function Triage({
           to their own summary, and open on the word that says they will. */}
       <div className="triage-bar">
         <span className="triage-count" data-testid="triage-count">
-          <strong>{shown.length}</strong> of {entries.length} waiting
+          <strong>{shown.length}</strong> of {pile.length} waiting
           {unknowns > 0 && (
             <span className="dim" title="Kept because we could not tell either way — never dropped for a number we do not have.">
               {' '}
@@ -191,6 +200,31 @@ export function Triage({
             </span>
           )}
         </span>
+
+        {/* Never a silent removal. The count is the hunt's own bars doing what they were set to do,
+            and the button beside it is the check on that — a must-have somebody set too high shows
+            up here as a number that is too big, and is one click from being read. */}
+        {below.length > 0 && (
+          <span className="triage-floor dim" data-testid="triage-floor">
+            {showBelowFloor
+              ? `${below.length} under your hunt's must-haves, shown`
+              : `${below.length} hidden by your hunt's must-haves`}{' '}
+            <button
+              type="button"
+              className="linkish"
+              data-testid="triage-floor-toggle"
+              aria-pressed={showBelowFloor}
+              onClick={() => {
+                setShowBelowFloor(!showBelowFloor);
+                // Same reason changing a filter clears them: a tick left on a flat that has just
+                // left the pile is a verdict for the whole hunt on something nobody can see.
+                setSelected([]);
+              }}
+            >
+              {showBelowFloor ? 'Hide them' : 'Show them'}
+            </button>
+          </span>
+        )}
 
         <button
           type="button"
@@ -211,7 +245,7 @@ export function Triage({
           <select
             value={sortMode}
             onChange={(e) => setSortMode(e.target.value as SortMode)}
-            disabled={entries.length === 0}
+            disabled={pile.length === 0}
           >
             {(Object.keys(SORT_LABEL) as SortMode[]).map((mode) => (
               <option key={mode} value={mode} disabled={NEEDS_MODEL.includes(mode) && !scores}>
@@ -261,7 +295,7 @@ export function Triage({
           }}
           kept={kept.length}
           unknowns={unknowns}
-          total={entries.length}
+          total={pile.length}
           places={places}
         />
       )}
@@ -325,9 +359,16 @@ export function Triage({
 
       {entries.length === 0 ? (
         <p className="dim">Nothing waiting — every place either of you has opened has a verdict.</p>
+      ) : pile.length === 0 ? (
+        // Not "nothing waiting": there are flats, and the hunt's own must-haves are why none of them
+        // is here. Saying the first would be the screen taking credit for a filter it did not name.
+        <p className="dim">
+          All {entries.length} waiting are under your hunt&rsquo;s must-haves — “Show them” above puts
+          them back, or loosen one on Your Hunt.
+        </p>
       ) : shown.length === 0 ? (
         <p className="dim">
-          None of the {entries.length} waiting clears those bars.{' '}
+          None of the {pile.length} waiting clears those bars.{' '}
           <button type="button" className="linkish" onClick={() => setEditing(true)}>
             Loosen one
           </button>
@@ -374,7 +415,7 @@ export function Triage({
               <>
                 <p className="triage-keys dim">
                   <kbd>j</kbd> <kbd>k</kbd> move · <kbd>1</kbd> not our place · <kbd>2</kbd> like it ·{' '}
-                  <kbd>3</kbd> love it
+                  <kbd>3</kbd> love it · <kbd>space</kbd> photos
                 </p>
                 <FlatDetail
                   key={current.rightmoveId}

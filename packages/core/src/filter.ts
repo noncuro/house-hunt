@@ -12,7 +12,14 @@
  *  it invisibly, since a filtered-out row leaves nothing behind to notice. `unknowns` counts them,
  *  so the screen can say how many are still there only because we do not know.
  */
-import { AMENITIES, amenityPresent, resolveSize, type AmenityKey } from './facts';
+import {
+  AMENITIES,
+  amenityPresent,
+  resolveSize,
+  type AmenityKey,
+  type AmenityWant,
+  type HuntPreferences,
+} from './facts';
 import { parseMonthlyPrice } from './predict';
 import type { ShortlistEntry } from './db/supabase';
 import { sizeOf } from './shortlist';
@@ -275,6 +282,56 @@ function unknownTo(
   // — a travel bar that dropped those would empty the screen and look like a hunt with nowhere to
   // live in it.
   return filter.travel.some((bar) => reach(entry, bar, travel, points) === 'unknown');
+}
+
+/** The hunt's own must-haves, expressed as a filter.
+ *
+ *  `TriageFilter` is a sitting's question — "show me the two-beds today" — and it is thrown away
+ *  when the sitting ends. This is the standing one: what everybody in the hunt agreed on, on the
+ *  Your Hunt page, and a flat under it is not a flat this hunt is going to take. It was already
+ *  being said on every card (`flagsFor` draws each of these red) and nowhere acted on, so the pile
+ *  and the badge beside the tab both counted flats already ruled out.
+ *
+ *  Three of the preferences and deliberately not the rest. `minBedrooms` and `minSqft` are floors —
+ *  `flagsFor` flags being under either in red, in the hunt's own words ("you asked for 2+") — and an
+ *  amenity marked `must` is the word "must" as somebody typed it. What is left out is everything the
+ *  hunt stated as an aspiration rather than a bar: `targetSqft` is amber by design (a flat over the
+ *  floor and under the target is one to go and look at), `greatRoomMinSqft` moves where a *good*
+ *  mark is earned and flags no absence at all, and a `nice` amenity is the setting that exists
+ *  precisely to not exclude anything.
+ *
+ *  The rent ceiling is not here either, and that is the one worth saying out loud: it lives in
+ *  `prefs.search` as Rightmove's own query parameters, which is what the sweep is run with — so a
+ *  flat over the hunt's budget did not come home from a sweep in the first place, and one that did
+ *  arrived some other way and is a fact rather than a mistake.
+ *
+ *  The unknown rule still holds, because it is `matchesFilter` that applies this: a flat nobody has
+ *  measured is not a small one. */
+export function huntFloor(prefs: HuntPreferences): TriageFilter {
+  const wants = Object.entries(prefs.amenities ?? {}) as [AmenityKey, AmenityWant | undefined][];
+  return {
+    ...NO_FILTER,
+    minBedrooms: prefs.minBedrooms ?? null,
+    minSqft: prefs.minSqft ?? null,
+    amenities: wants.filter(([, want]) => want === 'must').map(([key]) => key),
+  };
+}
+
+/** The pile split by that floor: what the hunt would consider, and what it has already ruled out.
+ *
+ *  Both halves, never just the first. A filter here removes rows from a screen whose whole job is
+ *  that no row goes unlooked-at, so the count of what went is what lets triage say "18 hidden by
+ *  your hunt's must-haves" and offer them back — the same bargain `unknowns` strikes above. */
+export function splitByHuntFloor(
+  entries: ShortlistEntry[],
+  prefs: HuntPreferences,
+): { above: ShortlistEntry[]; below: ShortlistEntry[] } {
+  const floor = huntFloor(prefs);
+  if (!filterIsOn(floor)) return { above: entries, below: [] };
+  const above: ShortlistEntry[] = [];
+  const below: ShortlistEntry[] = [];
+  for (const entry of entries) (matchesFilter(entry, floor) ? above : below).push(entry);
+  return { above, below };
 }
 
 /** A filter as it comes back out of storage: anything unrecognised falls back to "don't mind".

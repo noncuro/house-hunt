@@ -17,8 +17,10 @@ import {
   defaultMax,
   startingBar,
   filterIsOn,
+  huntFloor,
   matchesFilter,
   parseFilter,
+  splitByHuntFloor,
   withKnownPlaces,
   type TravelIndex,
   type TriageFilter,
@@ -473,6 +475,38 @@ check('a place with a postcode starts on the commute', startingBar(WORK)?.max, 3
 check('a point on the map starts at a mile', startingBar(ANGEL_PLACE)?.max, 1);
 check('minutes default to thirty', defaultMax('transit'), 30);
 check('miles default to one', defaultMax(CROW), 1);
+
+// --------------------------------------------------------------------------------------------- //
+console.log("\nand the hunt's own must-haves, which are a filter nobody set today");
+
+// The three that are bars. `targetSqft` and `greatRoomMinSqft` are deliberately absent below, and a
+// `nice` amenity is the setting that exists precisely so as not to exclude anything — folding any of
+// them in here would empty the pile of flats the hunt said it would look at.
+check('a hunt with no preferences is no filter at all', filterIsOn(huntFloor({})), false);
+check('nor is one that only aims high', filterIsOn(huntFloor({ targetSqft: 900, greatRoomMinSqft: 450 })), false);
+check('nor a nice-to-have', filterIsOn(huntFloor({ amenities: { bathtub: 'nice' } })), false);
+check('a must-have is one', huntFloor({ amenities: { bathtub: 'must', outdoor: 'nice' } }).amenities, ['bathtub']);
+check('and so are the two floors', huntFloor({ minBedrooms: 2, minSqft: 600 }), {
+  ...NO_FILTER, minBedrooms: 2, minSqft: 600,
+});
+// "A studio is fine" is an answer, and it excludes nothing — which is why it is stored as 0 rather
+// than as a category. A `bar()`-style truthiness test here would read it as "don't mind", which is
+// the same behaviour by luck rather than the same meaning.
+check('a hunt that will take a studio excludes nothing', huntFloor({ minBedrooms: 0 }).minBedrooms, 0);
+
+const tiny = flat({ floorAreaSqft: 400, floorAreaSource: 'sizings' });
+const roomy = flat({ rightmoveId: '2', floorAreaSqft: 800, floorAreaSource: 'sizings' });
+const unmeasured = flat({ rightmoveId: '3' });
+const split = splitByHuntFloor([tiny, roomy, unmeasured], { minSqft: 600 });
+check('the flat under the hunt\'s floor is set aside', split.below.map((e) => e.rightmoveId), ['1']);
+// Both halves, and the unknown in the half that is kept: the rule the whole file is about does not
+// stop applying because the bar was set on the Your Hunt page rather than on this screen.
+check('the one over it and the one nobody measured stay', split.above.map((e) => e.rightmoveId), ['2', '3']);
+check(
+  'a hunt with no bars sets nothing aside',
+  splitByHuntFloor([tiny, roomy], {}).below.length,
+  0,
+);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

@@ -6,7 +6,6 @@ import 'leaflet/dist/leaflet.css';
 import { Icon } from '@house-hunt/ui';
 import {
   groupOf,
-  type Group,
   type HuntPreferences,
   type Hub,
   type Place,
@@ -14,6 +13,7 @@ import {
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
 import { FlatCard } from '@/components/FlatCard';
+import { pinColour } from '@/lib/pin';
 
 /** Every place on one map, coloured by what the two of you said.
  *
@@ -31,23 +31,6 @@ import { FlatCard } from '@/components/FlatCard';
  *  looking at a map is almost always looking at several flats in the same few streets, that was the
  *  gesture being punished. The card docks at the foot instead, the map stays where you put it, and
  *  the arrow keys walk the pins in the order they run west to east. */
-
-/** Read off the same tokens the rest of the app colours verdicts with, rather than four hex literals
- *  that were a near-match for them — a pin looking green here and the chip for the same verdict
- *  looking a different green two screens away is the app disagreeing with itself. Leaflet takes a
- *  string for `fillColor` and cannot read a custom property, so they are resolved once. */
-const COLOUR: Record<Group, string> = {
-  excited: pin('loved', '#1a7f5a'),
-  maybe: pin('liked', '#d8a33a'),
-  rejected: pin('rejected', '#9aa7b2'),
-  unrated: pin('unrated', '#4a7fb5'),
-};
-
-function pin(name: string, fallback: string): string {
-  if (typeof document === 'undefined') return fallback;
-  const value = getComputedStyle(document.documentElement).getPropertyValue(`--pin-${name}`).trim();
-  return value || fallback;
-}
 
 const LONDON: [number, number] = [51.5074, -0.1278];
 
@@ -168,7 +151,7 @@ export function ShortlistMap({
         radius: group === 'excited' ? 10 : 7,
         color: '#fff',
         weight: 2,
-        fillColor: COLOUR[group],
+        fillColor: pinColour(group),
         fillOpacity: group === 'rejected' ? 0.45 : 0.95,
       })
         .addTo(instance)

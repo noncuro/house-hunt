@@ -7,6 +7,7 @@ import {
   groupOf,
   hubsFromProject,
   parseFilter,
+  splitByHuntFloor,
   withKnownPlaces,
   type ArchiveReason,
   type Hub,
@@ -222,7 +223,10 @@ function App({
   // inside `FlatDetail`.
   const travel = useCachedTravel((entries ?? []).map((e) => e.postcode));
 
-  const prefs = settingsQuery.data ?? {};
+  // Memoised for the identity rather than the work: `?? {}` is a fresh object every render, and this
+  // is now a dependency of what the badge counts and of triage's own split. Without it both recompute
+  // on every keystroke on the page for as long as the settings have not loaded.
+  const prefs = useMemo(() => settingsQuery.data ?? {}, [settingsQuery.data]);
   // The pile is unrated *and* still on the market. A withdrawn flat is not work waiting to be done,
   // and leaving it in is the incident AGENTS.md records — eleven withdrawn listings sitting on a
   // worklist that had already been taught to drop them. Not-yet-loaded draws them, as everywhere
@@ -234,6 +238,12 @@ function App({
       ),
     [all, offMarket],
   );
+
+  // What the badge counts, and it is not the whole pile. Triage takes the hunt's own must-haves off
+  // the top (`splitByHuntFloor`) — so a badge that counted every unrated flat would promise work
+  // that is not on the screen it sends you to, and the number never falls to nought however much of
+  // it you do. Same function, so the two cannot drift.
+  const waiting = useMemo(() => splitByHuntFloor(unrated, prefs).above.length, [unrated, prefs]);
 
   const rate = (entry: ShortlistEntry, value: Rating, note: string) =>
     rating.mutate(
@@ -309,7 +319,7 @@ function App({
       label: 'Triage',
       icon: 'triage',
       hint: 'Work through the places nobody has rated yet',
-      badge: unrated.length,
+      badge: waiting,
     },
     { view: 'project', label: 'Your Hunt', icon: 'hunt', hint: 'Who is in it, where you travel to, what matters' },
   ];
