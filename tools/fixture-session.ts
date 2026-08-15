@@ -736,6 +736,29 @@ export async function stageOf(rightmoveId: string): Promise<StoredStage | null> 
 /** Whether a flat is marked off the market — a row in `training_exclusion`, which is one table for
  *  two jobs: the model leaves these out, and the shortlist stops drawing them. Read here because
  *  the hiding is the visible half and the row is the half that outlives the page. */
+/** Mark a flat gone, or bring it back, the way the sweep does rather than the way a person does.
+ *
+ *  The panel's button is offered only on a flat somebody liked — a rejection has nothing to withhold
+ *  from training and an unrated one is not in it yet — so an unrated flat can only reach this state
+ *  through the extension noticing the listing has been withdrawn. Which is exactly the case worth
+ *  asserting: it is the pile of unrated flats where a withdrawn listing hides, because nothing on
+ *  that screen says which of them are gone. */
+export async function setOffMarketDirectly(rightmoveId: string, off: boolean): Promise<void> {
+  const { error } = off
+    ? await db
+        .from('training_exclusion')
+        .upsert(
+          { project_id: FIXTURE_PROJECT, rightmove_id: rightmoveId, reason: 'off-market' },
+          { onConflict: 'project_id,rightmove_id' },
+        )
+    : await db
+        .from('training_exclusion')
+        .delete()
+        .eq('project_id', FIXTURE_PROJECT)
+        .eq('rightmove_id', rightmoveId);
+  if (error) throw new Error(`fixture: writing training_exclusion: ${error.message}`);
+}
+
 export async function offMarketReason(rightmoveId: string): Promise<string | null> {
   const { data, error } = await db
     .from('training_exclusion')

@@ -8,6 +8,7 @@ import {
   groupOf,
   type Group,
   type HuntPreferences,
+  type Hub,
   type Place,
   type TravelTime,
 } from '@house-hunt/core';
@@ -50,21 +51,34 @@ function pin(name: string, fallback: string): string {
 
 const LONDON: [number, number] = [51.5074, -0.1278];
 
-/** Where the map was when you last left it. Module-level rather than state above, because it is the
- *  map's own business and nothing else on the page has an opinion about it. */
-let lastView: { center: L.LatLngLiteral; zoom: number } | null = null;
+/** Where the map was when you last left it, per hunt. Module-level rather than state above, because
+ *  it is the map's own business and nothing else on the page has an opinion about it — and because
+ *  the whole app remounts on a change of hunt (`App` is keyed on the project), so state would not
+ *  survive the trip to the table and back.
+ *
+ *  Keyed on the project for the same reason it survives that remount at all: one map position is one
+ *  hunt's, and a single slot meant switching hunts opened the new one framed on the old one's
+ *  neighbourhood with none of its pins in view — and, because a restored view deliberately skips
+ *  `fitBounds`, staying there. */
+const lastView = new Map<string, { center: L.LatLngLiteral; zoom: number }>();
 
 export function ShortlistMap({
+  projectId,
   entries,
   places,
   travel,
+  hubs,
   prefs,
   scores,
   onOpen,
 }: {
+  /** Which hunt's map this is — see `lastView`. */
+  projectId: string;
   entries: ShortlistEntry[];
   places: Place[];
   travel: Record<string, TravelTime[]> | undefined;
+  /** The hunt's neighbourhoods, for the docked card's compass fix. Three states — see `HubFact`. */
+  hubs: Hub[] | null | undefined;
   prefs: HuntPreferences;
   scores: Map<string, number> | null;
   /** Go to the flat in full. The docked card is the glance; this is the rest of it. */
@@ -107,9 +121,10 @@ export function ShortlistMap({
 
   useEffect(() => {
     if (!host.current || map.current) return;
+    const saved = lastView.get(projectId) ?? null;
     const instance = L.map(host.current, { scrollWheelZoom: true }).setView(
-      lastView ? lastView.center : LONDON,
-      lastView ? lastView.zoom : 12,
+      saved ? saved.center : LONDON,
+      saved ? saved.zoom : 12,
     );
     map.current = instance;
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -117,7 +132,7 @@ export function ShortlistMap({
       attribution: '© OpenStreetMap contributors',
     }).addTo(instance);
     instance.on('moveend', () => {
-      lastView = { center: instance.getCenter(), zoom: instance.getZoom() };
+      lastView.set(projectId, { center: instance.getCenter(), zoom: instance.getZoom() });
     });
 
     const pins = markers.current;
@@ -126,7 +141,9 @@ export function ShortlistMap({
       map.current = null;
       pins.clear();
     };
-  }, []);
+  // `projectId` never changes inside a mount — `App` is keyed on the hunt — so this still runs
+  // once. It is in the list because the map it builds is restored from that hunt's saved view.
+  }, [projectId]);
 
   useEffect(() => {
     const instance = map.current;
@@ -164,7 +181,7 @@ export function ShortlistMap({
     // contents — refitting on every selection would fight the person panning around — and never
     // on the first run of a mount that restored where you were, which is the same fight one step
     // removed.
-    const restored = firstRun.current && lastView !== null;
+    const restored = firstRun.current && lastView.has(projectId);
     firstRun.current = false;
     if (located.length > 0 && !restored) {
       instance.fitBounds(L.latLngBounds(located.map((e) => [e.lat!, e.lon!] as [number, number])), {
@@ -172,7 +189,7 @@ export function ShortlistMap({
         maxZoom: 15,
       });
     }
-  }, [located]);
+  }, [located, projectId]);
 
   // The pin under the docked card, panned to and highlighted. `panTo` rather than `setView` on
   // purpose: walking the pins must not change the zoom you chose.
@@ -270,6 +287,7 @@ export function ShortlistMap({
             entry={current}
             places={places}
             travel={travel}
+            hubs={hubs}
             prefs={prefs}
             score={scores?.get(current.rightmoveId)}
             onOpen={onOpen}

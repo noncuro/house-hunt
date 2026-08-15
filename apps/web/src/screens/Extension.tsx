@@ -85,8 +85,12 @@ export function ExtensionNotice({
     }
 
     if (state.status === 'absent') {
+      // A `.notice` like its three siblings, not a bare paragraph. Without it the sentence misses
+      // the card and the `flex: 1` the row is built around, so it goes full-bleed and the dismiss ×
+      // floats off at the page edge above the text rather than sitting with it. Quiet rather than
+      // coloured: the other three each want an action, and this one is a note.
       return (
-        <p className="dim">
+        <p className="notice notice-quiet">
           The browser extension is not installed here, so Rightmove pages will not show travel times
           or the rating panel. Everything on this page works without it.{' '}
           {onInstall && (

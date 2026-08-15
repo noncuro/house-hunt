@@ -10,6 +10,7 @@ import {
   type Hub,
   type HuntPreferences,
   type Place,
+  type Stage,
   type TravelTime,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
@@ -40,12 +41,18 @@ const RENDERINGS: Array<{ value: PlacesView; label: string; icon: IconName; hint
   { value: 'map', label: 'Map', icon: 'map', hint: 'Where they are' },
 ];
 
-/** `find` returns undefined for an id whose flat has since left the lens — a chip changed, or the
- *  other person archived it while you were reading. Dropping those keeps the rest of the comparison
- *  rather than refusing the whole of it. */
+/** `find` returns undefined for an id whose flat has left the hunt entirely — somebody removed it
+ *  while you were reading. Dropping those keeps the rest of the comparison rather than refusing the
+ *  whole of it.
+ *
+ *  Resolved against the whole hunt rather than against the current lens, deliberately: a tick is an
+ *  act, and changing which slice is on screen is not undoing it. Pick four in the table, glance at
+ *  the map, filter to the loved ones, and all four are still in the side-by-side — which is what the
+ *  picks being held above this screen is for. */
 const isEntry = (e: ShortlistEntry | undefined): e is ShortlistEntry => e !== undefined;
 
 export function Places({
+  projectId,
   all,
   entries,
   view,
@@ -64,8 +71,11 @@ export function Places({
   offMarketUnknown,
   onOpen,
   onSetStage,
+  stageSaving,
   refreshing,
 }: {
+  /** Which hunt this is. Only the map wants it — see `lastView` there. */
+  projectId: string;
   /** The whole hunt, which is what the chips count. A chip that counted only what the current lens
    *  left would say "Loved 0" the moment you filtered to the archived ones, and the row would stop
    *  being a way back out of the filter you are in. */
@@ -92,6 +102,11 @@ export function Places({
   offMarketUnknown: 'unread' | 'stale' | null;
   onOpen: (rightmoveId: string) => void;
   onSetStage: SetStage;
+  /** The stage a click is currently writing, and for which flat. The table and the board both let
+   *  you move a flat without opening it, so both need to say a write is in flight and refuse a
+   *  second one — two quick picks otherwise race, and whichever reply lands last becomes the
+   *  stored stage. */
+  stageSaving: { rightmoveId: string; stage: Stage } | null;
   refreshing: boolean;
 }) {
   const { main, aside } = useMemo(() => chipsFor(all, offMarket), [all, offMarket]);
@@ -151,6 +166,18 @@ export function Places({
         </div>
       </div>
 
+      {/* The board draws the funnel as columns, so `forBoard` drops a stage lens rather than leaving
+          five empty columns — see lens.ts. The chip stays pressed, though, because clicking it is
+          still how you get back to that stage in the other three views, so the row would otherwise
+          say "Shortlisted" over a board showing everything. Said, rather than fixed by unpressing
+          it: the lens has not changed, only what this one view can do with it. */}
+      {view === 'board' && lens.kind === 'stage' && (
+        <p className="places-note dim" data-testid="board-lens-note">
+          The board shows every stage — that is what its columns are. {lensLabel(lens)} applies
+          again on the cards, the table and the map.
+        </p>
+      )}
+
       {/* Under the toolbar rather than inside it: these are notes about what the screen is not
           showing, and a note that looks like a control is the mistake the old counts line made. */}
       {(offMarketUnknown || refreshing) && (
@@ -191,14 +218,22 @@ export function Places({
           onHeadToHead={() => setDuel(true)}
           onOpen={onOpen}
           onSetStage={onSetStage}
+          stageSaving={stageSaving}
         />
       ) : view === 'board' ? (
-        <Board entries={boardEntries} onOpen={onOpen} onSetStage={onSetStage} />
+        <Board
+          entries={boardEntries}
+          onOpen={onOpen}
+          onSetStage={onSetStage}
+          stageSaving={stageSaving}
+        />
       ) : (
         <ShortlistMap
+          projectId={projectId}
           entries={entries}
           places={places}
           travel={travel}
+          hubs={hubs}
           prefs={prefs}
           scores={scores}
           onOpen={onOpen}

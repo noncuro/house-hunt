@@ -245,6 +245,18 @@
   color: var(--faint);
 }
 
+/* Rounded coordinates in place of a postcode. A button because it copies, drawn as the text it
+   replaces — the dotted underline is the whole of the affordance. */
+.hunt-place-coords {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--faint);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Whether this place is searchable, said as a state rather than as Rightmove's identifier: the id
    is a string nobody reads and everybody trips over, and it survives in the hint. */
 .hunt-place-state {

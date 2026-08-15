@@ -116,12 +116,18 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   `20260813000000_property_stage.sql` owns the coupling.
 - **Off the market is a third fact, and it hides rather than writes.** The mark lives in
   `training_exclusion` — it is what withholds a flat from the verdict-score model — and it is also
-  the only thing anybody records to mean "this one is gone". So the shortlist stops drawing them
-  (`withoutOffMarket`, with a line under the tally saying how many and offering them back), and
-  that is all it does: the verdict and the stage are untouched, which is what makes a flat you
-  loved and lost still readable as loved. Making the toggle archive would have it write over
-  somebody's account of what happened, which is the same objection `background.ts` makes to a
-  background tab doing it.
+  the only thing anybody records to mean "this one is gone". So a flat that is off the market is
+  drawn under **Archived** and nowhere else (`lensMatches` in `apps/web/src/lib/lens.ts`), and it is
+  kept out of the triage pile, which is a list of work still to do. That is all it does: the verdict
+  and the stage are untouched, which is what makes a flat you loved and lost still readable as
+  loved. Making the toggle archive would have it *write* over somebody's account of what happened,
+  which is the same objection `background.ts` makes to a background tab doing it — the point is that
+  gone flats stop appearing among the live ones, not that the funnel gets edited.
+
+  This replaced a separate "hide off-market" switch with a line under the tally offering them back.
+  Two controls narrowed one list, and the flats they hid had to go somewhere the eye could find them
+  again; Archived is where somebody already looks for a flat that is no longer in play, so the
+  question "where did it go" stopped needing an answer.
 - **Driving times deliberately throw** (TfL can't do them) rather than mislabel a transit number.
 - **The travel backlog is derived, not enqueued.** Nothing inserts a job when a place is added:
   `travel_gaps` computes what is missing from a project's properties, its places and the modes we

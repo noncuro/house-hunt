@@ -34,6 +34,7 @@ import { chromium, type Browser, type ConsoleMessage, type Locator, type Page } 
 import {
   createInvite,
   offMarketReason,
+  setOffMarketDirectly,
   FIXTURE_EMAIL,
   FIXTURE_NAME,
   fixtureId,
@@ -767,6 +768,34 @@ async function checkTriage({ page }: Stage): Promise<void> {
     await bulk.getByRole('button', { name: 'Clear' }).click();
     if (await bulk.count()) note('clearing the ticks left the bulk bar up');
   }
+
+  // A withdrawn flat is not work waiting to be done. This is the incident AGENTS.md records —
+  // eleven withdrawn listings sitting on a worklist that had already been taught to drop them —
+  // and the pile is the one place it hides, because nothing on this screen says which flats are
+  // gone: it just reads as three more to get through. Put back afterwards, since every count below
+  // and in `tabs` is taken against the fixture as seeded.
+  // Written to the database rather than clicked, because there is no button for it: the panel offers
+  // the toggle only on a flat somebody liked, so the only thing that marks an *unrated* one gone is
+  // the extension noticing the listing has been withdrawn. Reopened by navigating away and back,
+  // since the pile is derived from a query this page already holds.
+  const withdrawn = fixtureId(3);
+  await setOffMarketDirectly(withdrawn, true);
+  try {
+    await openView(page, 'list');
+    await openView(page, 'triage');
+    await settle(page);
+    const left = await rows.count();
+    if (left !== waiting - 1) {
+      note(`with ${withdrawn} off the market the pile held ${left}, not ${waiting - 1}`);
+    } else console.log(`triage: a withdrawn flat drops out of the pile (${waiting} → ${left})`);
+  } finally {
+    await setOffMarketDirectly(withdrawn, false);
+  }
+  await openView(page, 'list');
+  await openView(page, 'triage');
+  await settle(page);
+  const back = await rows.count();
+  if (back !== waiting) note(`the pile ended this section at ${back}, not the ${waiting} it started with`);
 
   // The way out to the listing, at the foot of the pane. A pile you can work without leaving still
   // has to let you leave deliberately.

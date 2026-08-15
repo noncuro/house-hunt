@@ -361,6 +361,13 @@ code {
   font-size: 13px;
 }
 
+/* The one notice that is not asking for anything — a note that a laptop has no extension on it.
+   Same card as the rest so the row keeps its shape; the text recedes because there is nothing to
+   act on beyond the button already in it. */
+.notice-quiet {
+  color: var(--ink-soft);
+}
+
 .notice-good {
   background: var(--good-bg);
   border-color: var(--good-line);
@@ -1541,6 +1548,15 @@ code {
   cursor: grabbing;
 }
 
+/* A move that has left but not landed. The card stays where it is rather than jumping to the
+   column it is headed for: it has not moved until the database says so, and a card that arrives
+   and then flies back is worse than one that waits. */
+.board-card-saving {
+  cursor: default;
+  border-style: dashed;
+  box-shadow: none;
+}
+
 .board-address {
   flex: 1 1 100%;
   order: 1;
@@ -2429,6 +2445,30 @@ input[type='checkbox'] {
   letter-spacing: 0.08em;
   background: var(--white);
   border: 1px solid var(--good-line);
+  padding: var(--s1) var(--s2);
+  border-radius: var(--r-chip);
+}
+
+/* The install one-liner on the Install tab. Shaped like the invite code above and typed nothing
+   like it: an invite code is read off the screen and typed out by hand, a command is copied, so it
+   stays small, unspaced, and scrolls sideways in its own box rather than widening the section or
+   wrapping into something that looks like two lines to paste. */
+.install-command {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.install-command code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--raised);
+  border: 1px solid var(--line);
   padding: var(--s1) var(--s2);
   border-radius: var(--r-chip);
 }

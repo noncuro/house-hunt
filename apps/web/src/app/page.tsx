@@ -223,7 +223,17 @@ function App({
   const travel = useCachedTravel((entries ?? []).map((e) => e.postcode));
 
   const prefs = settingsQuery.data ?? {};
-  const unrated = useMemo(() => (all ?? []).filter((e) => groupOf(e.verdicts) === 'unrated'), [all]);
+  // The pile is unrated *and* still on the market. A withdrawn flat is not work waiting to be done,
+  // and leaving it in is the incident AGENTS.md records — eleven withdrawn listings sitting on a
+  // worklist that had already been taught to drop them. Not-yet-loaded draws them, as everywhere
+  // else: hiding on a fact we do not have would quietly shrink the pile on a failed read.
+  const unrated = useMemo(
+    () =>
+      (all ?? []).filter(
+        (e) => groupOf(e.verdicts) === 'unrated' && !(offMarket?.has(e.rightmoveId) ?? false),
+      ),
+    [all, offMarket],
+  );
 
   const rate = (entry: ShortlistEntry, value: Rating, note: string) =>
     rating.mutate(
@@ -361,6 +371,7 @@ function App({
           <FirstRun places={places} setView={(view) => go({ view })} />
         ) : route.view === 'places' ? (
           <Places
+            projectId={project.id}
             all={all}
             entries={entries}
             view={route.places}
@@ -381,6 +392,14 @@ function App({
             }
             onOpen={setOpen}
             onSetStage={setStage}
+            stageSaving={
+              stageMutation.isPending && stageMutation.variables
+                ? {
+                    rightmoveId: stageMutation.variables.rightmoveId,
+                    stage: stageMutation.variables.stage,
+                  }
+                : null
+            }
             refreshing={shortlist.isFetching}
           />
         ) : null}

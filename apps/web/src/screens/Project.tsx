@@ -364,6 +364,59 @@ const BEDROOM_CHOICES: { value: number | null; label: string; testid: string }[]
   { value: 4, label: '4+ beds', testid: '4' },
 ];
 
+
+/** The second line of a place's row: where it is, in as few characters as it takes.
+
+ *  Two things arrive in `postcode` that are not postcodes. One is nothing at all, and the sentence
+ *  for that says what the consequence is rather than naming the mechanism — a place with no
+ *  postcode cannot be routed from, because the travel cache is keyed on a pair of them, and "not
+ *  timed" was the internal half of that said out loud. The other is a pasted coordinate pair, which
+ *  the add field takes verbatim: fifty characters of decimals across a heading that is supposed to
+ *  read as a place. Shown to three decimals — about a hundred metres, which is the precision the
+ *  eye can use — with the exact string one click away, because it is still the thing somebody
+ *  pasted in and may want back. */
+function PlaceWhere({ place, notify }: { place: Place; notify: Notify }) {
+  const where = place.postcode ?? null;
+  if (where === null) {
+    return (
+      <span className="hunt-place-where">
+        {place.lat === null ? 'no location' : 'no postcode, so no travel times'}
+      </span>
+    );
+  }
+
+  const coords = asCoordinates(where);
+  if (!coords) return <span className="hunt-place-where">{where}</span>;
+
+  return (
+    <Hint text="The exact coordinates. Click to copy.">
+      <button
+        type="button"
+        className="hunt-place-where hunt-place-coords"
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(where)
+            .then(() => notify('Coordinates copied.'))
+            .catch(() => notify('Could not copy — select the text instead.', 'error'));
+        }}
+      >
+        {coords}
+      </button>
+    </Hint>
+  );
+}
+
+/** A pasted "lat, lon" cut down to three decimals, or null when the string is not one. Parsed
+ *  rather than pattern-matched on length so a genuinely long place name is left alone. */
+function asCoordinates(value: string): string | null {
+  const parts = value.split(',');
+  if (parts.length !== 2) return null;
+  const [lat, lon] = parts.map((p) => Number(p.trim()));
+  if (!Number.isFinite(lat!) || !Number.isFinite(lon!)) return null;
+  if (Math.abs(lat!) > 90 || Math.abs(lon!) > 180) return null;
+  return `${lat!.toFixed(3)}, ${lon!.toFixed(3)}`;
+}
+
 function HuntSettings({ notify }: { notify: Notify }) {
   const settings = useProjectSettings();
   const save = useSetProjectSettings();
@@ -476,7 +529,19 @@ function HuntSettings({ notify }: { notify: Notify }) {
               min: MIN_SQFT_FLOOR,
               max: MIN_SQFT_CEILING,
               onDraft: (v) => setDraft({ ...draft, minSqft: v }),
-              onCommit: (v) => commit({ ...draft, minSqft: v }),
+              // The target rises with the floor rather than being left underneath it. Only the
+              // input's `min` moved before, which stops you *typing* an inverted pair and does
+              // nothing about the one already saved — leaving `{ floor: 900, target: 800 }`, an
+              // amber band with nothing in it and two numbers contradicting each other.
+              onCommit: (v) =>
+                commit({
+                  ...draft,
+                  minSqft: v,
+                  targetSqft:
+                    v !== null && draft.targetSqft != null && draft.targetSqft < v
+                      ? v
+                      : (draft.targetSqft ?? null),
+                }),
             },
             {
               caption: 'aiming for',
@@ -1308,9 +1373,7 @@ function Places({
           <div className="hunt-place-head">
             <span className="hunt-place-title">
               <span className="hunt-place-name">{place.label}</span>
-              <span className="hunt-place-where">
-                {place.postcode ?? (place.lat === null ? 'no location' : 'no postcode — not timed')}
-              </span>
+              <PlaceWhere place={place} notify={notify} />
             </span>
 
             <button

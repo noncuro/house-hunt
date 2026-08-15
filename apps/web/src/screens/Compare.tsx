@@ -20,6 +20,7 @@ import {
   worstSeverity,
   type Flag,
   type HuntPreferences,
+  type Stage,
 } from '@house-hunt/core';
 import {
   duplicateIds,
@@ -68,6 +69,7 @@ export function Compare({
   places,
   onOpen,
   onSetStage,
+  stageSaving,
   picked,
   setPicked,
   onHeadToHead,
@@ -81,6 +83,8 @@ export function Compare({
   /** Moving a flat along, in the row rather than by opening it. The table is where you see all six
    *  of them at once, which is where "these two are still just shortlisted" is noticed. */
   onSetStage: SetStage;
+  /** The stage a click is currently writing, and for which flat — see Places. */
+  stageSaving: { rightmoveId: string; stage: Stage } | null;
   /** The finalists, for the head-to-head. Ticking is the box and nothing else; the row itself opens
    *  the flat, here as everywhere — a click on an address used to add it to a batch that three
    *  buttons at the top would then rate for everybody in the hunt. */
@@ -187,8 +191,8 @@ export function Compare({
   // journey nobody has looked up yet.
   const destinations = useMemo(() => travelDestinations(places), [places]);
   const all = useMemo(
-    () => buildColumns(destinations, twins, onOpen, onSetStage, prefs),
-    [destinations, twins, onOpen, onSetStage, prefs],
+    () => buildColumns(destinations, twins, onOpen, onSetStage, stageSaving, prefs),
+    [destinations, twins, onOpen, onSetStage, stageSaving, prefs],
   );
   // The first column is the address and never hides — a row you cannot identify is not a row.
   // Before the picker has ever been touched, `chosen` is null and the defaults decide. After, the
@@ -458,6 +462,7 @@ function buildColumns(
   twins: Map<string, string[]>,
   onOpen: (rightmoveId: string) => void,
   onSetStage: SetStage,
+  stageSaving: { rightmoveId: string; stage: Stage } | null,
   prefs: HuntPreferences,
 ): Column[] {
   const columns: Column[] = [
@@ -517,7 +522,12 @@ function buildColumns(
       // shortlisted for a fortnight" noticeable, and having noticed it, moving one along should not
       // mean opening the flat, moving it, coming back and finding the sort has re-run.
       render: (e) => (
-        <StageSelect stage={e.stage} onSet={(stage, reason) => onSetStage(e, stage, reason)} />
+        <StageSelect
+          stage={e.stage}
+          pending={stageSaving?.rightmoveId === e.rightmoveId ? stageSaving.stage : null}
+          disabled={stageSaving?.rightmoveId === e.rightmoveId ? 'Saving…' : undefined}
+          onSet={(stage, reason) => onSetStage(e, stage, reason)}
+        />
       ),
     },
     {

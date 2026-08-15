@@ -28,10 +28,15 @@ export function Board({
   entries,
   onOpen,
   onSetStage,
+  stageSaving,
 }: {
   entries: ShortlistEntry[];
   onOpen: (rightmoveId: string) => void;
   onSetStage: SetStage;
+  /** The stage a click is currently writing, and for which flat — see Places. Both routes onto a
+   *  card refuse a second move while the first is in flight, because the board is the surface where
+   *  two moves in a row are the normal way to use it. */
+  stageSaving: { rightmoveId: string; stage: Stage } | null;
 }) {
   // Held while a drop onto Archived waits for its reason: the database requires one and inventing
   // `other` on the user's behalf would write an account of what happened that nobody gave.
@@ -56,6 +61,7 @@ export function Board({
     setDragging(null);
     setOver(null);
     if (!entry || entry.stage?.stage === stage) return;
+    if (stageSaving?.rightmoveId === entry.rightmoveId) return;
     if (stage === 'archived') setArchiving(entry);
     else onSetStage(entry, stage, null);
   };
@@ -108,7 +114,10 @@ export function Board({
                     setDragging(null);
                     setOver(null);
                   }}
-                  onMove={(to) => (to === 'archived' ? setArchiving(entry) : onSetStage(entry, to, null))}
+                  saving={stageSaving?.rightmoveId === entry.rightmoveId ? stageSaving.stage : null}
+                  onMove={(to) =>
+                    to === 'archived' ? setArchiving(entry) : onSetStage(entry, to, null)
+                  }
                 />
               ))}
               {pile.length === 0 && <p className="board-empty dim">—</p>}
@@ -131,6 +140,7 @@ export function Board({
 function BoardCard({
   entry,
   dragging,
+  saving,
   onOpen,
   onDragStart,
   onDragEnd,
@@ -138,6 +148,8 @@ function BoardCard({
 }: {
   entry: ShortlistEntry;
   dragging: boolean;
+  /** Where this card is being moved to, while the write is in flight. */
+  saving: Stage | null;
   onOpen: (rightmoveId: string) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
@@ -145,10 +157,11 @@ function BoardCard({
 }) {
   const group = groupOf(entry.verdicts);
   const reason = entry.stage?.archiveReason;
+  const shown = saving ?? entry.stage?.stage ?? null;
   return (
     <article
-      className={`board-card${dragging ? ' board-card-lifted' : ''}`}
-      draggable
+      className={`board-card${dragging ? ' board-card-lifted' : ''}${saving ? ' board-card-saving' : ''}`}
+      draggable={!saving}
       onDragStart={(event) => {
         // Firefox will not start a drag at all without data on the transfer.
         event.dataTransfer.setData('text/plain', entry.rightmoveId);
@@ -173,10 +186,11 @@ function BoardCard({
       >
         {(close) => (
           <ul className="menu-list">
-            {STAGES.filter((s) => s.value !== entry.stage?.stage).map((s) => (
+            {STAGES.filter((s) => s.value !== shown).map((s) => (
               <li key={s.value}>
                 <button
                   type="button"
+                  disabled={Boolean(saving)}
                   onClick={() => {
                     onMove(s.value);
                     close();

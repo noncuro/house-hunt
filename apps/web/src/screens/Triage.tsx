@@ -124,8 +124,15 @@ export function Triage({
     setAt(shown[index + 1]?.rightmoveId ?? null);
   };
 
+  // Written at commit rather than during the render that produced them, for the reason `Pager`
+  // gives: React can start a render and throw it away, and a ref assigned on the way past keeps
+  // the closures of a render that never happened. Here that means `j` and a rating key acting on
+  // the flat a discarded render was about to show rather than the one on screen — which for a
+  // rating is a verdict for the whole hunt, written against the wrong flat.
   const keys = useRef({ step, rateHere, has: Boolean(current) });
-  keys.current = { step, rateHere, has: Boolean(current) };
+  useEffect(() => {
+    keys.current = { step, rateHere, has: Boolean(current) };
+  });
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
