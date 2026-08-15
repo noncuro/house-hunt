@@ -733,9 +733,6 @@ export async function stageOf(rightmoveId: string): Promise<StoredStage | null> 
   return data ? { stage: data.stage, archiveReason: data.archive_reason, setBy: data.set_by } : null;
 }
 
-/** Whether a flat is marked off the market — a row in `training_exclusion`, which is one table for
- *  two jobs: the model leaves these out, and the shortlist stops drawing them. Read here because
- *  the hiding is the visible half and the row is the half that outlives the page. */
 /** Mark a flat gone, or bring it back, the way the sweep does rather than the way a person does.
  *
  *  The panel's button is offered only on a flat somebody liked — a rejection has nothing to withhold
@@ -759,6 +756,9 @@ export async function setOffMarketDirectly(rightmoveId: string, off: boolean): P
   if (error) throw new Error(`fixture: writing training_exclusion: ${error.message}`);
 }
 
+/** Whether a flat is marked off the market — a row in `training_exclusion`, which is one table for
+ *  two jobs: the model leaves these out, and the shortlist stops drawing them. Read here because
+ *  the hiding is the visible half and the row is the half that outlives the page. */
 export async function offMarketReason(rightmoveId: string): Promise<string | null> {
   const { data, error } = await db
     .from('training_exclusion')
