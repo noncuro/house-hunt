@@ -1419,6 +1419,28 @@ h2 {
   border: 1px solid #bfe6d4;
 }
 
+/* The install one-liner on the Install tab. Shaped like the invite code above and typed nothing
+   like it: an invite code is read off the screen and typed out by hand, a command is copied, so it
+   stays small, unspaced, and scrolls sideways in its own box rather than widening the section or
+   wrapping into something that looks like two lines to paste. */
+.install-command {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.install-command code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: pre;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #f0f4f7;
+  border: 1px solid #dfe6ec;
+}
+
 /* Room kept for the extension check, whether or not it has anything to say — see Extension.tsx.
    One banner's worth of height: a longer one still moves the page, but by the difference rather
    than by the whole thing, and the usual answer is silence. */

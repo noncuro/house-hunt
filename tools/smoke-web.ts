@@ -618,7 +618,10 @@ async function checkTabs({ page }: Stage): Promise<void> {
     // Sweeping folded into Triage. `?v=sweep` still lands here — the redirect is deliberate, since
     // the extension and people's bookmarks point at it — so this covers both.
     ['sweep', ['Scan']],
-    ['install', ['Install the browser extension']],
+    // The one-liner is built from `window.location.origin` after mount, so a landmark that includes
+    // this run's own origin says both that the section rendered and that it addressed the site the
+    // reader is on rather than a baked-in one.
+    ['install', ['Install the browser extension', `curl -fsSL ${ORIGIN}/install.sh`]],
   ] as const) {
     await openView(page, view);
     // Case-insensitively, because `innerText` returns text as *rendered* and these headings are
@@ -629,6 +632,15 @@ async function checkTabs({ page }: Stage): Promise<void> {
     console.log(`${view}: ${missing.length === 0 ? 'ok' : `missing ${missing.join(', ')}`}`);
     for (const l of missing) note(`the ${view} tab never rendered "${l}"`);
     await page.screenshot({ path: resolve(SHOTS, `web-${view}.png`), fullPage: true });
+  }
+
+  // Both files the install tab hands out, fetched rather than read off disk: they are committed
+  // static assets, and a command that 404s looks exactly like a working one until it is run. The
+  // landmark above only says the line was drawn.
+  for (const path of ['/install.sh', '/rightmove-house-hunt.zip']) {
+    const res = await page.request.get(`${ORIGIN}${path}`);
+    console.log(`${path}: ${res.ok() ? 'ok' : `${res.status()}`}`);
+    if (!res.ok()) note(`${path} is not served (${res.status()}) — the install tab points people at it`);
   }
 }
 
