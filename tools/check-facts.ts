@@ -1,7 +1,13 @@
 /** Cases for the fact-resolution logic: which source wins, what counts as a conflict, and how
  *  a listing date reads back as elapsed time. These are pure functions, so they are cheap to
  *  pin down — and both are places where being quietly wrong looks exactly like being right. */
-import { claimLabel, flagsFor, relativeUpdate, resolveReading } from '../packages/core/src/facts';
+import {
+  addressBesidePostcode,
+  claimLabel,
+  flagsFor,
+  relativeUpdate,
+  resolveReading,
+} from '../packages/core/src/facts';
 import { galleryFor } from '../packages/core/src/shortlist';
 import type { Analysis } from '../packages/core/src/types';
 
@@ -182,6 +188,59 @@ check(
   'b.jpg',
 );
 check('no floorplan is not a blank first frame', galleryFor({ imageUrls: ['a.jpg'] }), ['a.jpg']);
+
+console.log('addressBesidePostcode');
+check(
+  'the trailing outward code goes, since the postcode beside it says the same',
+  addressBesidePostcode('Pond Street, Hampstead, NW3', 'NW3 2NW'),
+  'Pond Street, Hampstead',
+);
+// The real one that prompted this: the district filed twice inside the address itself.
+check(
+  'every repeat of it goes, not only the last',
+  addressBesidePostcode('Greencroft Gardens, NW6, South Hampstead, London, NW6', 'NW6 1HX'),
+  'Greencroft Gardens, South Hampstead, London',
+);
+check(
+  'a different district is a disagreement, and stays on screen',
+  addressBesidePostcode('Pond Street, Hampstead, NW3', 'N1 7RB'),
+  'Pond Street, Hampstead, NW3',
+);
+check(
+  'no postcode, nothing to trim against',
+  addressBesidePostcode('Pond Street, Hampstead, NW3', null),
+  'Pond Street, Hampstead, NW3',
+);
+// Trimming this one to nothing would leave the card with a blank where the address goes, which is
+// worse than saying the district twice.
+check(
+  'an address that is only its district is left alone',
+  addressBesidePostcode('NW3', 'NW3 2NW'),
+  'NW3',
+);
+
+console.log('flag wording');
+// The number is the difference between a bedsit and a 440 sq ft reception, and "small rooms" alone
+// covers both.
+check(
+  'a small main room says how small',
+  flagsFor({ analysis: analysis({ biggestRoomSqft: 320, biggestRoomConfidence: 'high' }), floorplanUrl: 'p.png' })
+    .find((f) => f.key === 'rooms')?.text,
+  'small rooms · 320 sq ft',
+);
+// The severity says how much it matters; the words used to say it a second time.
+check(
+  'a must-have absence is not also spelled out in words',
+  flagsFor(noBath, { amenities: { bathtub: 'must' } }).find((f) => f.key === 'bathtub')?.text,
+  'no bathtub',
+);
+check(
+  'and neither is one the defaults had nothing to say about',
+  flagsFor({ analysis: analysis({ hasDishwasher: false }), floorplanUrl: 'p.png' }, {
+    amenities: { dishwasher: 'must' },
+  }).find((f) => f.key === 'dishwasher')?.text,
+  'no dishwasher',
+);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');
