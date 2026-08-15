@@ -6,7 +6,7 @@
  *  Showing all of them is noise; showing one silently hides that a check is warranted. So we
  *  show the most trustworthy one, mark it, and put the rest one hover away. */
 
-import type { Confidence, Laundry, LightLevel } from './types';
+import type { Confidence, Laundry, LightLevel, SleepingSeparation } from './types';
 import type { SweepCriteria } from './sweep';
 
 export interface Candidate {
@@ -161,7 +161,8 @@ export const APPROXIMATE_SIZE_HELP =
  *  we asked it for one, and those were mostly floorplan reads. */
 export type Claim =
   | 'house-share'
-  | 'bed-in-kitchen'
+  | 'sleeping-same-space'
+  | 'sleeping-practically-separate'
   | 'laundry-none'
   | 'laundry-building'
   | 'laundry-unit'
@@ -207,10 +208,15 @@ const CLAIM_WORDING: Record<Claim, Record<Confidence, string>> = {
     medium: 'looks like a house share',
     low: 'may be a house share',
   },
-  'bed-in-kitchen': {
-    high: 'bed in the kitchen',
-    medium: 'bed looks to be in the kitchen',
-    low: 'bed may be in the kitchen',
+  'sleeping-same-space': {
+    high: 'bed and kitchen in one room',
+    medium: 'bed and kitchen look to share a room',
+    low: 'bed and kitchen may share a room',
+  },
+  'sleeping-practically-separate': {
+    high: 'kitchen out of the sleeping area',
+    medium: 'kitchen looks separate from the bed',
+    low: 'kitchen may be separate from the bed',
   },
   'laundry-none': {
     high: 'nowhere to wash clothes',
@@ -270,10 +276,24 @@ export const OUTDOOR_MINIMUM_SQFT = 20;
  *  a preference changes a flat's flags. The shape lives with this logic on purpose — adding a
  *  preference is a change here, not a migration, because the store is a jsonb blob. */
 export type AmenityWant = 'must' | 'nice';
-/** The amenities a hunt can prioritise. Each maps to one analysis field in `AMENITY` below. The two
- *  facts that end a conversation on their own — a house share, a bed in the kitchen — are not here:
- *  they are already hard red for every hunt, so a "must not have" toggle would say nothing new. */
-export type AmenityKey = 'outdoor' | 'dishwasher' | 'bathtub' | 'inUnitLaundry' | 'brightLight' | 'billsIncluded';
+/** The amenities a hunt can prioritise. Each maps to one analysis field in `AMENITY` below.
+ *
+ *  A house share and a kitchen you sleep in used to be missing from this list, on the reasoning
+ *  that both were already hard red for every hunt so a toggle "would say nothing new". That was
+ *  wrong twice over. It assumed every hunt shares one taste — some people are looking for a room
+ *  in a share, and a mezzanine studio is a fine flat to plenty of people — and, because triage
+ *  builds its filter from this same table, the omission quietly meant the two facts most likely
+ *  to kill a listing were the two you could not clear out of the pile after a sweep. */
+export type AmenityKey =
+  | 'outdoor'
+  | 'dishwasher'
+  | 'bathtub'
+  | 'inUnitLaundry'
+  | 'anyLaundry'
+  | 'brightLight'
+  | 'billsIncluded'
+  | 'separateSleeping'
+  | 'wholeProperty';
 export interface HuntPreferences {
   /** A biggest-room bar in sq ft: a flat whose largest room clears it earns the great-room mark.
    *  Null/absent leaves the default `BIGGEST_ROOM_BIG_SQFT`. */
@@ -293,6 +313,13 @@ export interface HuntPreferences {
    *  under what you asked for — which is the same reading the main-room flag has always had. Absent
    *  means the floor is the whole of the opinion. */
   targetSqft?: number | null;
+  /** The fewest bedrooms this hunt will take, where 0 is "a studio is fine".
+   *
+   *  Zero rather than a separate "studio" flag because that is what a studio *is* — no bedroom —
+   *  and the two forms would then have to agree with each other forever. Triage has had this bar
+   *  since it had filters; the hunt itself had no way to state it, so the shortlist could not say
+   *  a flat was under it. Absent means no opinion. */
+  minBedrooms?: number | null;
   /** Per amenity, whether the hunt must have it or would merely like it. Absent means "don't mind",
    *  which is the default behaviour these flags already had. */
   amenities?: Partial<Record<AmenityKey, AmenityWant>>;
@@ -385,13 +412,18 @@ export interface FlagSource {
     laundryConfidence?: Confidence | null;
     hasDishwasher?: boolean | null;
     dishwasherConfidence?: Confidence | null;
-    bedInKitchen?: boolean | null;
-    bedInKitchenConfidence?: Confidence | null;
+    sleepingSeparation?: SleepingSeparation | null;
+    sleepingSeparationConfidence?: Confidence | null;
+    /** The model's own count off the floorplan, which is the one the bedroom bar is judged on —
+     *  see the flag below for why it is not Rightmove's. */
+    bedrooms?: number | null;
     utilitiesIncluded?: boolean | null;
     utilitiesConfidence?: Confidence | null;
     naturalLight?: LightLevel | null;
     naturalLightConfidence?: Confidence | null;
   } | null;
+  /** Rightmove's own bedroom count, used only when the model has not read one off the floorplan. */
+  bedrooms?: number | null;
   floorplanUrl?: string | null;
   /** Where the flat's floor area can be read from — the same `SizeSource` the size on screen beside
    *  the flags is resolved from, so the two can't disagree about which figure wins. Callers already
@@ -405,9 +437,23 @@ export interface FlagSource {
    floorplan, and the bath glyph marked both "bathtub" and "no bathtub". `FlagChip` draws the glyph
    now, from `key` and `severity`, out of the one drawn icon set both surfaces share. */
 
-export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: HuntPreferences): Flag[] {
+export function flagsFor({ analysis, bedrooms, floorplanUrl, size }: FlagSource, prefs?: HuntPreferences): Flag[] {
   const flags: Flag[] = [];
   const floorArea = size ? resolveSize(size) : null;
+
+  // The model's count first, because it is read off the floorplan and the listing's is typed by
+  // the agent — a "one bedroom" whose plan draws no bedroom is the case worth catching, and it is
+  // the direction the error always runs in. Falls back to the listing's when there was no plan to
+  // read. Unknown clears the bar, as everywhere else.
+  const beds = analysis?.bedrooms ?? bedrooms ?? null;
+  if (prefs?.minBedrooms != null && beds !== null && beds < prefs.minBedrooms) {
+    flags.push({
+      key: 'bedrooms',
+      severity: 'red',
+      text: beds === 0 ? `studio — you asked for ${prefs.minBedrooms}+` : `${beds} bed — you asked for ${prefs.minBedrooms}+`,
+      confidence: null,
+    });
+  }
 
   // The whole flat against the hunt's own bar, before anything the photos say. Only when both
   // numbers exist: an unmeasured flat is not a small one (the same rule triage's filters follow),
@@ -517,24 +563,36 @@ export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: H
     });
   }
 
-  // The five amenities, in the order they decide anything.
+  // The amenities, in the order they decide anything.
   //
-  // Two of them can end the conversation on their own and are red for that reason: a room in a
-  // house share is not the thing being looked for at all, and a bed in the kitchen is a studio
-  // wearing a one-bedroom's clothes. The rest are things you would want to know before a viewing
-  // and would not cancel one over.
+  // A house share is red rather than amber because it is not the thing most hunts are looking for
+  // at all. It is still a preference like the rest of them — a hunt that has not said it minds
+  // sees nothing, and one that is looking for a room in a share can say so.
   const share = analysis.houseShareConfidence ?? null;
   if (analysis.isHouseShare) {
     flags.push({ key: 'share', severity: 'red', text: claimLabel('house-share', share), confidence: share });
   }
 
-  const kitchenBed = analysis.bedInKitchenConfidence ?? null;
-  if (analysis.bedInKitchen) {
+  // Only the two studio answers say anything, for the reason the light and bills flags give: a
+  // green "separate bedroom" on every one- and two-bed is a column of noise, and it is the answer
+  // you already knew from the bedroom count.
+  const sleeping = analysis.sleepingSeparationConfidence ?? null;
+  if (analysis.sleepingSeparation === 'same-space') {
+    // Amber, not red. Whether a studio is a dealbreaker is exactly the taste this is a preference
+    // for; a hunt that says it must have the kitchen out of the bedroom gets a red from
+    // `applyAmenityWants` below.
     flags.push({
-      key: 'bed-in-kitchen',
-      severity: 'red',
-      text: claimLabel('bed-in-kitchen', kitchenBed),
-      confidence: kitchenBed,
+      key: 'sleeping',
+      severity: 'yellow',
+      text: claimLabel('sleeping-same-space', sleeping),
+      confidence: sleeping,
+    });
+  } else if (analysis.sleepingSeparation === 'practically-separate') {
+    flags.push({
+      key: 'sleeping',
+      severity: 'good',
+      text: claimLabel('sleeping-practically-separate', sleeping),
+      confidence: sleeping,
     });
   }
 
@@ -682,12 +740,24 @@ export const AMENITIES: Array<{
   { key: 'outdoor', name: 'Outdoor space', flagKey: 'outdoor', label: 'outdoor space', present: (a) => a.hasOutdoorSpace ?? null },
   { key: 'dishwasher', name: 'Dishwasher', flagKey: 'dishwasher', label: 'dishwasher', present: (a) => a.hasDishwasher ?? null },
   { key: 'bathtub', name: 'Bathtub', flagKey: 'bathtub', label: 'bathtub', present: (a) => a.hasBathtub ?? null },
+  // Laundry is asked twice because it has three answers and a hunt's bar can sit at either of the
+  // two that are not "none". One row collapsing them meant a hunt could only ever say "in the
+  // flat", so a communal machine in the basement counted for exactly as much as no machine at all.
+  // Both rows are answerable at once and mean different things together: must-have a machine in
+  // the building, nice-to-have it in the flat.
   {
     key: 'inUnitLaundry',
-    name: 'In-unit laundry',
+    name: 'Laundry in the flat',
     flagKey: 'laundry',
     label: 'in-unit laundry',
     present: (a) => (a.laundry == null ? null : a.laundry === 'in-unit'),
+  },
+  {
+    key: 'anyLaundry',
+    name: 'Laundry in the building',
+    flagKey: 'laundry',
+    label: 'somewhere to wash clothes',
+    present: (a) => (a.laundry == null ? null : a.laundry !== 'none'),
   },
   {
     key: 'brightLight',
@@ -703,6 +773,23 @@ export const AMENITIES: Array<{
     flagKey: 'bills',
     label: 'bills included',
     present: (a) => a.utilitiesIncluded ?? null,
+  },
+  {
+    key: 'separateSleeping',
+    name: 'Kitchen out of the bedroom',
+    flagKey: 'sleeping',
+    label: 'kitchen out of the bedroom',
+    // Practically separate counts. That is the whole reason the field is three-valued: a mezzanine
+    // reached by a ladder is one room on the plan and two in use, and a hunt that wants the hob out
+    // of sight of the bed has got what it asked for.
+    present: (a) => (a.sleepingSeparation == null ? null : a.sleepingSeparation !== 'same-space'),
+  },
+  {
+    key: 'wholeProperty',
+    name: 'Whole property, not a room',
+    flagKey: 'share',
+    label: 'the whole property',
+    present: (a) => (a.isHouseShare == null ? null : !a.isHouseShare),
   },
 ];
 

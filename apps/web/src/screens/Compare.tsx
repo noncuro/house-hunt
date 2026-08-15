@@ -697,6 +697,17 @@ function featureColumns(): Column[] {
       render: (e) => e.analysis?.naturalLight ?? dash(),
     },
     {
+      // Ranked the way you would rather have it, and "practically separate" sits above "same
+      // space" rather than beside it — a mezzanine is the answer this column exists to tell apart
+      // from a hob at the foot of the bed.
+      key: 'sleeping',
+      label: 'Bed vs kitchen',
+      offByDefault: true,
+      bigIsBetter: true,
+      value: (e) => SLEEPING_RANK[e.analysis?.sleepingSeparation ?? 'unknown'] ?? null,
+      render: (e) => SLEEPING_WORDING[e.analysis?.sleepingSeparation ?? 'unknown'] ?? dash(),
+    },
+    {
       // The single largest habitable room — the "great room" a hunt can set a bar for in settings.
       key: 'biggest-room',
       label: 'Biggest room',
@@ -714,6 +725,12 @@ function featureColumns(): Column[] {
 
 const LAUNDRY_RANK: Record<string, number> = { 'in-unit': 2, 'in-building': 1, none: 0 };
 const LIGHT_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
+const SLEEPING_RANK: Record<string, number> = { 'separate-room': 2, 'practically-separate': 1, 'same-space': 0 };
+const SLEEPING_WORDING: Record<string, string> = {
+  'separate-room': 'separate room',
+  'practically-separate': 'practically separate',
+  'same-space': 'same space',
+};
 
 /** A neutral present/absent cell for a boolean fact: a tick for yes, a muted "no" for no, a dash for
  *  unknown — the last never reads as a "no". */
@@ -821,7 +838,10 @@ function forPlace(entry: ShortlistEntry, placeId: string, travel: Record<string,
 /** Only the problems, from the one definition in facts.ts. */
 function problems(entry: ShortlistEntry, prefs?: HuntPreferences): Flag[] {
   return problemsOnly(
-    flagsFor({ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) }, prefs),
+    flagsFor(
+      { analysis: entry.analysis, bedrooms: entry.bedrooms, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) },
+      prefs,
+    ),
   );
 }
 

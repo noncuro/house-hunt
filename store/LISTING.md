@@ -31,7 +31,7 @@ ONE VERDICT, SHARED
 You and the people you are looking with share one rating per flat, not one each. It says who set it and when. Rate from the listing page or from the shortlist, and everyone sees it immediately — which means nobody views a flat the other person already rejected.
 
 WHAT THE PHOTOGRAPHS ACTUALLY SHOW
-Listings are written to flatter. The extension reads the floorplan and the photographs and reports what it finds: usable floor area, the size of the smallest bedroom, whether the "garden" is a balcony, whether the washing machine is in the flat or in a shared basement, whether there is a bed in the kitchen. Each finding says how confident it is, so you can tell a measurement from a guess.
+Listings are written to flatter. The extension reads the floorplan and the photographs and reports what it finds: usable floor area, the size of the smallest bedroom, whether the "garden" is a balcony, whether the washing machine is in the flat or in a shared basement, whether the kitchen and the bed are really in the same room or only on the same floorplan. Each finding says how confident it is, so you can tell a measurement from a guess.
 
 A SHORTLIST YOU CAN ACTUALLY DECIDE FROM
 Everything you have opened, in one place: a sortable table for comparing, a map for seeing which are near each other, and a triage view for working through the pile you have not judged yet.

@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import type { ExtensionState } from '@/lib/bridge';
 import { EXPECTED_EXTENSION_VERSION, extensionBehind } from '@/lib/extension-version';
 import { useExtension } from '@/lib/queries';
@@ -54,8 +55,10 @@ export function Install({ email }: { email: string }) {
         </div>
       </section>
 
+      <OneLiner />
+
       <section className="setting">
-        <h2>Load it into Chrome</h2>
+        <h2>Or load it into Chrome by hand</h2>
         <ol className="steps">
           <li>
             Unzip it somewhere you will not move or delete —{' '}
@@ -83,13 +86,72 @@ export function Install({ email }: { email: string }) {
       <section className="setting">
         <h2>Updating it</h2>
         <p className="dim">
-          When a newer build is posted, download the zip again, replace the contents of the same
-          folder, and hit <strong>Reload</strong> on <code>chrome://extensions</code>. Your session
-          and settings survive that, and they survive moving the folder too — the manifest pins the
-          extension id.
+          Run the one-liner again — it goes back to the folder it used last time, so there is never
+          a second copy for Chrome to keep reading. By hand: download the zip again and replace the
+          contents of the same folder. Either way, hit <strong>Reload</strong> on{' '}
+          <code>chrome://extensions</code> afterwards and check the card shows the new version.
+        </p>
+        <p className="dim">
+          Your session and settings survive that, and they survive moving the folder too — the
+          manifest pins the extension id.
         </p>
       </section>
     </div>
+  );
+}
+
+/** The terminal route: one line that downloads the zip, unpacks it, and says what to do in Chrome.
+ *
+ *  It exists for the update rather than the first install. Unzipping into the folder Chrome is
+ *  already loading is the step people get wrong — a second copy ends up somewhere new, Chrome keeps
+ *  reading the old one, and the site goes on saying they are out of date after they have just
+ *  updated. The script remembers the folder from the first run, so every run after that replaces
+ *  the contents of the right one without asking.
+ *
+ *  The origin is passed as an argument rather than baked into the script, so the same line works on
+ *  production, on a preview deployment and against localhost — whichever of them you are reading
+ *  this on is the one it installs from, and the script refuses to guess if it is left off.
+ *
+ *  Rendered only after mount: `window` does not exist while this is prerendered, and the address is
+ *  the one thing the line cannot be written without. */
+function OneLiner() {
+  const [origin, setOrigin] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => setOrigin(window.location.origin), []);
+
+  // Both interpolations are quoted for the shell that will run them. An ordinary DNS origin needs
+  // no quotes, and an IPv6 one — `http://[::1]:3100` — is a glob: bash expands the brackets against
+  // the caller's working directory, and a matching filename there silently rewrites both the URL
+  // curl fetches and the address the script is told to install from.
+  const command = origin ? `curl -fsSL "${origin}/install.sh" | bash -s -- "${origin}"` : '';
+
+  return (
+    <section className="setting">
+      <h2>Install it from the terminal</h2>
+      <p className="dim">
+        macOS and Linux. It asks where to keep the extension the first time — anywhere you will not
+        move or delete, and <code>~/Applications/rightmove-house-hunt</code> is the default — then
+        remembers, so later runs update that same folder in place.
+      </p>
+      <p className="install-command">
+        <code>{command || '…'}</code>
+        <button
+          className="key"
+          disabled={!command}
+          onClick={() => {
+            void navigator.clipboard.writeText(command).then(() => setCopied(true));
+          }}
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </p>
+      <p className="dim">
+        It cannot reload Chrome for you — an unpacked extension is read off disk by the browser —
+        so it finishes by telling you where to click and which version number you should see once
+        you have.
+      </p>
+    </section>
   );
 }
 

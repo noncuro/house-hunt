@@ -20,8 +20,13 @@ export const AMENITY_SUBJECT: Record<AmenityKey, { icon: IconName; hue: SubjectH
   dishwasher: { icon: 'dishwasher', hue: 'water' },
   bathtub: { icon: 'bathtub', hue: 'water' },
   inUnitLaundry: { icon: 'laundry', hue: 'water' },
+  // The same picture as in-unit laundry, and deliberately: they are one subject asked at two bars,
+  // and a different glyph would read as a different fixture.
+  anyLaundry: { icon: 'laundry', hue: 'water' },
   brightLight: { icon: 'light', hue: 'warm' },
   billsIncluded: { icon: 'bills', hue: 'warm' },
+  separateSleeping: { icon: 'bed', hue: 'muted' },
+  wholeProperty: { icon: 'places', hue: 'muted' },
 };
 
 const BY_KEY = new Map(AMENITIES.map((a) => [a.key, a]));

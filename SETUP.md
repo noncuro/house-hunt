@@ -54,6 +54,16 @@ up. Open the shortlist, go to **House hunt**, and put in their email.
 
 ## Installing it
 
+On macOS or Linux the **Install** tab has a one-liner that does the download and the unzipping for
+you — copy it from there rather than from here, since it carries the address of the site you are
+signed in to. It asks where to keep the folder the first time (`~/Applications/rightmove-house-hunt`
+by default), remembers the answer in `~/.config/rightmove-house-hunt/install.conf`, and every run
+after that replaces the contents of that same folder, which is the step that goes wrong by hand. It
+still cannot reload Chrome — nothing outside the browser can — so it ends by printing steps 2–4 of
+**Updating it** below and the version number you should see once you have done them.
+
+By hand, on any machine:
+
 1. Unzip it somewhere you will not move or delete — `~/Applications/rightmove-house-hunt` is fine.
    **The folder has to stay where it is**; Chrome loads it from disk every time it starts.
 2. Go to `chrome://extensions`.
@@ -72,8 +82,9 @@ who set it and when.
 
 ## Updating it
 
-Rebuild, re-zip, send. Replace the contents of the same folder and hit **Reload** on
-`chrome://extensions`.
+Rebuild, re-zip, send. Run the one-liner again — it goes back to the folder it used last time — or
+replace the contents of the same folder by hand, then hit **Reload** on `chrome://extensions` and
+check the card shows the new version.
 
 **Your session and settings survive that**, and they survive moving the folder too. The manifest
 carries a fixed `key`, which pins the extension id. Without it Chrome derives the id from the

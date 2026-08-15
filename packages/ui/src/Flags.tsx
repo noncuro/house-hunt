@@ -57,10 +57,6 @@ const SUBJECT: Record<string, { icon: IconName; hue: SubjectHue }> = {
   rooms: { icon: 'room', hue: 'warm' },
   floorplan: { icon: 'floorplan', hue: 'muted' },
   size: { icon: 'size', hue: 'muted' },
-  // Neither of these is a fixture with a picture — they are things about how the flat is *lived
-  // in*, and both are dealbreakers rather than amenities, so they take the warning glyph.
-  share: { icon: 'warning', hue: 'muted' },
-  'bed-in-kitchen': { icon: 'warning', hue: 'muted' },
 };
 
 /** Severity decides the glyph for everything that is not good news, so the two can never argue:

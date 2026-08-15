@@ -104,14 +104,15 @@ function analysis(fields: Partial<Analysis>): Analysis {
     hasOutdoorSpace: null, outdoorKind: null, outdoorSqft: null, outdoorIsEstimate: null,
     outdoorConfidence: null, isHouseShare: null, houseShareConfidence: null,
     laundry: null, laundryConfidence: null, hasDishwasher: null, dishwasherConfidence: null,
-    bedInKitchen: null, bedInKitchenConfidence: null, utilitiesIncluded: null, utilitiesConfidence: null,
+    sleepingSeparation: null, sleepingSeparationConfidence: null, utilitiesIncluded: null, utilitiesConfidence: null,
     naturalLight: null, naturalLightConfidence: null, summary: null,
     ...fields,
   };
 }
 
 const noBath = { analysis: analysis({ hasBathtub: false }), floorplanUrl: 'plan.png' };
-const keys = (prefs?: Parameters<typeof flagsFor>[1]) => flagsFor(noBath, prefs).map((f) => f.key);
+const keys = (prefs?: Parameters<typeof flagsFor>[1]) => keysOf(flagsFor(noBath, prefs));
+const keysOf = (flags: ReturnType<typeof flagsFor>) => flags.map((f) => f.key);
 
 // The complaint this exists for: the Your Hunt page offers "Don't mind" and it used to do nothing,
 // so a hunt that had said it did not care still got "no bathtub" on every panel.
@@ -134,6 +135,80 @@ check(
   keys({ amenities: { bathtub: 'must' } }).includes('outdoor'),
   false,
 );
+// A studio is one room on the plan and can still be two in practice. The boolean this replaced
+// could not tell those apart, and called both of them a bed in the kitchen.
+const mezzanine = { analysis: analysis({ sleepingSeparation: 'practically-separate' }), floorplanUrl: 'plan.png' };
+const bedsit = { analysis: analysis({ sleepingSeparation: 'same-space' }), floorplanUrl: 'plan.png' };
+const minds = { amenities: { separateSleeping: 'must' as const } };
+check(
+  'a mezzanine studio is not held against a hunt that wants the kitchen out of the bedroom',
+  flagsFor(mezzanine, minds).find((f) => f.key === 'sleeping')?.severity,
+  'good',
+);
+check(
+  'and one open room is, in red, because they said it was a must',
+  flagsFor(bedsit, minds).find((f) => f.key === 'sleeping')?.severity,
+  'red',
+);
+check(
+  'a hunt that has not said it minds hears nothing either way',
+  keysOf(flagsFor(bedsit, undefined)).includes('sleeping'),
+  false,
+);
+check(
+  'and a real bedroom is never remarked on — the bedroom count already said that',
+  keysOf(
+    flagsFor({ analysis: analysis({ sleepingSeparation: 'separate-room' }), floorplanUrl: 'plan.png' }, minds),
+  ).includes('sleeping'),
+  false,
+);
+
+// A house share stopped being everybody's dealbreaker and became a preference like the rest: some
+// hunts are looking for a room in a share.
+const share = { analysis: analysis({ isHouseShare: true }), floorplanUrl: 'plan.png' };
+check(
+  'a house share is flagged for a hunt that wants the whole property',
+  flagsFor(share, { amenities: { wholeProperty: 'must' } }).find((f) => f.key === 'share')?.severity,
+  'red',
+);
+check('and not for one that never said', keysOf(flagsFor(share, undefined)).includes('share'), false);
+
+// Laundry has three answers, and a hunt's bar sits at one of the two that are not "none".
+const communal = { analysis: analysis({ laundry: 'in-building' }), floorplanUrl: 'plan.png' };
+check(
+  'a machine in the basement satisfies a hunt that only needs one in the building',
+  flagsFor(communal, { amenities: { anyLaundry: 'must' } }).find((f) => f.key === 'laundry')?.severity,
+  'yellow',
+);
+check(
+  'and fails one that wants it in the flat',
+  flagsFor(communal, { amenities: { inUnitLaundry: 'must' } }).find((f) => f.key === 'laundry')?.severity,
+  'red',
+);
+
+// The bedroom bar, judged on the model's count off the floorplan rather than the agent's typing.
+check(
+  'a studio is under a one-bedroom bar, and says so in those words',
+  flagsFor({ analysis: analysis({ bedrooms: 0 }), floorplanUrl: 'plan.png' }, { minBedrooms: 1 }).find(
+    (f) => f.key === 'bedrooms',
+  )?.text,
+  'studio — you asked for 1+',
+);
+check(
+  'the floorplan beats the listing when the two disagree',
+  keysOf(
+    flagsFor({ analysis: analysis({ bedrooms: 1 }), bedrooms: 2, floorplanUrl: 'plan.png' }, { minBedrooms: 2 }),
+  ).includes('bedrooms'),
+  true,
+);
+check(
+  'and a count nobody has clears the bar, like every other unknown',
+  keysOf(
+    flagsFor({ analysis: analysis({ bedrooms: null }), floorplanUrl: 'plan.png' }, { minBedrooms: 3 }),
+  ).includes('bedrooms'),
+  false,
+);
+
 // The flags that are not a matter of taste stay regardless — a missing floorplan is missing
 // whatever anybody prefers.
 check(

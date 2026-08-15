@@ -72,7 +72,7 @@ export function FlatCard({
 
   const stations = stationsLine(entry);
   const flags = flagsFor(
-    { analysis: entry.analysis, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) },
+    { analysis: entry.analysis, bedrooms: entry.bedrooms, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) },
     prefs,
   );
 

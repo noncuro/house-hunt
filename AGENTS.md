@@ -262,7 +262,12 @@ never a step somebody has to remember. `pnpm package` also writes
 `rightmove-house-hunt.sources.json`, the hash of every source file it was built from, and
 `pnpm check:zip` recomputes those and compares. The version strings are checked too, but they are
 the weaker half and were never the problem: three of them agreed perfectly while the zip beside them
-was a month old. `tools/package-stamp.ts` says why this is a stamp rather than a rebuild — the
+was a month old. `apps/web/public/install.sh` is the terminal route onto the same zip, and lives in `public/` because
+the file people execute has to be the file in git — a copied-into-place installer is the step that
+does not get done, which the zip beside it already demonstrated. It takes the site's origin as an
+argument (the Install tab's one-liner passes its own, so previews and localhost work) and reads the
+version out of the downloaded manifest rather than being told it, so it is not a fourth copy of that
+number. `tools/package-stamp.ts` says why this is a stamp rather than a rebuild — the
 bundle bakes in `WXT_*`, so CI's `.env.ci` build could never match a zip built against the real one. `SETUP.md` goes with it. The manifest carries a fixed `key` so the
 extension id survives moving the folder.
 

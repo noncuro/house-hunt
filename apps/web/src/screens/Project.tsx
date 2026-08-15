@@ -149,12 +149,15 @@ function Segments<T>({
   value,
   busy,
   onPick,
+  testid,
 }: {
   label: string;
-  choices: { value: T; label: string }[];
+  choices: { value: T; label: string; testid?: string }[];
   value: T;
   busy: boolean;
   onPick: (value: T) => void;
+  /** Prefix for a per-choice testid, when a check needs to name one segment. */
+  testid?: string;
 }) {
   return (
     <div className="hunt-seg" role="group" aria-label={label}>
@@ -165,6 +168,7 @@ function Segments<T>({
           className={choice.value === value ? 'hunt-seg-pick hunt-seg-on' : 'hunt-seg-pick'}
           aria-pressed={choice.value === value}
           disabled={busy}
+          data-testid={testid && choice.testid ? `${testid}-${choice.testid}` : undefined}
           onClick={() => onPick(choice.value)}
         >
           {choice.label}
@@ -344,6 +348,22 @@ const WANT_CHOICES: { value: AmenityWant | null; label: string }[] = [
   { value: 'must', label: 'Must' },
 ];
 
+/** The fewest bedrooms, with a studio at the bottom of the scale where it belongs — a studio is a
+ *  flat with no bedroom, so it is 0 rather than a category of its own that would have to be kept
+ *  in agreement with the number forever.
+ *
+ *  "Studio" excludes nothing, which is also true of "Don't mind", and it is still worth having:
+ *  saying a studio is fine is a different act from never having answered, and the hunt is shared
+ *  by up to six people who read these settings to find out what everyone agreed to. */
+const BEDROOM_CHOICES: { value: number | null; label: string; testid: string }[] = [
+  { value: null, label: "Don't mind", testid: 'any' },
+  { value: 0, label: 'Studio', testid: '0' },
+  { value: 1, label: '1 bed', testid: '1' },
+  { value: 2, label: '2 beds', testid: '2' },
+  { value: 3, label: '3 beds', testid: '3' },
+  { value: 4, label: '4+ beds', testid: '4' },
+];
+
 function HuntSettings({ notify }: { notify: Notify }) {
   const settings = useProjectSettings();
   const save = useSetProjectSettings();
@@ -468,6 +488,20 @@ function HuntSettings({ notify }: { notify: Notify }) {
             },
           ]}
         />
+
+        <div className="hunt-row">
+          <span className="hunt-row-label">
+            <Icon name="bed" size={13} /> Bedrooms, at least
+          </span>
+          <Segments
+            label="Bedrooms, at least"
+            testid="min-bedrooms"
+            choices={BEDROOM_CHOICES}
+            value={draft.minBedrooms ?? null}
+            busy={busy}
+            onPick={(v) => commit({ ...draft, minBedrooms: v })}
+          />
+        </div>
 
         {/* From `AMENITIES` in core rather than a list of its own: this page, the flags and
             triage's filters all ask what a flat has, and three copies of the list is three chances

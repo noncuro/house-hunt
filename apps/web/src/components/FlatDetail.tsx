@@ -149,7 +149,12 @@ export function FlatDetail({
       </p>
 
       <Flags
-        source={{ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) }}
+        source={{
+          analysis: entry.analysis,
+          bedrooms: entry.bedrooms,
+          floorplanUrl: entry.floorplanUrl,
+          size: sizeOf(entry),
+        }}
         prefs={prefs}
       />
 
