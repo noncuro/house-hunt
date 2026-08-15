@@ -1678,3 +1678,18 @@ h2 {
   padding-left: 18px;
   font-size: 13px;
 }
+
+/* The account line sits above the tabs, right-aligned with them. It used to sit under the heading,
+   which put three stacked lines of text where the page's identity should be and made the top read
+   as a masthead rather than a title. */
+.top-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.top-right .who {
+  margin: 0;
+  font-size: 12px;
+}

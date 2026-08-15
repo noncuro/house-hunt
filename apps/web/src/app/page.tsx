@@ -435,10 +435,13 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
     <div className={view === 'table' || view === 'triage' ? 'wrap wrap-wide' : 'wrap'}>
       <header className="top">
         <div>
-          <h1>Shortlist</h1>
+          {/* The hunt, not the view. This said "Shortlist" on every screen — which is the name of
+              the first tab, so the shortlist announced itself twice and the map announced itself as
+              the shortlist. The one thing true of every view here is which house hunt you are
+              looking at, and it was buried mid-sentence in the line below. */}
+          <h1>{project.name}</h1>
           <p className="dim">
-            {all.length} {all.length === 1 ? 'place' : 'places'} opened in{' '}
-            <strong>{project.name}</strong>, shared with everyone in it.
+            {all.length} {all.length === 1 ? 'place' : 'places'}, shared with everyone in this hunt.
             {/* The count above is the whole hunt, so a filter has to say what is actually on
                 screen — otherwise a shortlist showing two flats claims to be showing forty. */}
             {stageFilter !== 'all' && (
@@ -446,8 +449,12 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
             )}
             {shortlist.isFetching && <span className="working"> · refreshing</span>}
           </p>
-          {/* Who you are, because a verdict is now signed. Sign out sits with it rather than in
-              Settings: the one moment you want it is the moment you notice the wrong name here. */}
+        </div>
+        <div className="top-right">
+          {/* Who you are, because a verdict is signed. Above the tabs rather than under the
+              heading: it is not a fact about the hunt, it is the state of this browser, and it sat
+              in the one place that made the top of the page read as three headings. The moment you
+              want it is the moment you notice the wrong name, which is why it is not in Settings. */}
           <p className="dim who">
             {user.displayName}{' '}
             {user.displayName !== user.email && <span className="who-email">{user.email}</span>}
@@ -455,8 +462,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
               {signOut.isPending ? 'Signing out…' : 'Sign out'}
             </button>
           </p>
-        </div>
-        <div className="views">
+          <div className="views">
           <button className={view === 'list' ? 'view view-on' : 'view'} onClick={() => setView('list')}>
             Shortlist
           </button>
@@ -512,6 +518,7 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           >
             ⚙
           </button>
+          </div>
         </div>
       </header>
 
