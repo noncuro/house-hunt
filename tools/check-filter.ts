@@ -17,8 +17,10 @@ import {
   defaultMax,
   startingBar,
   filterIsOn,
+  huntFloor,
   matchesFilter,
   parseFilter,
+  splitByHuntFloor,
   withKnownPlaces,
   type TravelIndex,
   type TriageFilter,
@@ -125,6 +127,30 @@ check('nobody could tell, stays', matchesFilter(flat({ analysis: analysis({}) })
 // The case that would empty the pile: a flat whose photos have not been analysed at all fails every
 // amenity at once under a `=== true` test, and those are the newest listings in the hunt.
 check('never analysed, stays', matchesFilter(flat({ analysis: null }), wantOutdoor), true);
+
+// ------------------------------------------------------------------------------------------- //
+console.log('\nfloorplan: the one bar where a missing value is an answer');
+
+const wantPlan = only({ hasFloorplan: true });
+check(
+  'a listing with a floorplan stays',
+  matchesFilter(flat({ floorplanUrl: 'https://media.rightmove.co.uk/plan.png' }), wantPlan),
+  true,
+);
+// The whole point of the control, and the one place this file's governing rule is deliberately
+// inverted. Everywhere else a missing value clears the bar, because everywhere else it means the
+// model has not looked. `floorplanUrl` is read off the listing when the flat is first seen, so null
+// means the agent published none — and a filter that kept those would remove nothing at all.
+check('one without goes', matchesFilter(flat({ floorplanUrl: null }), wantPlan), false);
+// It asks about the listing, not about the analysis: a flat nobody has run the vision pass over
+// still has a floorplan if the agent published one.
+check(
+  'and it does not wait for the photos to be read',
+  matchesFilter(flat({ floorplanUrl: 'https://media.rightmove.co.uk/plan.png', analysis: null }), wantPlan),
+  true,
+);
+check('off means don\'t mind, not "must not have"', matchesFilter(flat({ floorplanUrl: null }), NO_FILTER), true);
+check('and it counts as a filter being on', filterIsOn(wantPlan), true);
 
 // Laundry and light are the two whose "has it" is narrower than "is not null" — in-building laundry
 // is not in-unit laundry, and medium light is the model hedging rather than saying yes.
@@ -337,6 +363,10 @@ check(
   only({ maxPrice: 3000, minBedrooms: 2 }),
 );
 check('an amenity we no longer have is dropped', parseFilter({ amenities: ['outdoor', 'helipad'] }), only({ amenities: ['outdoor'] }));
+check('the floorplan toggle survives a round trip', parseFilter({ hasFloorplan: true }), only({ hasFloorplan: true }));
+// A filter stored before this field existed, and one holding something that is not a boolean, both
+// read as off — the direction that shows more flats rather than fewer.
+check('anything but a stored true is off', parseFilter({ hasFloorplan: 'yes' }), NO_FILTER);
 check('a bar of nought is not a bar', parseFilter({ minSqft: 0 }), NO_FILTER);
 check('nor is one that is not a number', parseFilter({ minSqft: '700' }), NO_FILTER);
 check(
@@ -445,6 +475,38 @@ check('a place with a postcode starts on the commute', startingBar(WORK)?.max, 3
 check('a point on the map starts at a mile', startingBar(ANGEL_PLACE)?.max, 1);
 check('minutes default to thirty', defaultMax('transit'), 30);
 check('miles default to one', defaultMax(CROW), 1);
+
+// --------------------------------------------------------------------------------------------- //
+console.log("\nand the hunt's own must-haves, which are a filter nobody set today");
+
+// The three that are bars. `targetSqft` and `greatRoomMinSqft` are deliberately absent below, and a
+// `nice` amenity is the setting that exists precisely so as not to exclude anything — folding any of
+// them in here would empty the pile of flats the hunt said it would look at.
+check('a hunt with no preferences is no filter at all', filterIsOn(huntFloor({})), false);
+check('nor is one that only aims high', filterIsOn(huntFloor({ targetSqft: 900, greatRoomMinSqft: 450 })), false);
+check('nor a nice-to-have', filterIsOn(huntFloor({ amenities: { bathtub: 'nice' } })), false);
+check('a must-have is one', huntFloor({ amenities: { bathtub: 'must', outdoor: 'nice' } }).amenities, ['bathtub']);
+check('and so are the two floors', huntFloor({ minBedrooms: 2, minSqft: 600 }), {
+  ...NO_FILTER, minBedrooms: 2, minSqft: 600,
+});
+// "A studio is fine" is an answer, and it excludes nothing — which is why it is stored as 0 rather
+// than as a category. A `bar()`-style truthiness test here would read it as "don't mind", which is
+// the same behaviour by luck rather than the same meaning.
+check('a hunt that will take a studio excludes nothing', huntFloor({ minBedrooms: 0 }).minBedrooms, 0);
+
+const tiny = flat({ floorAreaSqft: 400, floorAreaSource: 'sizings' });
+const roomy = flat({ rightmoveId: '2', floorAreaSqft: 800, floorAreaSource: 'sizings' });
+const unmeasured = flat({ rightmoveId: '3' });
+const split = splitByHuntFloor([tiny, roomy, unmeasured], { minSqft: 600 });
+check('the flat under the hunt\'s floor is set aside', split.below.map((e) => e.rightmoveId), ['1']);
+// Both halves, and the unknown in the half that is kept: the rule the whole file is about does not
+// stop applying because the bar was set on the Your Hunt page rather than on this screen.
+check('the one over it and the one nobody measured stay', split.above.map((e) => e.rightmoveId), ['2', '3']);
+check(
+  'a hunt with no bars sets nothing aside',
+  splitByHuntFloor([tiny, roomy], {}).below.length,
+  0,
+);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

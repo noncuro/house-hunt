@@ -7,6 +7,7 @@ import {
   groupOf,
   hubsFromProject,
   parseFilter,
+  splitByHuntFloor,
   withKnownPlaces,
   type ArchiveReason,
   type Hub,
@@ -185,11 +186,17 @@ function App({
   // each as itself, because a failed read and "nothing within a mile" are the same blank and
   // opposite claims. Every place, not just the swept ones — the office is not somewhere we look for
   // flats and is still one of the best landmarks to fix a flat against.
-  const hubs: Hub[] | null | undefined = placesQuery.isError
-    ? null
-    : placesQuery.data
-      ? hubsFromProject(placesQuery.data)
-      : undefined;
+  //
+  // Memoised for the identity, not the work. It is a dependency of the effect that builds the map in
+  // the detail pane, and a fresh array on every render of this component tore that map down and
+  // rebuilt it whenever anything else on the page changed — losing wherever you had panned to and
+  // asking for every tile again. `CardMap` already depends on the coordinates rather than the point
+  // object for exactly this reason; the hubs are the half that could not be fixed from inside it.
+  const hubs: Hub[] | null | undefined = useMemo(
+    () =>
+      placesQuery.isError ? null : placesQuery.data ? hubsFromProject(placesQuery.data) : undefined,
+    [placesQuery.isError, placesQuery.data],
+  );
 
   const offMarket = offMarketQuery.data ?? null;
   const entries = useMemo(
@@ -210,11 +217,10 @@ function App({
   const model = modelQuery.data?.model ?? null;
   const scores = useMemo(
     () => (model && all && Array.isArray(hubs) ? scoreEntries(model, all, hubs) : null),
-    // placesQuery.data rather than the derived `hubs` array, which is a fresh reference every
-    // render; isError alongside it so a failed refetch clears the scores instead of leaving stale
-    // ones up.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
-    [model, all, placesQuery.data, placesQuery.isError],
+    // `hubs` itself, now that it holds its reference across a render that did not change it. This
+    // used to name `placesQuery.data` and `isError` instead, to say the same thing about an array
+    // that was rebuilt every time.
+    [model, all, hubs],
   );
 
   // The cards read journeys from the cache and never fetch — a grid of twenty-five would be
@@ -222,7 +228,10 @@ function App({
   // inside `FlatDetail`.
   const travel = useCachedTravel((entries ?? []).map((e) => e.postcode));
 
-  const prefs = settingsQuery.data ?? {};
+  // Memoised for the identity rather than the work: `?? {}` is a fresh object every render, and this
+  // is now a dependency of what the badge counts and of triage's own split. Without it both recompute
+  // on every keystroke on the page for as long as the settings have not loaded.
+  const prefs = useMemo(() => settingsQuery.data ?? {}, [settingsQuery.data]);
   // The pile is unrated *and* still on the market. A withdrawn flat is not work waiting to be done,
   // and leaving it in is the incident AGENTS.md records — eleven withdrawn listings sitting on a
   // worklist that had already been taught to drop them. Not-yet-loaded draws them, as everywhere
@@ -234,6 +243,12 @@ function App({
       ),
     [all, offMarket],
   );
+
+  // What the badge counts, and it is not the whole pile. Triage takes the hunt's own must-haves off
+  // the top (`splitByHuntFloor`) — so a badge that counted every unrated flat would promise work
+  // that is not on the screen it sends you to, and the number never falls to nought however much of
+  // it you do. Same function, so the two cannot drift.
+  const waiting = useMemo(() => splitByHuntFloor(unrated, prefs).above.length, [unrated, prefs]);
 
   const rate = (entry: ShortlistEntry, value: Rating, note: string) =>
     rating.mutate(
@@ -309,7 +324,7 @@ function App({
       label: 'Triage',
       icon: 'triage',
       hint: 'Work through the places nobody has rated yet',
-      badge: unrated.length,
+      badge: waiting,
     },
     { view: 'project', label: 'Your Hunt', icon: 'hunt', hint: 'Who is in it, where you travel to, what matters' },
   ];

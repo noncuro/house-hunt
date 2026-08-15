@@ -33,7 +33,9 @@ import {
   type Stage,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
+import { CardMap } from '@/components/CardMap';
 import { RightmoveLink } from '@/components/RightmoveLink';
+import { pinColour } from '@/lib/pin';
 import { useTravel } from '@/lib/queries';
 import { isSurprise } from '@/lib/score';
 
@@ -59,8 +61,12 @@ export function FlatDetail({
   onSetStage,
   onSetOffMarket,
   stageSaving,
-  /** Draws the `1` `2` `3` keycaps on the rating buttons. Only triage binds those keys, and a
-   *  keycap on a screen where the key does nothing is an instruction that fails when followed. */
+  /** Draws the `1` `2` `3` keycaps on the rating buttons, and binds the space bar to the gallery.
+   *
+   *  Only triage works a pile by keyboard, and a keycap on a screen where the key does nothing is an
+   *  instruction that fails when followed. The gallery key lives here rather than up in triage's own
+   *  handler because this is where the gallery is: passing the open/close of it upwards so the
+   *  keyboard could reach it would put one pane's state on the screen above for the sake of one key. */
   keys = false,
 }: {
   entry: ShortlistEntry;
@@ -81,6 +87,34 @@ export function FlatDetail({
 }) {
   const [galleryAt, setGalleryAt] = useState<number | null>(null);
   const images = galleryFor(entry);
+
+  // Space opens the photographs and closes them again, on the screen where both hands are already on
+  // the keyboard. It is the one thing triage could not do without reaching for the mouse: the flags
+  // and the summary are read off the pane, but "is it actually nice" is the photographs, and the
+  // thumbnails are a click each. Toggling rather than only opening, so the key that got you in is
+  // the key that gets you out — the same guards as triage's own handler, plus `preventDefault`,
+  // since space is the browser's page-down and would otherwise scroll the pile behind the gallery.
+  const hasImages = images.length > 0;
+  const galleryOpen = galleryAt !== null;
+  useEffect(() => {
+    if (!keys || !hasImages) return;
+    // A button and a link join the fields on the list, which triage's own handler has no need of:
+    // space is how the keyboard presses a focused button, so taking it would mean tabbing to "Love
+    // it", pressing space and getting the photographs. Not while the gallery is up, though — the
+    // thumbnail you opened it from still has the focus, and the overlay is over everything, so
+    // "close it again" has to beat pressing a button nobody can see.
+    const blocked = galleryOpen ? 'input, textarea, select' : 'input, textarea, select, button, a';
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== ' ') return;
+      if (event.target instanceof HTMLElement && event.target.closest(blocked)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      event.preventDefault();
+      // Floorplan first, because that is the order the strip is in and the first thing worth seeing.
+      setGalleryAt((current) => (current === null ? 0 : null));
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [keys, hasImages, galleryOpen]);
   // At most one verdict per property — the project shares one rating (design D6).
   const verdict = entry.verdicts[0] ?? null;
   const [note, setNote] = useState(verdict?.note ?? '');
@@ -147,6 +181,17 @@ export function FlatDetail({
           </Hint>
         )}
       </p>
+
+      {/* The streets, under the sentence that names the neighbourhood and above everything the
+          photographs said. Behind a button — see `CardMap` — and coloured by the verdict, so the
+          dot here and this flat's pin on the Map screen are the same colour. */}
+      <CardMap
+        point={point}
+        hubs={hubs}
+        colour={pinColour(group)}
+        approximate={!entry.exactLocation}
+        address={entry.displayAddress}
+      />
 
       <Flags
         source={{
