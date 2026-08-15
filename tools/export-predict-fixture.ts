@@ -36,7 +36,7 @@ const sql = `
 select json_build_object(
   'project_id',:'project_id',
   'generated_note','frozen fixture for check:predict — no PII, ids/numbers/booleans only',
-  'hubs', (select coalesce(json_agg(json_build_object('name',name,'lat',lat,'lon',lon) order by sort_order),'[]')
+  'hubs', (select coalesce(json_agg(json_build_object('name',label,'lat',lat,'lon',lon) order by sort_order),'[]')
            from place where project_id=:'project_id'),
   'rows', (select coalesce(json_agg(row_to_json(t) order by t.rightmove_id),'[]') from (
     select v.rightmove_id, v.rating, p.price, p.bedrooms, p.bathrooms, p.floor_area_sqft,
@@ -64,9 +64,10 @@ const out = execFileSync(
     '-U', `postgres.${env('SUPABASE_PROJECT_REF')}`,
     '-d', 'postgres',
     '-v', `project_id=${projectId}`,
-    '-At', '-c', sql,
+    // stdin rather than -c: psql skips :'var' interpolation inside -c commands.
+    '-At', '-f', '-',
   ],
-  { env: { ...process.env, PGPASSWORD: env('SUPABASE_DB_PASSWORD') }, encoding: 'utf8' },
+  { env: { ...process.env, PGPASSWORD: env('SUPABASE_DB_PASSWORD') }, encoding: 'utf8', input: sql },
 );
 
 // Pretty-print so the committed fixture is diff-legible.
