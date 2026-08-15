@@ -41,7 +41,7 @@ import type {
   Verdict,
 } from '@house-hunt/core';
 import { endSession } from './session';
-import { signOutExtension } from './bridge';
+import { helloExtension, signOutExtension, type ExtensionState } from './bridge';
 
 /** Data plumbing for the house hunt.
  *
@@ -87,6 +87,7 @@ function reconsiderSession(error: unknown) {
 
 export const keys = {
   auth: ['auth'] as const,
+  extension: ['extension'] as const,
   shortlist: ['shortlist'] as const,
   places: ['places'] as const,
   hubs: ['hubs'] as const,
@@ -98,6 +99,30 @@ export const keys = {
 
 export function useShortlist() {
   return useQuery({ queryKey: keys.shortlist, queryFn: getShortlist });
+}
+
+/** Whether the Rightmove half is installed here, asked **once for the page**.
+ *
+ *  This is a query rather than a `useEffect` in each component because it was two effects in two
+ *  components, and they disagreed in public. The handshake's whole protocol is that silence means
+ *  "not installed" (`helloExtension`), so its answer depends on whether a service worker woke inside
+ *  a deadline — and two independent probes race that deadline independently. The result was the
+ *  audit's most-reported bug: a banner saying the extension is not installed sitting directly above
+ *  the Install tab's green "already installed in this browser (v0.3.1)". One of them was wrong and
+ *  the reader could not tell which.
+ *
+ *  One key, so both surfaces read one answer and cannot contradict each other. Never stale on a
+ *  timer: an extension does not install itself while you are reading, and re-probing on window focus
+ *  would make the banner blink on every tab change. */
+export function useExtension() {
+  return useQuery<ExtensionState>({
+    queryKey: keys.extension,
+    queryFn: helloExtension,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    // A handshake that answers "absent" is an answer, not a failure — there is nothing to retry.
+    retry: false,
+  });
 }
 
 /** What each flat on the shortlist has cost over time, as one query for the whole list.

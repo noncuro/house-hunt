@@ -1,6 +1,9 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { Sweep } from './Sweep';
 import { send } from '@/lib/messages';
+/* First, so everything after it can read a token. This shadow root has no page stylesheet to
+   inherit them from either — see the note on `:host` in tokens.css. */
+import '@house-hunt/ui/tokens.css';
 import './style.css';
 
 /** The sweep panel, on search-results pages only.

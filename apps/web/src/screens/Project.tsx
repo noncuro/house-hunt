@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { keys as shellKeys, useAuth, useProjectSettings, useSetProjectSettings } from '@/lib/queries';
-import { Hint, TRANSIT_BASIS_NOTE } from '@house-hunt/ui';
+import { AmenityLabel, Hint, Icon, TRANSIT_BASIS_NOTE, type IconName } from '@house-hunt/ui';
+import '@/app/hunt.css';
 import { attempt } from '@/lib/attempt';
 import {
   addPlace as addPlaceRow,
@@ -30,6 +31,8 @@ import {
   criteriaFromUrl,
   describeCriteria,
   distanceMiles,
+  rightmoveSearchStart,
+  searchLocationFor,
 } from '@house-hunt/core';
 import type {
   AmenityKey,
@@ -97,7 +100,7 @@ export function Project({
           two were a page apart. This list sat under Settings beside the display name as though it
           were one person's own, while `place` has always been a project table. */}
       <Places places={places} setPlaces={setPlaces} notify={notify} />
-      <SearchCriteria notify={notify} />
+      <SearchCriteria places={places} notify={notify} />
       <Members projectId={activeProject.id} />
       {/* Keyed on the project so switching hunts starts the invite form empty. Without it the
           sentence under the field — "they are already in this hunt" — would still be on screen,
@@ -124,83 +127,225 @@ const DEFAULT_GREAT_ROOM_SQFT = 450;
 const GREAT_ROOM_MIN_SQFT = 100;
 const GREAT_ROOM_MAX_SQFT = 2000;
 
-/** The whole-flat bar, same shape. Defaults to a comfortable one-bedroom and ranges from a studio
+/** The whole-flat floor, same shape. Defaults to a comfortable one-bedroom and ranges from a studio
  *  to a house — wider than the room bar because it is measuring a different thing. */
 const DEFAULT_MIN_SQFT = 600;
 
-/** Offered when a place is first ticked as somewhere to search. One mile is what every sweep URL
- *  this project has ever built used, so it is the radius already in force rather than a new
- *  invention — and it is a starting point on a control right beside the tick, not a value chosen
- *  behind anybody's back. */
-const DEFAULT_SWEEP_RADIUS = 1;
 const MIN_SQFT_FLOOR = 150;
 const MIN_SQFT_CEILING = 5000;
 
-/** A bar in square feet: off, or a number. Off is `null` rather than zero, because "no opinion" and
- *  "zero square feet" are different sentences and only one of them is ever meant.
+/** The one control this page speaks in: a label on the left, the answers on the right, the chosen
+ *  one filled.
  *
- *  The number is typed into the parent's draft as you go and written once on blur — not one write
- *  per keystroke, which would also fight the disabled-while-saving guard. Clamping happens on blur
- *  too: `min`/`max` on the input do not stop a typed 1 or 30000 from reaching a write. */
-function SqftBar({
+ *  Every preference here is the same question — how much does this hunt care — and it was being
+ *  asked in two different grammars in the same section: a checkbox with a number for the two size
+ *  bars, a segmented group for the six amenities. Two grammars for one question reads as two kinds
+ *  of setting, so somebody sets one and assumes the other works differently. The groups are
+ *  right-aligned rather than left so the chosen segment lines up down the section and the shape of
+ *  the answers is readable without reading any of them. */
+function Segments<T>({
   label,
-  suffix,
+  choices,
   value,
-  fallback,
-  min,
-  max,
   busy,
-  onDraft,
-  onCommit,
+  onPick,
+  testid,
 }: {
   label: string;
-  suffix: string;
+  choices: { value: T; label: string; testid?: string }[];
+  value: T;
+  busy: boolean;
+  onPick: (value: T) => void;
+  /** Prefix for a per-choice testid, when a check needs to name one segment. */
+  testid?: string;
+}) {
+  return (
+    <div className="hunt-seg" role="group" aria-label={label}>
+      {choices.map((choice) => (
+        <button
+          key={choice.label}
+          type="button"
+          className={choice.value === value ? 'hunt-seg-pick hunt-seg-on' : 'hunt-seg-pick'}
+          aria-pressed={choice.value === value}
+          disabled={busy}
+          data-testid={testid && choice.testid ? `${testid}-${choice.testid}` : undefined}
+          onClick={() => onPick(choice.value)}
+        >
+          {choice.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The first sentence, and the rest only if you ask for it.
+ *
+ *  Each section here opened with a paragraph about itself before showing a single control, and the
+ *  paragraphs earn their place — they are what say that a preference flags rather than filters, and
+ *  why a pasted URL beats a form. What they cannot do is stand between somebody and the thing they
+ *  came to change, five lines at a time, on every visit. */
+function Explainer({ lead, children }: { lead: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      <p className="hunt-lead">{lead}</p>
+      <details className="hunt-more">
+        <summary>
+          How this works
+          <Icon name="chevron" size={12} className="hunt-more-mark" />
+        </summary>
+        <div className="hunt-more-body">{children}</div>
+      </details>
+    </>
+  );
+}
+
+/** A menu that reads as a sentence: "searching within 1 mi", "window from the last sweep".
+ *
+ *  A place's row carries two of these and they were bare selects, which put two grey boxes of
+ *  browser furniture where the row is meant to say what this place is for. The chevron is drawn
+ *  rather than the platform's own because a select showing its own arrow cannot be made to sit
+ *  inside a pill. */
+function Pill({
+  label,
+  title,
+  value,
+  faint,
+  disabled,
+  onPick,
+  children,
+}: {
+  label: string;
+  title: string;
+  value: string;
+  /** The off state — a place nobody is searching around says so quietly. */
+  faint?: boolean;
+  disabled?: boolean;
+  onPick: (value: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <span className="hunt-pill-wrap">
+      <select
+        className={faint ? 'hunt-pill hunt-pill-off' : 'hunt-pill'}
+        aria-label={label}
+        title={title}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onPick(e.target.value)}
+      >
+        {children}
+      </select>
+      <Icon name="chevron" size={12} className="hunt-pill-mark" />
+    </span>
+  );
+}
+
+interface SqftField {
+  /** What this number is, in the row's own words: "won't go below", "aiming for". */
+  caption: string;
   value: number | null;
-  fallback: number;
   min: number;
   max: number;
-  busy: boolean;
-  onDraft: (value: number) => void;
+  onDraft: (value: number | null) => void;
   onCommit: (value: number | null) => void;
-}) {
-  const on = value != null;
+}
+
+/** One number in square feet, wearing the words that say which number it is.
+ *
+ *  Typed into the parent's draft as you go and written once on blur — not one write per keystroke,
+ *  which would also fight the disabled-while-saving guard. Clamping happens on blur too: `min`/`max`
+ *  on the input do not stop a typed 1 or 30000 from reaching a write. Blank is `null`, which is the
+ *  same "no opinion" the off segment means, because "no answer" and "zero square feet" are different
+ *  sentences and only one of them is ever meant. */
+function Sqft({ caption, value, min, max, onDraft, onCommit, busy }: SqftField & { busy: boolean }) {
   return (
-    <label className="hunt-pref-greatroom">
+    <label className="hunt-sqft">
+      <span>{caption}</span>
       <input
-        type="checkbox"
-        checked={on}
+        type="number"
+        min={min}
+        max={max}
         disabled={busy}
-        onChange={(e) => onCommit(e.target.checked ? fallback : null)}
+        value={value ?? ''}
+        onChange={(e) => {
+          const typed = e.target.value.trim();
+          if (typed === '') return onDraft(null);
+          const n = Number(typed);
+          if (Number.isFinite(n) && n > 0) onDraft(Math.round(n));
+        }}
+        onBlur={() => onCommit(value === null ? null : Math.min(max, Math.max(min, value)))}
       />
-      <span>{label}</span>
-      {on && (
-        <span className="hunt-pref-greatroom-size">
-          <input
-            type="number"
-            // The <label> wraps two controls, so its implicit association binds to the checkbox and
-            // this one is announced as a bare spin button.
-            aria-label={`${label} — ${suffix}`}
-            min={min}
-            max={max}
-            disabled={busy}
-            value={value ?? fallback}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              if (Number.isFinite(n) && n > 0) onDraft(Math.round(n));
-            }}
-            onBlur={() => onCommit(Math.min(max, Math.max(min, value ?? fallback)))}
-          />
-          <span className="dim">{suffix}</span>
-        </span>
-      )}
+      <span className="hunt-unit">sq ft</span>
     </label>
   );
 }
 
+/** A size preference: off, or one or two numbers under the same label.
+ *
+ *  Two segments, where the amenities below get three, and the asymmetry is honest rather than
+ *  sloppy: `flagsFor` decides on its own what an unmet number looks like. Under `minSqft` is always
+ *  red and under `targetSqft` always amber, while `greatRoomMinSqft` never flags an absence at all —
+ *  it only moves the bar at which a room earns the good great-room mark, the small-room amber coming
+ *  from a constant this page cannot set. None of them carries a nice/must, and `HuntPreferences` has
+ *  nowhere to store one. A third segment here would therefore claim a setting nothing reads: it
+ *  would look saved and change no flag on any flat.
+ *
+ *  The numbers sit on their own line rather than beside the label because the whole-flat row carries
+ *  two of them, and a row that reads "Big enough overall [600][800] Don't mind | Set a size" is four
+ *  controls in a sentence's worth of space. One layout for both rows, so the two size questions are
+ *  visibly the same kind of question. */
+function SqftRow({
+  label,
+  icon,
+  onLabel,
+  fields,
+  busy,
+  onPick,
+}: {
+  label: string;
+  icon: IconName;
+  /** What turning this on actually does to a flat that misses it — see the note above. */
+  onLabel: string;
+  fields: SqftField[];
+  busy: boolean;
+  onPick: (on: boolean) => void;
+}) {
+  const on = fields.some((field) => field.value !== null);
+  return (
+    <div className="hunt-row">
+      <span className="hunt-row-label">
+        {/* The shared subject hue, not a hue of this screen's own: a size is a warm-subject glyph in
+            the same table `AMENITY_SUBJECT` draws the rows below from. */}
+        <Icon name={icon} className="hunt-ico rm-subject-warm" />
+        <span>{label}</span>
+      </span>
+      <Segments
+        label={label}
+        value={on}
+        busy={busy}
+        choices={[
+          { value: false, label: "Don't mind" },
+          { value: true, label: onLabel },
+        ]}
+        onPick={onPick}
+      />
+      {on && (
+        <div className="hunt-sqft-pair">
+          {fields.map((field) => (
+            <Sqft key={field.caption} busy={busy} {...field} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Shorter than the sentences they replace ("Must have", "Nice to have"), because three of these
+ *  sit side by side in one group and the words that differ are the first ones. */
 const WANT_CHOICES: { value: AmenityWant | null; label: string }[] = [
   { value: null, label: "Don't mind" },
-  { value: 'nice', label: 'Nice to have' },
-  { value: 'must', label: 'Must have' },
+  { value: 'nice', label: 'Nice' },
+  { value: 'must', label: 'Must' },
 ];
 
 /** The fewest bedrooms, with a studio at the bottom of the scale where it belongs — a studio is a
@@ -210,14 +355,67 @@ const WANT_CHOICES: { value: AmenityWant | null; label: string }[] = [
  *  "Studio" excludes nothing, which is also true of "Don't mind", and it is still worth having:
  *  saying a studio is fine is a different act from never having answered, and the hunt is shared
  *  by up to six people who read these settings to find out what everyone agreed to. */
-const BEDROOM_CHOICES: { value: number | null; label: string }[] = [
-  { value: null, label: "Don't mind" },
-  { value: 0, label: 'Studio' },
-  { value: 1, label: '1 bed' },
-  { value: 2, label: '2 beds' },
-  { value: 3, label: '3 beds' },
-  { value: 4, label: '4+ beds' },
+const BEDROOM_CHOICES: { value: number | null; label: string; testid: string }[] = [
+  { value: null, label: "Don't mind", testid: 'any' },
+  { value: 0, label: 'Studio', testid: '0' },
+  { value: 1, label: '1 bed', testid: '1' },
+  { value: 2, label: '2 beds', testid: '2' },
+  { value: 3, label: '3 beds', testid: '3' },
+  { value: 4, label: '4+ beds', testid: '4' },
 ];
+
+
+/** The second line of a place's row: where it is, in as few characters as it takes.
+
+ *  Two things arrive in `postcode` that are not postcodes. One is nothing at all, and the sentence
+ *  for that says what the consequence is rather than naming the mechanism — a place with no
+ *  postcode cannot be routed from, because the travel cache is keyed on a pair of them, and "not
+ *  timed" was the internal half of that said out loud. The other is a pasted coordinate pair, which
+ *  the add field takes verbatim: fifty characters of decimals across a heading that is supposed to
+ *  read as a place. Shown to three decimals — about a hundred metres, which is the precision the
+ *  eye can use — with the exact string one click away, because it is still the thing somebody
+ *  pasted in and may want back. */
+function PlaceWhere({ place, notify }: { place: Place; notify: Notify }) {
+  const where = place.postcode ?? null;
+  if (where === null) {
+    return (
+      <span className="hunt-place-where">
+        {place.lat === null ? 'no location' : 'no postcode, so no travel times'}
+      </span>
+    );
+  }
+
+  const coords = asCoordinates(where);
+  if (!coords) return <span className="hunt-place-where">{where}</span>;
+
+  return (
+    <Hint text="The exact coordinates. Click to copy.">
+      <button
+        type="button"
+        className="hunt-place-where hunt-place-coords"
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(where)
+            .then(() => notify('Coordinates copied.'))
+            .catch(() => notify('Could not copy — select the text instead.', 'error'));
+        }}
+      >
+        {coords}
+      </button>
+    </Hint>
+  );
+}
+
+/** A pasted "lat, lon" cut down to three decimals, or null when the string is not one. Parsed
+ *  rather than pattern-matched on length so a genuinely long place name is left alone. */
+function asCoordinates(value: string): string | null {
+  const parts = value.split(',');
+  if (parts.length !== 2) return null;
+  const [lat, lon] = parts.map((p) => Number(p.trim()));
+  if (!Number.isFinite(lat!) || !Number.isFinite(lon!)) return null;
+  if (Math.abs(lat!) > 90 || Math.abs(lon!) > 180) return null;
+  return `${lat!.toFixed(3)}, ${lon!.toFixed(3)}`;
+}
 
 function HuntSettings({ notify }: { notify: Notify }) {
   const settings = useProjectSettings();
@@ -244,8 +442,8 @@ function HuntSettings({ notify }: { notify: Notify }) {
 
   if (settings.isError) {
     return (
-      <section className="setting">
-        <h2>What you&rsquo;re looking for</h2>
+      <section className="setting hunt-card">
+        <h2 className="hunt-h">What you&rsquo;re looking for</h2>
         <p className="error">Could not read this hunt&rsquo;s preferences.</p>
       </section>
     );
@@ -254,8 +452,8 @@ function HuntSettings({ notify }: { notify: Notify }) {
   // already stored.
   if (!draft) {
     return (
-      <section className="setting">
-        <h2>What you&rsquo;re looking for</h2>
+      <section className="setting hunt-card">
+        <h2 className="hunt-h">What you&rsquo;re looking for</h2>
         <p className="working">Working…</p>
       </section>
     );
@@ -272,87 +470,121 @@ function HuntSettings({ notify }: { notify: Notify }) {
   };
 
   return (
-    <section className="setting">
-      <h2>What you&rsquo;re looking for</h2>
-      <p className="dim">
-        Shared by the whole hunt. These change how flats are flagged on the shortlist and compare
-        table — a must-have you&rsquo;re missing shows red, a nice-to-have amber — and set the bars for
-        how big a flat and how big its main room have to be. Nothing here hides a flat; it only
-        changes the emphasis. They reach the listing panel on Rightmove too.
-      </p>
+    <section className="setting hunt-card">
+      <h2 className="hunt-h">What you&rsquo;re looking for</h2>
+      <Explainer lead="These belong to the hunt rather than to you: everyone in it sees the same answers, and changing one changes what every flat is measured against for all of you.">
+        They change how flats are flagged on the shortlist, the compare table and the listing panel
+        on Rightmove — a must-have you are missing shows red, a nice-to-have amber, a flat under the
+        size you are aiming for amber and one under the size you will not go below red. Nothing here
+        hides a flat; it only changes the emphasis.
+      </Explainer>
 
-      {/* Two bars, one control. They are the same interaction down to the clamp-on-blur — a
-          checkbox that turns a number on — and writing it twice is how the second one ends up
-          without the clamp. */}
-      <SqftBar
-        label="Has a great room"
-        suffix="sq ft or bigger"
-        value={draft.greatRoomMinSqft ?? null}
-        fallback={DEFAULT_GREAT_ROOM_SQFT}
-        min={GREAT_ROOM_MIN_SQFT}
-        max={GREAT_ROOM_MAX_SQFT}
-        busy={busy}
-        onDraft={(v) => setDraft({ ...draft, greatRoomMinSqft: v })}
-        onCommit={(v) => commit({ ...draft, greatRoomMinSqft: v })}
-      />
+      <div className="hunt-rows">
+        {/* Two size questions, one control. They are the same interaction down to the clamp-on-blur
+            — an answer that turns a number on — and writing it twice is how the second one ends up
+            without the clamp. What differs is only what missing the number does to a flat, which is
+            the word on the filled segment. */}
+        <SqftRow
+          label="Has a great room"
+          icon="room"
+          // Not "Must": missing this flags nothing. It moves where the good great-room mark starts,
+          // and that is the whole of what setting it does.
+          onLabel="Mark it"
+          busy={busy}
+          onPick={(on) => commit({ ...draft, greatRoomMinSqft: on ? DEFAULT_GREAT_ROOM_SQFT : null })}
+          fields={[
+            {
+              caption: 'at least',
+              value: draft.greatRoomMinSqft ?? null,
+              min: GREAT_ROOM_MIN_SQFT,
+              max: GREAT_ROOM_MAX_SQFT,
+              onDraft: (v) => setDraft({ ...draft, greatRoomMinSqft: v }),
+              onCommit: (v) => commit({ ...draft, greatRoomMinSqft: v }),
+            },
+          ]}
+        />
 
-      <SqftBar
-        label="Big enough overall"
-        suffix="sq ft or bigger"
-        value={draft.minSqft ?? null}
-        fallback={DEFAULT_MIN_SQFT}
-        min={MIN_SQFT_FLOOR}
-        max={MIN_SQFT_CEILING}
-        busy={busy}
-        onDraft={(v) => setDraft({ ...draft, minSqft: v })}
-        onCommit={(v) => commit({ ...draft, minSqft: v })}
-      />
+        {/* A floor and a target, because a size preference is two answers and was stored as one: the
+            flat you would take and the flat you want are rarely the same figure, and a single number
+            makes everything above it look equally fine. Turning the row on sets the floor only — a
+            target nobody typed would be a number this page invented and then flagged flats against.
+            The target cannot be typed below the floor, since amber "under what you are aiming for"
+            beneath red "under your minimum" is a band that can hold nothing. */}
+        <SqftRow
+          label="Big enough overall"
+          icon="size"
+          onLabel="Set a size"
+          busy={busy}
+          onPick={(on) =>
+            commit({
+              ...draft,
+              minSqft: on ? DEFAULT_MIN_SQFT : null,
+              targetSqft: on ? (draft.targetSqft ?? null) : null,
+            })
+          }
+          fields={[
+            {
+              caption: "won't go below",
+              value: draft.minSqft ?? null,
+              min: MIN_SQFT_FLOOR,
+              max: MIN_SQFT_CEILING,
+              onDraft: (v) => setDraft({ ...draft, minSqft: v }),
+              // The target rises with the floor rather than being left underneath it. Only the
+              // input's `min` moved before, which stops you *typing* an inverted pair and does
+              // nothing about the one already saved — leaving `{ floor: 900, target: 800 }`, an
+              // amber band with nothing in it and two numbers contradicting each other.
+              onCommit: (v) =>
+                commit({
+                  ...draft,
+                  minSqft: v,
+                  targetSqft:
+                    v !== null && draft.targetSqft != null && draft.targetSqft < v
+                      ? v
+                      : (draft.targetSqft ?? null),
+                }),
+            },
+            {
+              caption: 'aiming for',
+              value: draft.targetSqft ?? null,
+              min: draft.minSqft ?? MIN_SQFT_FLOOR,
+              max: MIN_SQFT_CEILING,
+              onDraft: (v) => setDraft({ ...draft, targetSqft: v }),
+              onCommit: (v) => commit({ ...draft, targetSqft: v }),
+            },
+          ]}
+        />
 
-      <div className="hunt-pref-row">
-        <span className="hunt-pref-name">Bedrooms, at least</span>
-        <div className="hunt-pref-choice" role="group" aria-label="Bedrooms, at least">
-          {BEDROOM_CHOICES.map((choice) => (
-            <button
-              key={choice.label}
-              type="button"
-              className={(draft.minBedrooms ?? null) === choice.value ? 'key key-on' : 'key'}
-              aria-pressed={(draft.minBedrooms ?? null) === choice.value}
-              disabled={busy}
-              data-testid={`min-bedrooms-${choice.value ?? 'any'}`}
-              onClick={() => commit({ ...draft, minBedrooms: choice.value })}
-            >
-              {choice.label}
-            </button>
-          ))}
+        <div className="hunt-row">
+          <span className="hunt-row-label">
+            <Icon name="bed" size={13} /> Bedrooms, at least
+          </span>
+          <Segments
+            label="Bedrooms, at least"
+            testid="min-bedrooms"
+            choices={BEDROOM_CHOICES}
+            value={draft.minBedrooms ?? null}
+            busy={busy}
+            onPick={(v) => commit({ ...draft, minBedrooms: v })}
+          />
         </div>
-      </div>
 
-      <div className="hunt-pref-amenities">
         {/* From `AMENITIES` in core rather than a list of its own: this page, the flags and
             triage's filters all ask what a flat has, and three copies of the list is three chances
             to disagree about what "in-unit laundry" means. */}
-        {AMENITIES.map(({ key, name }) => {
-          const want = draft.amenities?.[key] ?? null;
-          return (
-            <div className="hunt-pref-row" key={key}>
-              <span className="hunt-pref-name">{name}</span>
-              <div className="hunt-pref-choice" role="group" aria-label={name}>
-                {WANT_CHOICES.map((choice) => (
-                  <button
-                    key={choice.label}
-                    type="button"
-                    className={want === choice.value ? 'key key-on' : 'key'}
-                    aria-pressed={want === choice.value}
-                    disabled={busy}
-                    onClick={() => setAmenity(key, choice.value)}
-                  >
-                    {choice.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-        })}
+        {AMENITIES.map(({ key, name }) => (
+          <div className="hunt-row" key={key}>
+            <span className="hunt-row-label">
+              <AmenityLabel amenity={key} />
+            </span>
+            <Segments
+              label={name}
+              choices={WANT_CHOICES}
+              value={draft.amenities?.[key] ?? null}
+              busy={busy}
+              onPick={(want) => setAmenity(key, want)}
+            />
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -374,8 +606,8 @@ export function ProjectPicker() {
 
   return (
     <div className="settings">
-      <section className="setting">
-        <h2>Which house hunt</h2>
+      <section className="setting hunt-card">
+        <h2 className="hunt-h">Which house hunt</h2>
         {projects.length === 0 ? (
           // Not an error and not a loading state: an account exists only because somebody invited
           // it, and consuming that invite is what produces the first project. Say which of those
@@ -405,8 +637,8 @@ function Members({ projectId }: { projectId: string }) {
   });
 
   return (
-    <section className="setting">
-      <h2>Who is in it</h2>
+    <section className="setting hunt-card">
+      <h2 className="hunt-h">Who is in it</h2>
       {members.isPending && <p className="working">Working…</p>}
       {members.isError && <p className="error">{(members.error as Error).message}</p>}
       {(members.data ?? []).map((m) => (
@@ -498,8 +730,8 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
   const settled = all.filter((invite) => !inviteIsLive(invite, now));
 
   return (
-    <section className="setting">
-      <h2>Invite someone</h2>
+    <section className="setting hunt-card">
+      <h2 className="hunt-h">Invite someone</h2>
       <p className="dim">
         {headcount.isPending && 'Counting who is in…'}
         {headcount.isError && 'Could not count who is in — the limit is still enforced when you invite.'}
@@ -679,8 +911,8 @@ function Outcome({ result }: { result: InviteResult }) {
 
 function YourProjects({ projects, activeId }: { projects: ProjectSummary[]; activeId: string }) {
   return (
-    <section className="setting">
-      <h2>Your hunts</h2>
+    <section className="setting hunt-card">
+      <h2 className="hunt-h">Your hunts</h2>
       <p className="dim">
         {projects.length === 1
           ? 'The one you are in. Leaving it takes its shortlist, verdicts and sweeps off this laptop — the hunt itself carries on without you.'
@@ -696,46 +928,6 @@ function YourProjects({ projects, activeId }: { projects: ProjectSummary[]; acti
  *  Failures are printed here rather than pushed as toasts: the picker is mounted by the shell in
  *  the no-project state, which has no toast host, and a switch that silently did nothing is the
  *  worst reading of this list. */
-/** Which hunt you are looking at, in the one place you are always looking.
- *
- *  It was a list of rows on the Your Hunt page, three clicks from anywhere — which is a long way
- *  for the control that decides what every other screen is showing. A plain select beside the
- *  account, and it is not rendered at all when there is only one hunt, because a picker with one
- *  option is a question with one answer. */
-export function HuntSwitch({ projects, activeId }: { projects: ProjectSummary[]; activeId: string }) {
-  const client = useQueryClient();
-  const setActive = useMutation({
-    mutationFn: async (projectId: string) => {
-      await setActiveProject(projectId);
-      return await authState();
-    },
-    // Same two lines, and the same reasoning, as `ProjectRows.reload` — see the long note there
-    // about why this writes the auth query and resets the rest rather than clearing the cache.
-    onSuccess: (state) => {
-      client.setQueryData<AuthState>(shellKeys.auth, state);
-      void client.resetQueries({ predicate: (query) => query.queryKey[0] !== shellKeys.auth[0] });
-    },
-  });
-
-  if (projects.length < 2) return null;
-
-  return (
-    <select
-      className="hunt-switch"
-      aria-label="Which house hunt"
-      value={activeId}
-      disabled={setActive.isPending}
-      onChange={(e) => setActive.mutate(e.target.value)}
-    >
-      {projects.map((p) => (
-        <option key={p.id} value={p.id}>
-          {p.name}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 function ProjectRows({ projects, activeId }: { projects: ProjectSummary[]; activeId: string | null }) {
   const client = useQueryClient();
   const [leaving, setLeaving] = useState<string | null>(null);
@@ -873,8 +1065,15 @@ function expiry(iso: string): string {
  *  this app has never heard of. What it costs is that the thing you paste is opaque — so nothing is
  *  saved without saying, in words, what it will search for and which parts of it were ignored.
  *
- *  See `criteriaFromUrl` for why the location and the time window are never taken from the paste. */
-function SearchCriteria({ notify }: { notify: Notify }) {
+ *  What the screen treats as first-class is narrower than what it stores: rent, bedrooms, and the
+ *  radius that belongs to each place. Those are the filters a hunt actually sets, so those are the
+ *  ones described in English (`describeCriteria`) and the ones the link into Rightmove is there to
+ *  help set. Anything else pasted is kept and shown as itself rather than dropped — a filter with no
+ *  sentence is still a filter narrowing the results.
+ *
+ *  See `criteriaFromUrl` for why the location, the radius and the time window are never taken from
+ *  the paste. */
+function SearchCriteria({ places, notify }: { places: Place[]; notify: Notify }) {
   const settings = useProjectSettings();
   const save = useSetProjectSettings();
   const [pasted, setPasted] = useState('');
@@ -901,16 +1100,72 @@ function SearchCriteria({ notify }: { notify: Notify }) {
   };
 
   const read = criteriaFromUrl(pasted);
+  const summary = current === null ? null : describeCriteria(current);
+  // The place a sweep would most likely start from, so the link into Rightmove lands somewhere this
+  // hunt actually searches. A resolved one first: it is the only kind we can point Rightmove at by
+  // identifier rather than by a name it has to guess at.
+  const start = places.find((p) => p.locationIdentifier) ?? places[0] ?? null;
 
   return (
-    <section className="hunt-search">
-      <h3>What we search for</h3>
-      <p className="dim">
-        Set the filters you want on Rightmove — any of them, including ones this app has never heard
-        of — then copy the address bar and paste it here. Every place you search around is swept with
-        these, so the area and the date range in what you paste are ignored: those are what a sweep
-        works out for itself.
+    <section className="setting hunt-card hunt-search">
+      <h2 className="hunt-h">What we search for</h2>
+      <Explainer lead="The Rightmove filters every sweep runs with — a price range, how many bedrooms, and anything else you set — applied around each of your places in turn.">
+        A sweep opens one Rightmove search per place you gave a radius to. These filters go on each
+        of those searches; the area, how far around it to look and how far back it goes are the
+        sweep&rsquo;s own, worked out from the place and from when it was last swept, so those parts
+        of anything you paste are ignored. With nothing saved there is nothing to sweep and the
+        places have no links — deliberately, because the alternative is a built-in price band that
+        every hunt would search whether or not it was theirs, and a search that returns results
+        always looks like it worked.
+      </Explainer>
+
+      <h3 className="hunt-label">Sweeping for</h3>
+      {summary === null ? (
+        <p className="dim" data-testid="criteria-summary">
+          Nothing yet — set some below, and until then no sweep will run.
+        </p>
+      ) : (
+        <>
+          <ul className="hunt-search-summary" data-testid="criteria-summary">
+            {summary.supported.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+            {/* The radius is not in the criteria and never can be — it is per place. Said here
+                anyway, because a list of filters that does not mention how far around each place a
+                sweep looks reads as though the answer is somewhere else. */}
+            <li className="hunt-search-elsewhere">a radius set on each place above</li>
+          </ul>
+          {summary.other.length > 0 && (
+            <p className="dim">
+              Also carried over from the search you pasted, as Rightmove wrote them:{' '}
+              <code>{summary.other.join('  ')}</code>
+            </p>
+          )}
+          <button className="key" disabled={save.isPending} onClick={() => apply(undefined)}>
+            Clear these filters
+          </button>
+        </>
+      )}
+
+      <h3 className="hunt-label">Change them</h3>
+      <p className="hunt-lead">
+        The filters live on Rightmove, where they have their own names and you can see what they
+        return. Set them there — price, bedrooms, whatever else you want — then copy the address bar
+        and paste it back here.
       </p>
+      {start ? (
+        <a
+          className="key hunt-search-open"
+          href={rightmoveSearchStart(start)}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          Set filters on Rightmove around {start.label}
+          <Icon name="external" size={12} />
+        </a>
+      ) : (
+        <p className="dim">Add a place above first, so the search starts somewhere you are looking.</p>
+      )}
 
       <div className="hunt-search-paste">
         <input
@@ -955,27 +1210,6 @@ function SearchCriteria({ notify }: { notify: Notify }) {
           )}
         </div>
       )}
-
-      <h4>Sweeping for</h4>
-      {current === null ? (
-        <p className="dim" data-testid="criteria-summary">
-          Nothing yet — so there is nothing to sweep, and the places below have
-          no links. That is deliberate: the alternative is a built-in price band, which every hunt
-          using this app would search whether or not it was theirs, and a search that returns
-          results always looks like it worked.
-        </p>
-      ) : (
-        <>
-          <ul className="hunt-search-summary" data-testid="criteria-summary">
-            {describeCriteria(current).map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-          <button className="key" disabled={save.isPending} onClick={() => apply(undefined)}>
-            Clear these filters
-          </button>
-        </>
-      )}
     </section>
   );
 }
@@ -987,8 +1221,8 @@ function LocationNote({ result, place }: { result: LocationResult; place: Place 
   if (result.status === 'not-found') {
     return (
       <div className="error">
-        Rightmove has no page at <code>{result.slug}</code>. Its own spelling is the one that works
-        — try "{place.label} Station", or the area rather than the stop.
+        Rightmove has no area it calls &ldquo;{place.label}&rdquo;. Its own spelling is the one that
+        works — try &ldquo;{place.label} Station&rdquo;, or the area rather than the stop.
       </div>
     );
   }
@@ -1014,7 +1248,7 @@ function LocationNote({ result, place }: { result: LocationResult; place: Place 
       : null;
   return (
     <div className="dim">
-      {result.displayName} ({result.locationIdentifier}), read out of {result.slug}.
+      Rightmove calls this area &ldquo;{result.displayName}&rdquo;, and sweeps will search that.
       {apart === null
         ? ' No coordinate here to check it against — worth adding one before you trust the sweep.'
         : apart > 1
@@ -1110,87 +1344,37 @@ function Places({
     });
   }
 
-  /** Turning sweeping on is one act with two halves: give the place a radius, and — the first time
-   *  — find out what Rightmove calls it. Doing the second automatically is the difference between
-   *  a tickbox and a two-step setup where the tick appears to do nothing. */
-  async function setSweeping(place: Place, on: boolean) {
-    const saved = await patch(place, { sweepRadiusMiles: on ? DEFAULT_SWEEP_RADIUS : null });
-    if (saved && on && saved.locationIdentifier === null) await resolve(saved);
+  /** Starting to sweep a place is one act with two halves: give it a radius, and — the first time —
+   *  find out what Rightmove calls it. Doing the second automatically is the difference between one
+   *  choice and a two-step setup where the first step appears to do nothing.
+   *
+   *  A radius and "search around this at all" were a tick and a menu; they are one menu now, whose
+   *  off state is a sentence rather than an empty box. The tick's hidden 1-mile default goes with
+   *  it: the radius is named at the moment it is chosen, which is what the default was standing in
+   *  for. */
+  async function setSweeping(place: Place, miles: number | null) {
+    const saved = await patch(place, { sweepRadiusMiles: miles });
+    if (saved && miles !== null && saved.locationIdentifier === null) await resolve(saved);
   }
 
   return (
-    <section className="setting">
-      <h2>Places</h2>
-      <p className="dim">
-        The office, the in-laws, the neighbourhoods you are looking in. Every one is timed by
-        walking, bike and public transport, and fixes each listing on the compass — &ldquo;0.4 mi NE
-        of Angel&rdquo;. Tick <em>search around</em> and it also becomes somewhere the sweep goes
-        looking. {TRANSIT_BASIS_NOTE}
-      </p>
+    <section className="setting hunt-card">
+      <h2 className="hunt-h">Places</h2>
+      <Explainer lead="The office, the in-laws, the neighbourhoods you are looking in.">
+        Every one is timed by walking, bike and public transport, and fixes each listing on the
+        compass — &ldquo;0.4 mi NE of Angel&rdquo;. Give one a radius and it also becomes somewhere
+        the sweep goes looking. {TRANSIT_BASIS_NOTE}
+      </Explainer>
       {places.length === 0 && (
         <p className="dim">Nothing yet — add the office, the in-laws, the areas you are searching.</p>
       )}
       {places.map((place) => (
-        <div className="place place-row" key={place.id}>
-          <span className="place-what">
-            <strong>{place.label}</strong>{' '}
-            <span className="dim">
-              {place.postcode ?? (place.lat === null ? 'no location' : 'no postcode — not timed')}
+        <div className="hunt-place" key={place.id}>
+          <div className="hunt-place-head">
+            <span className="hunt-place-title">
+              <span className="hunt-place-name">{place.label}</span>
+              <PlaceWhere place={place} notify={notify} />
             </span>
-            {located[place.id] && <LocationNote result={located[place.id]!} place={place} />}
-          </span>
-
-          <span className="fields place-sweep">
-            <label>
-              <input
-                type="checkbox"
-                checked={place.sweepRadiusMiles !== null}
-                disabled={busy}
-                onChange={(e) => void setSweeping(place, e.target.checked)}
-              />{' '}
-              search around
-            </label>
-
-            {place.sweepRadiusMiles !== null && (
-              <>
-                <select
-                  value={place.sweepRadiusMiles}
-                  title="How far around this place Rightmove searches. The same steps its own radius control offers."
-                  onChange={(e) => void patch(place, { sweepRadiusMiles: Number(e.target.value) })}
-                >
-                  {SWEEP_RADII.map((miles) => (
-                    <option key={miles} value={miles}>
-                      within {miles} mi
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={place.maxDaysSinceAdded ?? ''}
-                  title="A floor on how far back this sweep looks. It can only widen the window — a setting that narrowed it would drop listings and still report the page fully recorded."
-                  onChange={(e) =>
-                    void patch(place, {
-                      maxDaysSinceAdded: e.target.value === '' ? null : Number(e.target.value),
-                    })
-                  }
-                >
-                  <option value="">window from the last sweep</option>
-                  {SWEEP_WINDOWS.map((days) => (
-                    <option key={days} value={days}>
-                      at least {days} {days === 1 ? 'day' : 'days'}
-                    </option>
-                  ))}
-                </select>
-                {/* Rightmove's own id for the area. Shown rather than hidden because it is what a
-                    sweep actually searches, and the thing to check when a sweep brings back the
-                    wrong neighbourhood — unexplained it looks like a fault. */}
-                <Hint text="Rightmove's own id for this area. It is what a sweep searches — if the results look like the wrong place, re-resolve it.">
-                  <span className="dim">{place.locationIdentifier ?? 'not searchable yet'}</span>
-                </Hint>
-                <button disabled={busy} onClick={() => void resolve(place)}>
-                  {place.locationIdentifier ? 'Re-resolve' : 'Resolve'}
-                </button>
-              </>
-            )}
 
             <button
               className="remove"
@@ -1200,10 +1384,77 @@ function Places({
             >
               ×
             </button>
-          </span>
+
+            <div className="hunt-place-controls">
+            <Pill
+              label={`Search around ${place.label}`}
+              title="How far around this place Rightmove searches. The same steps its own radius control offers."
+              faint={place.sweepRadiusMiles === null}
+              disabled={busy}
+              value={place.sweepRadiusMiles === null ? '' : String(place.sweepRadiusMiles)}
+              onPick={(v) => void setSweeping(place, v === '' ? null : Number(v))}
+            >
+              <option value="">not searching around</option>
+              {SWEEP_RADII.map((miles) => (
+                <option key={miles} value={miles}>
+                  searching within {miles} mi
+                </option>
+              ))}
+            </Pill>
+
+            {place.sweepRadiusMiles !== null && (
+              <>
+                <Pill
+                  label={`How far back sweeps of ${place.label} look`}
+                  title="A floor on how far back this sweep looks. It can only widen the window — a setting that narrowed it would drop listings and still report the page fully recorded."
+                  value={place.maxDaysSinceAdded === null ? '' : String(place.maxDaysSinceAdded)}
+                  onPick={(v) =>
+                    void patch(place, { maxDaysSinceAdded: v === '' ? null : Number(v) })
+                  }
+                >
+                  <option value="">window from the last sweep</option>
+                  {SWEEP_WINDOWS.map((days) => (
+                    <option key={days} value={days}>
+                      at least {days} {days === 1 ? 'day' : 'days'}
+                    </option>
+                  ))}
+                </Pill>
+                {/* Which area Rightmove will actually search, in Rightmove's own words. It used to
+                    be the raw pair — `Hampstead-Station.html (REGION^1486)` — which is a URL
+                    fragment and an internal id, neither of which anybody outside a debugger can
+                    read, and the state beside them said "searchable" without saying where. The name
+                    is the half that answers the question the row raises, and it is also what tells
+                    you a sweep is pointed at the wrong Hampstead. */}
+                <Hint
+                  text={
+                    place.displayLocationIdentifier
+                      ? `Sweeps around here search Rightmove's own area, “${searchLocationFor(place.displayLocationIdentifier)}”. If the flats come back from the wrong neighbourhood, look it up again.`
+                      : 'Rightmove has its own name for every area, and a sweep searches by that rather than by a postcode. Nothing has been looked up for this place yet, so it is not swept at all.'
+                  }
+                >
+                  <span className="hunt-place-state">
+                    {place.displayLocationIdentifier
+                      ? `Rightmove: ${searchLocationFor(place.displayLocationIdentifier)}`
+                      : 'not searchable yet'}
+                  </span>
+                </Hint>
+                {/* "Re-resolve" named the internal step rather than what pressing it does: it asks
+                    Rightmove which area this place is, and saves the answer. */}
+                <button className="key" disabled={busy} onClick={() => void resolve(place)}>
+                  {place.locationIdentifier ? 'Look it up again' : "Look up Rightmove's area"}
+                </button>
+              </>
+            )}
+            </div>
+          </div>
+          {located[place.id] && (
+            <div className="hunt-place-note">
+              <LocationNote result={located[place.id]!} place={place} />
+            </div>
+          )}
         </div>
       ))}
-      <div className="fields">
+      <div className="fields hunt-place-add">
         <input value={label} placeholder="Label" onChange={(e) => setLabel(e.target.value)} />
         <input
           value={postcode}

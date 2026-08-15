@@ -5,7 +5,7 @@
   align-items: center;
   /* Every claim it marks sits on a text line, and a mark that rides the baseline sits noticeably
      high against lower-case words. */
-  vertical-align: -2px;
+  vertical-align: -1px;
   flex: none;
   cursor: help;
 }
@@ -18,15 +18,17 @@
  *
  *  The rings this replaced filled from the centre out, so the mark shrank as confidence fell and
  *  a low reading came out as a speck — invisible exactly when it mattered most. Here the unreached
- *  bars are still drawn, in grey, so the footprint is identical at every level and a single blue
+ *  bars are still drawn, paler, so the footprint is identical at every level and a single filled
  *  bar reads as "one of three" rather than as a stray dot.
  *
- *  Grey rather than a paler blue: the empty bars are the scale, not a weaker version of the
- *  answer, and a blue ramp would invite reading the shade instead of counting the bars. */
+ *  The filled bars take the ink of the chip they sit in rather than a hue of their own: since the
+ *  mark now appears only on a doubtful claim, it is part of that claim's own quiet aside, and a
+ *  steel blue in the middle of an amber chip read as a third thing on the row. The empty bars are
+ *  the scale, not a weaker answer, so they take the ground's own line colour. */
 .rm-cf-on {
-  fill: #2e648f;
+  fill: currentcolor;
 }
 
 .rm-cf-off {
-  fill: #cfd9e2;
+  fill: var(--line);
 }

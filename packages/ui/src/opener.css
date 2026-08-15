@@ -4,7 +4,7 @@
 .rm-open-idle {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--s2);
 }
 
 /* The pace control sits under the button, quiet: it is an adjustment to a default that already
@@ -12,18 +12,20 @@
 .rm-open-pace {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s2);
   font-size: 12px;
-  color: #6b7a89;
+  color: var(--muted);
 }
 
 .rm-open-pace input {
   width: 4em;
   padding: 3px 6px;
-  border: 1px solid #dfe6ec;
-  border-radius: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  background: var(--white);
   font: inherit;
   font-size: 12px;
+  color: var(--ink);
 }
 
 .rm-open-go {
@@ -32,10 +34,10 @@
   gap: 3px;
   width: 100%;
   padding: 11px 14px;
-  background: #12263a;
+  background: var(--ink);
   border: none;
-  border-radius: 10px;
-  color: #fff;
+  border-radius: var(--r-panel);
+  color: var(--white);
   font: inherit;
   font-weight: 650;
   text-align: left;
@@ -43,7 +45,7 @@
 }
 
 .rm-open-go:hover {
-  background: #1c3a56;
+  background: var(--ink-soft);
 }
 
 /* The cost of pressing it, stated on the button. Several minutes of tabs opening is not something
@@ -59,16 +61,16 @@
   flex-direction: column;
   gap: 6px;
   padding: 11px 14px;
-  border: 1px solid #dfe6ec;
-  border-radius: 10px;
-  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--raised);
 }
 
 .rm-open-run-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--s3);
   font-weight: 650;
 }
 
@@ -79,7 +81,7 @@
 
 .rm-open-at {
   font-size: 12px;
-  color: #6b7a89;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -89,10 +91,10 @@
    be the thing you have to look for. */
 .rm-open-stop {
   padding: 3px 12px;
-  border: 1px solid #d8b4b4;
-  border-radius: 999px;
-  background: #fff;
-  color: #b23a48;
+  border: 1px solid var(--bad-line);
+  border-radius: var(--r-pill);
+  background: var(--white);
+  color: var(--bad-ink);
   font: inherit;
   font-size: 12px;
   font-weight: 650;
@@ -100,5 +102,5 @@
 }
 
 .rm-open-stop:hover {
-  background: #fdf3f4;
+  background: var(--bad-bg);
 }

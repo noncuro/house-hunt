@@ -1,5 +1,15 @@
 /* Injected into the page (not a shadow root) because it restyles Rightmove's own cards. Every
-   selector is namespaced under .rm- so nothing of theirs is touched by accident. */
+   selector is namespaced under .rm- so nothing of theirs is touched by accident.
+
+   The one file in the extension that cannot read `tokens.css`. Importing it here would put the
+   whole palette on Rightmove's own `:root` — a hundred custom properties leaking into a document
+   that is not ours, and a name collision away from repainting their site. So the handful of values
+   these badges need are written out, each named for the token it is a copy of. Keep them in step by
+   hand; they are the only literals left in the extension's own stylesheets.
+
+   They are also the only marks of ours that sit directly on a photograph, so every one is opaque
+   and none of them is paper: a badge that borrows the ground behind it disappears over a dark
+   kitchen. */
 
 .rm-verdict {
   position: relative;
@@ -13,44 +23,46 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
 .rm-pill {
-  border-radius: 999px;
+  border-radius: 99px;
   padding: 3px 9px;
   font-size: 11px;
   font-weight: 650;
   line-height: 1.5;
-  color: #fff;
-  background: #12263a;
+  color: #fff; /* --white */
+  background: #241f1a; /* --ink */
   border: none;
   white-space: nowrap;
-  box-shadow: 0 1px 4px rgb(18 38 58 / 35%);
+  box-shadow: 0 1px 4px rgb(36 31 26 / 35%);
 }
 
+/* Filled with the verdict's own ink rather than its chip ground: at 11px over a photograph the
+   pale grounds the panel uses for a stamp carry nothing. */
 .rm-pill-no {
-  background: #b23a48;
+  background: oklch(0.48 0.11 25); /* --bad-ink */
 }
 
 .rm-pill-love {
-  background: #1a7f5a;
+  background: oklch(0.38 0.09 155); /* --good-ink */
 }
 
 .rm-pill-maybe {
-  background: #7b8a99;
+  background: #8a6d1f; /* --warn-ink */
 }
 
 /* The only interactive thing we add — everything else on the card is read-only. */
 .rm-pill-open {
-  background: #fff;
-  color: #12263a;
+  background: #faf8f4; /* --paper */
+  color: #241f1a; /* --ink */
   cursor: pointer;
   font-family: inherit;
 }
 
 .rm-pill-open:hover {
-  background: #00deb6;
+  background: #fff; /* --white */
 }
 
 /* Rejected listings are dimmed rather than hidden — you can still see what you said no to. */
@@ -65,7 +77,7 @@
 }
 
 .rm-verdict-love {
-  outline: 2px solid #1a7f5a;
+  outline: 2px solid oklch(0.5 0.1 155); /* --good-line */
   outline-offset: -2px;
   border-radius: 8px;
 }

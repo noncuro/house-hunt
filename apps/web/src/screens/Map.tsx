@@ -1,10 +1,19 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { DEFAULT_SHOWING, GROUP_LABEL, groupOf, type Group } from '@house-hunt/core';
+import { Icon } from '@house-hunt/ui';
+import {
+  groupOf,
+  type Group,
+  type HuntPreferences,
+  type Hub,
+  type Place,
+  type TravelTime,
+} from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
+import { FlatCard } from '@/components/FlatCard';
 
 /** Every place on one map, coloured by what the two of you said.
  *
@@ -15,82 +24,107 @@ import type { ShortlistEntry } from '@house-hunt/core/db';
  *  URLs break under a bundler, and lets the verdict pick the colour.
  *
  *  Positions come from the postcode wherever we have it. Rightmove's own pin is deliberately
- *  fuzzed, which is invisible at their zoom level and misleading at ours. */
-/** Exported because the card thumbnails (`components/CardMap.tsx`) draw the same flat, and one
- *  place looking green here and blue there is the same view disagreeing with itself. */
-export const COLOUR: Record<Group, string> = {
-  excited: '#1a7f5a',
-  maybe: '#d8a33a',
-  rejected: '#9aa7b2',
-  unrated: '#4a7fb5',
+ *  fuzzed, which is invisible at their zoom level and misleading at ours.
+ *
+ *  What changed in the redesign is what happens when you click one. A pin used to navigate — to the
+ *  shortlist, scrolled to a card — which threw the map away, and coming back re-fitted it. Since
+ *  looking at a map is almost always looking at several flats in the same few streets, that was the
+ *  gesture being punished. The card docks at the foot instead, the map stays where you put it, and
+ *  the arrow keys walk the pins in the order they run west to east. */
+
+/** Read off the same tokens the rest of the app colours verdicts with, rather than four hex literals
+ *  that were a near-match for them — a pin looking green here and the chip for the same verdict
+ *  looking a different green two screens away is the app disagreeing with itself. Leaflet takes a
+ *  string for `fillColor` and cannot read a custom property, so they are resolved once. */
+const COLOUR: Record<Group, string> = {
+  excited: pin('loved', '#1a7f5a'),
+  maybe: pin('liked', '#d8a33a'),
+  rejected: pin('rejected', '#9aa7b2'),
+  unrated: pin('unrated', '#4a7fb5'),
 };
 
-/** What each colour means, in the order you care about them. Four unexplained shades of dot is
- *  a puzzle, not a map — and the legend doubles as the filter, so the thing that tells you what
- *  a colour means is also the thing that turns it off. */
-// Ordered here, worded in `GROUP_LABEL`: a legend that names a pile differently from the heading
-// over the same flats is two names for one pile.
-const LEGEND_ORDER: Group[] = ['excited', 'maybe', 'unrated', 'rejected'];
+function pin(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(`--pin-${name}`).trim();
+  return value || fallback;
+}
 
 const LONDON: [number, number] = [51.5074, -0.1278];
 
-/** Where the map was when you last left it. Clicking a pin takes you to the flat's card, which is
- *  another view, so the map is unmounted every time it is used — and coming back to London at zoom
- *  12, refitted, with the legend reset, means working a street pin by pin is re-finding the street
- *  every time. Module-level rather than state above, because it is the map's own business and
- *  nothing else on the page has an opinion about it. */
-let lastView: { center: L.LatLngLiteral; zoom: number } | null = null;
-let lastShowing: Record<Group, boolean> = DEFAULT_SHOWING;
+/** Where the map was when you last left it, per hunt. Module-level rather than state above, because
+ *  it is the map's own business and nothing else on the page has an opinion about it — and because
+ *  the whole app remounts on a change of hunt (`App` is keyed on the project), so state would not
+ *  survive the trip to the table and back.
+ *
+ *  Keyed on the project for the same reason it survives that remount at all: one map position is one
+ *  hunt's, and a single slot meant switching hunts opened the new one framed on the old one's
+ *  neighbourhood with none of its pins in view — and, because a restored view deliberately skips
+ *  `fitBounds`, staying there. */
+const lastView = new Map<string, { center: L.LatLngLiteral; zoom: number }>();
 
 export function ShortlistMap({
+  projectId,
   entries,
-  onSelect,
-  selectedId,
+  places,
+  travel,
+  hubs,
+  prefs,
+  scores,
+  onOpen,
 }: {
+  /** Which hunt's map this is — see `lastView`. */
+  projectId: string;
   entries: ShortlistEntry[];
-  onSelect: (rightmoveId: string) => void;
-  selectedId: string | null;
+  places: Place[];
+  travel: Record<string, TravelTime[]> | undefined;
+  /** The hunt's neighbourhoods, for the docked card's compass fix. Three states — see `HubFact`. */
+  hubs: Hub[] | null | undefined;
+  prefs: HuntPreferences;
+  scores: Map<string, number> | null;
+  /** Go to the flat in full. The docked card is the glance; this is the rest of it. */
+  onOpen: (rightmoveId: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const markers = useRef(new Map<string, L.CircleMarker>());
   const firstRun = useRef(true);
 
-  // Rejecting a place is how you get it out of your way, and a map that keeps showing it has
-  // undone that. Rejected and unrated start off (see `DEFAULT_SHOWING`); the legend turns either
-  // back on when you want to check whether you've already ruled out a whole street, or see where
-  // the ones you haven't got to yet are.
-  // Kept with the viewport, and for the same reason: turning the unrated on to work through them
-  // and having it turn itself off the moment you click one is the map undoing the thing you came
-  // to it for.
-  const [showing, setShowing] = useState<Record<Group, boolean>>(lastShowing);
-  const show = (next: Record<Group, boolean>) => {
-    lastShowing = next;
-    setShowing(next);
-  };
+  const [at, setAt] = useState<string | null>(null);
+  // How many pins are inside the current viewport. Recomputed on move, because the answer to "how
+  // many of these are in this bit of London" is the question a map is being asked, and it used to
+  // be unanswerable without counting dots.
+  const [inView, setInView] = useState<number | null>(null);
 
-  // The click handler is recreated on every render of the page above. Reading it through a ref
-  // means the marker effect doesn't have to re-run (and refit the viewport) just to pick up a
-  // new function identity, while still never calling a stale one.
-  const select = useRef(onSelect);
-  select.current = onSelect;
-
-  const counts = useMemo(() => {
-    const tally: Record<Group, number> = { excited: 0, maybe: 0, rejected: 0, unrated: 0 };
-    for (const entry of entries) tally[groupOf(entry.verdicts)] += 1;
-    return tally;
-  }, [entries]);
-
-  const visible = useMemo(
-    () => entries.filter((e) => showing[groupOf(e.verdicts)]),
-    [entries, showing],
+  const located = useMemo(
+    () =>
+      entries
+        .filter((e) => e.lat !== null && e.lon !== null)
+        // West to east, so the arrow keys walk a street rather than jumping across the city in
+        // whatever order the shortlist happened to be sorted in.
+        .sort((a, b) => a.lon! - b.lon!),
+    [entries],
   );
+
+  // The handlers are recreated on every render of the page above. Reading them through refs means
+  // the marker effect does not have to re-run (and refit the viewport) just to pick up a new
+  // function identity, while still never calling a stale one.
+  const walk = useRef<(delta: number) => void>(() => {});
+  const choose = useRef<(id: string) => void>(() => {});
+  choose.current = setAt;
+
+  const countInView = useCallback(() => {
+    const instance = map.current;
+    if (!instance) return;
+    const bounds = instance.getBounds();
+    setInView(located.filter((e) => bounds.contains([e.lat!, e.lon!])).length);
+  }, [located]);
 
   useEffect(() => {
     if (!host.current || map.current) return;
+    const saved = lastView.get(projectId) ?? null;
     const instance = L.map(host.current, { scrollWheelZoom: true }).setView(
-      lastView ? lastView.center : LONDON,
-      lastView ? lastView.zoom : 12,
+      saved ? saved.center : LONDON,
+      saved ? saved.zoom : 12,
     );
     map.current = instance;
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -98,7 +132,7 @@ export function ShortlistMap({
       attribution: '© OpenStreetMap contributors',
     }).addTo(instance);
     instance.on('moveend', () => {
-      lastView = { center: instance.getCenter(), zoom: instance.getZoom() };
+      lastView.set(projectId, { center: instance.getCenter(), zoom: instance.getZoom() });
     });
 
     const pins = markers.current;
@@ -107,7 +141,19 @@ export function ShortlistMap({
       map.current = null;
       pins.clear();
     };
-  }, []);
+  // `projectId` never changes inside a mount — `App` is keyed on the hunt — so this still runs
+  // once. It is in the list because the map it builds is restored from that hunt's saved view.
+  }, [projectId]);
+
+  useEffect(() => {
+    const instance = map.current;
+    if (!instance) return;
+    instance.on('moveend', countInView);
+    countInView();
+    return () => {
+      instance.off('moveend', countInView);
+    };
+  }, [countInView]);
 
   useEffect(() => {
     const instance = map.current;
@@ -116,7 +162,6 @@ export function ShortlistMap({
     for (const marker of markers.current.values()) marker.remove();
     markers.current.clear();
 
-    const located = visible.filter((e) => e.lat !== null && e.lon !== null);
     for (const entry of located) {
       const group = groupOf(entry.verdicts);
       const marker = L.circleMarker([entry.lat!, entry.lon!], {
@@ -128,7 +173,7 @@ export function ShortlistMap({
       })
         .addTo(instance)
         .bindTooltip(`${entry.displayAddress}${entry.price ? ` — ${entry.price}` : ''}`)
-        .on('click', () => select.current(entry.rightmoveId));
+        .on('click', () => choose.current(entry.rightmoveId));
       markers.current.set(entry.rightmoveId, marker);
     }
 
@@ -136,7 +181,7 @@ export function ShortlistMap({
     // contents — refitting on every selection would fight the person panning around — and never
     // on the first run of a mount that restored where you were, which is the same fight one step
     // removed.
-    const restored = firstRun.current && lastView !== null;
+    const restored = firstRun.current && lastView.has(projectId);
     firstRun.current = false;
     if (located.length > 0 && !restored) {
       instance.fitBounds(L.latLngBounds(located.map((e) => [e.lat!, e.lon!] as [number, number])), {
@@ -144,43 +189,111 @@ export function ShortlistMap({
         maxZoom: 15,
       });
     }
-  }, [visible]);
+  }, [located, projectId]);
+
+  // The pin under the docked card, panned to and highlighted. `panTo` rather than `setView` on
+  // purpose: walking the pins must not change the zoom you chose.
+  useEffect(() => {
+    const marker = at ? markers.current.get(at) : undefined;
+    if (!marker || !map.current) return;
+    marker.openTooltip();
+    marker.setStyle({ color: 'var(--ink)', weight: 3 });
+    map.current.panTo(marker.getLatLng());
+    return () => {
+      marker.setStyle({ color: '#fff', weight: 2 });
+    };
+  }, [at]);
+
+  walk.current = (delta: number) => {
+    if (located.length === 0) return;
+    const from = at ? located.findIndex((e) => e.rightmoveId === at) : -1;
+    // Stops at both ends rather than wrapping: coming back round to the far side of London reads as
+    // the map having jumped rather than as the list having run out.
+    const next = Math.max(0, Math.min(located.length - 1, from + delta));
+    setAt(located[next]!.rightmoveId);
+  };
 
   useEffect(() => {
-    const marker = selectedId ? markers.current.get(selectedId) : undefined;
-    if (marker && map.current) {
-      marker.openTooltip();
-      map.current.panTo(marker.getLatLng());
-    }
-  }, [selectedId]);
+    const onKey = (event: KeyboardEvent) => {
+      // Not while somebody is typing — the note field on the docked card is a text input on this
+      // very screen.
+      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select')) return;
+      if (event.key === 'ArrowRight') walk.current(1);
+      else if (event.key === 'ArrowLeft') walk.current(-1);
+      else if (event.key === 'Escape') setAt(null);
+      else return;
+      event.preventDefault();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
-  const missing = visible.filter((e) => e.lat === null || e.lon === null).length;
-  const fuzzed = visible.filter((e) => e.lat !== null && !e.exactLocation).length;
+  const missing = entries.length - located.length;
+  const fuzzed = located.filter((e) => !e.exactLocation).length;
+  const current = at ? (located.find((e) => e.rightmoveId === at) ?? null) : null;
 
   return (
-    <>
-      <div className="legend">
-        {LEGEND_ORDER.map((group) => (
-          <button
-            key={group}
-            className={showing[group] ? 'key key-on' : 'key'}
-            aria-pressed={showing[group]}
-            onClick={() => show({ ...showing, [group]: !showing[group] })}
-          >
-            <span className="key-dot" style={{ background: COLOUR[group] }} aria-hidden="true" />
-            {GROUP_LABEL[group]} <span className="dim">{counts[group]}</span>
-          </button>
-        ))}
-      </div>
-
+    <div className="mapview" data-testid="map">
       <div className="map" ref={host} />
 
-      {(missing > 0 || fuzzed > 0) && (
-        <p className="dim map-note">
-          {missing > 0 && `${missing} not shown — no location. `}
-          {fuzzed > 0 && `${fuzzed} placed from Rightmove's approximate pin rather than the postcode.`}
-        </p>
+      {/* Over the map at its top edge: what is under this viewport, and the two caveats about what
+          is not drawn. These were three separate lines below the map, where the one number people
+          wanted — how many are in this bit of London — was not among them. */}
+      <div className="map-facts">
+        <span className="map-count" data-testid="map-in-view">
+          {inView === null ? '—' : inView} of {located.length} in view
+        </span>
+        {missing > 0 && (
+          <span className="dim" title="No postcode and no pin from Rightmove.">
+            {missing} not on the map
+          </span>
+        )}
+        {fuzzed > 0 && (
+          <span className="dim" title="Placed from Rightmove's approximate pin rather than the postcode.">
+            {fuzzed} approximate
+          </span>
+        )}
+      </div>
+
+      {current && (
+        <div className="map-dock" data-testid="map-dock">
+          <div className="map-dock-bar">
+            <button
+              type="button"
+              className="key"
+              aria-label="Previous"
+              disabled={located[0]?.rightmoveId === current.rightmoveId}
+              onClick={() => walk.current(-1)}
+            >
+              <Icon name="back" size={12} />
+            </button>
+            <button
+              type="button"
+              className="key"
+              aria-label="Next"
+              disabled={located.at(-1)?.rightmoveId === current.rightmoveId}
+              onClick={() => walk.current(1)}
+            >
+              <Icon name="forward" size={12} />
+            </button>
+            <span className="dim map-dock-hint">← → walks the pins</span>
+            <button type="button" className="key" aria-label="Close" onClick={() => setAt(null)}>
+              <Icon name="close" size={12} />
+            </button>
+          </div>
+          {/* The same card the grid draws. A map that summarised a flat its own way would be the
+              fifth renderer of the same six facts. */}
+          <FlatCard
+            entry={current}
+            places={places}
+            travel={travel}
+            hubs={hubs}
+            prefs={prefs}
+            score={scores?.get(current.rightmoveId)}
+            onOpen={onOpen}
+          />
+        </div>
       )}
-    </>
+    </div>
   );
 }

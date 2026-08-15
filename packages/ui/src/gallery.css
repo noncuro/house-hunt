@@ -28,10 +28,10 @@
    one "almost entirely obscured" until png.ts flattened it. Photos are opaque, so the white
    costs them nothing. */
 .lightbox-image {
-  background: #fff;
+  background: var(--white);
   max-width: 88vw;
   max-height: 84vh;
-  border-radius: 8px;
+  border-radius: var(--r-card);
   box-shadow: 0 20px 60px rgb(0 0 0 / 45%);
   /* The overlay handles horizontal drags itself; `pan-y` leaves the browser its vertical gestures
      and stops it claiming the sideways one as a scroll or a back-navigation halfway through a
@@ -108,5 +108,57 @@
   color: rgb(255 255 255 / 65%);
 }
 
-/* How long it has sat is context beside the price, not a headline of its own — same as the
-   panel. */
+/* ---- the strip that opens it -------------------------------------------------------------- */
+
+/* A horizontally scrolling row of thumbnails. It lives here rather than in either app's stylesheet
+   for the same reason the lightbox does: the two are one interaction, and a strip that looks like
+   a card on the website and like something else in the panel is the drift this package exists to
+   stop.
+
+   Two things were wrong with the plain overflowing row. A strip cut off flush at the card's edge
+   reads as a strip that ends there — nothing says the twelfth photo exists — so the right edge
+   fades, which is the one signal people already read as "there is more this way". And the count
+   was nowhere: `+7` on the last visible tile answers "is it worth opening" before the scroll does. */
+.rm-strip {
+  position: relative;
+  display: flex;
+  gap: var(--s1);
+  overflow-x: auto;
+  /* Anything that cannot fit scrolls inside itself rather than widening the card around it. */
+  scrollbar-width: none;
+  /* The fade is a mask rather than an overlaid gradient: an overlay would need the card's own
+     background colour to fake, and the strip appears over paper in one view and over a raised card
+     in the other. A mask fades to whatever is actually behind it. */
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+
+.rm-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.rm-strip img {
+  height: 72px;
+  border-radius: var(--r-chip);
+  flex: none;
+  background: var(--line-3);
+  object-fit: cover;
+}
+
+/* The tile that says how many did not fit. Sits at the end of the strip, above the fade, so it is
+   legible where the photos beside it are deliberately not. */
+.rm-strip-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 72px;
+  min-width: 44px;
+  padding: 0 var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  background: var(--white);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  cursor: pointer;
+}

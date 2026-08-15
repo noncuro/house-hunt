@@ -2,62 +2,113 @@
    here belongs to one view that most sessions never open, and because the shortlist stylesheet is
    already long enough that finding anything in it is a grep.
 
-   Palette and metrics are the page's: #12263a ink, #7b8a99 dim, #dfe6ec borders, 12px radii. The
-   `.key`, `.dim`, `.error`, `.working` and `.num` classes come from style.css and are reused
-   deliberately — a second set of buttons that looked nearly like the shortlist's would read as a
-   different application bolted on. */
+   Every colour here is a token from `packages/ui/src/tokens.css`. The `.key`, `.dim`, `.error` and
+   `.working` classes still come from style.css and are reused deliberately — a second set of
+   buttons that looked nearly like the shortlist's would read as a different application bolted
+   on. */
 
 .admin {
-  margin-top: 16px;
+  margin-top: var(--s4);
 }
+
+/* --- the pill row ------------------------------------------------------------------------ */
+
+/* One row of filters, each carrying the size of what it opens. The counts are the reason the row
+   is worth the space: which tab to open is a question about how much is behind it. */
 
 .admin-tabs {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--s2);
 }
 
 .admin-filters {
-  margin-top: 14px;
+  margin-top: var(--s4);
+}
+
+.admin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  /* ≥44px of tap target on a phone comes from the padding plus the 13px line, per the redesign's
+     rule 6; the pill looks smaller than it is on purpose. */
+  min-height: 32px;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--white);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.admin-pill:hover {
+  border-color: var(--fainter);
+}
+
+.admin-pill-on {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--white);
+}
+
+/* The count sits inside the pill rather than beside it, so the label and its size read as one
+   thing. Quieter than the label in both states — it is the second half of the sentence. */
+.admin-pill-count {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-pill-on .admin-pill-count {
+  color: inherit;
+  opacity: 0.65;
 }
 
 .admin-note {
   margin-left: auto;
+  color: var(--faint);
   font-size: 12px;
 }
 
 .admin-lede {
-  margin: 14px 0 0;
+  margin: var(--s4) 0 0;
   max-width: 62ch;
+  color: var(--muted);
 }
 
 .admin-notice {
-  margin-top: 12px;
+  margin-top: var(--s3);
 }
+
+/* --- the tables -------------------------------------------------------------------------- */
 
 /* Same reasoning as the compare table: these are wide, and the page body must never scroll
    sideways. */
 .admin-scroll {
-  margin-top: 14px;
+  margin-top: var(--s4);
+  max-width: 100%;
   overflow-x: auto;
-  border: 1px solid #dfe6ec;
-  border-radius: 12px;
-  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--raised);
 }
 
 .admin-table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .admin-table th,
 .admin-table td {
-  padding: 9px 12px;
+  padding: var(--s2) var(--s3);
   text-align: left;
   white-space: nowrap;
-  border-bottom: 1px solid #eef2f5;
+  border-bottom: 1px solid var(--line-3);
   vertical-align: middle;
 }
 
@@ -65,10 +116,14 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #f7fafc;
-  border-bottom: 1px solid #dfe6ec;
-  font-weight: 650;
-  color: #4a5b6c;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
 }
 
 .admin-table tbody tr:last-child td {
@@ -76,12 +131,11 @@
 }
 
 .admin-table tbody tr:hover {
-  background: #f5f9fc;
+  background: var(--paper);
 }
 
 .admin-table .num {
   text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 
 /* A row whose subject is finished with — a revoked or expired invite. Present because the history
@@ -97,106 +151,43 @@
 .admin-who {
   display: inline-flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--s2);
 }
 
 .admin-email {
+  color: var(--muted);
   font-size: 12px;
 }
 
 .admin-badge {
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: #eef4f8;
-  color: #4a5b6c;
-  font-size: 11px;
-  letter-spacing: 0.03em;
+  padding: 1px var(--s2);
+  border-radius: var(--r-pill);
+  background: var(--line-3);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .admin-tokens {
   font-size: 12px;
-  font-variant-numeric: tabular-nums;
 }
 
 /* --- the budget bar --------------------------------------------------------------------- */
 
-/* The one mark this view is built around. The track is drawn at full width at every level, so a
-   column of these can be read down by comparing fills — the same argument the confidence bars
-   settled (components/Confidence.tsx): a mark that shrinks as it matters more is backwards.
-
-   Colour is the signal here, which it deliberately is not on the confidence bars. A cap is a
-   threshold with a right and a wrong side, so amber at 80% and red at the line mean what amber and
-   red mean everywhere else in this extension: raise it at the viewing, and don't. */
+/* The bar itself is `SpendBar` in `packages/ui` — it was drawn here, and its fill was
+   `color-mix(in oklab, var(--ink) 9%, var(--white))` on a `--line-3` track, which is the same
+   colour, which is why a half-spent budget looked identical to an untouched one. This file keeps
+   only the cell it sits in. */
 
 .budget-cell {
   min-width: 200px;
 }
 
-.budget {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 168px;
-}
-
-.budget-track {
-  position: relative;
-  display: block;
-  height: 6px;
-  border-radius: 999px;
-  background: #e4ebf1;
-  overflow: hidden;
-}
-
-.budget-fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: #2e648f;
-  /* A zero-width fill would vanish; a hairline says "nothing yet" rather than "no data". */
-  min-width: 2px;
-}
-
-.budget-near .budget-fill {
-  background: #d69412;
-}
-
-.budget-over .budget-fill {
-  background: #b23a48;
-}
-
-/* No cap at all: the track is drawn hatched rather than empty, because an empty track reads as a
-   budget nobody has touched. */
-.budget-none {
-  background: repeating-linear-gradient(135deg, #eef2f5, #eef2f5 3px, #e0e7ee 3px, #e0e7ee 6px);
-}
-
-.budget-none .budget-fill {
-  display: none;
-}
-
-.budget-figures {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.budget-word.budget-near {
-  color: #8a5a12;
-}
-
-.budget-word.budget-over {
-  color: #b23a48;
-}
-
-.budget-word.budget-none {
-  color: #7b8a99;
-}
-
 /* The whole bar is the way into the charges behind it. A button rather than a link because it
    changes what this page is showing rather than going anywhere. */
-.drill {
+.admin-drill {
   display: block;
   width: 100%;
   padding: 0;
@@ -208,34 +199,36 @@
   cursor: pointer;
 }
 
-.drill:hover .budget-track {
-  outline: 1px solid #b9c6d2;
+.admin-drill:hover .rm-budget {
+  outline: 1px solid var(--fainter);
   outline-offset: 1px;
 }
 
 /* --- editable caps ---------------------------------------------------------------------- */
 
-.cap {
-  padding: 2px 6px;
+.admin-cap {
+  padding: var(--s1) var(--s2);
   background: none;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--r-chip);
   font: inherit;
   font-variant-numeric: tabular-nums;
   color: inherit;
   cursor: text;
 }
 
-.cap:hover {
-  border-color: #dfe6ec;
-  background: #f7fafc;
+.admin-cap:hover {
+  border-color: var(--line);
+  background: var(--paper);
 }
 
-.cap-edit input {
+.admin-edit input {
   width: 5.5em;
-  padding: 2px 6px;
-  border: 1px solid #4a7fb5;
-  border-radius: 6px;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--ink);
+  border-radius: var(--r-chip);
+  background: var(--white);
+  color: var(--ink);
   font: inherit;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -243,7 +236,7 @@
 
 /* A password an admin is about to read out, so it is wide and shown in the clear — the point is
    for it to be transcribable, and dots would only mean typing it twice and hoping. */
-.cap-edit input[type='text'] {
+.admin-edit input[type='text'] {
   width: 12em;
   text-align: left;
   font-variant-numeric: normal;
@@ -251,30 +244,42 @@
 
 /* --- invite state ----------------------------------------------------------------------- */
 
-.chip {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
+.admin-chip {
+  padding: 2px var(--s2);
+  border-radius: var(--r-pill);
+  font-size: 11.5px;
 }
 
-.chip-pending {
-  background: #eef4f8;
-  color: #2e648f;
+.admin-chip-pending {
+  background: var(--line-3);
+  color: var(--ink-soft);
 }
 
 /* Expired is derived from the date, never stored — the row still says "pending" in the database.
    It is greyed rather than red: an invite running out is the system working. */
-.chip-expired {
-  background: #f1f4f7;
-  color: #7b8a99;
+.admin-chip-expired {
+  background: var(--line-3);
+  color: var(--faint);
 }
 
-.chip-accepted {
-  background: #edf8f3;
-  color: #1a7f5a;
+.admin-chip-accepted {
+  background: var(--good-bg);
+  color: var(--good-ink);
 }
 
-.chip-revoked {
-  background: #fdf0f1;
-  color: #b23a48;
+.admin-chip-revoked {
+  background: var(--bad-bg);
+  color: var(--bad-ink);
+}
+
+/* --- on a phone -------------------------------------------------------------------------- */
+
+/* --bp-mobile (768px), which `@media` cannot read. */
+@media (max-width: 768px) {
+  /* The note is a caption for the row above it once the pills have wrapped; `margin-left: auto`
+     would otherwise strand it alone on a line of its own, right-aligned to nothing. */
+  .admin-note {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
 }

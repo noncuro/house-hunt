@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef } from 'react';
+import { Icon } from '@house-hunt/ui';
 
 /** Ticking flats, and ticking a run of them with shift.
  *
@@ -77,7 +78,7 @@ export function Tick({
       }}
     >
       <span className="tick-box" aria-hidden="true">
-        {checked ? '✓' : ''}
+        {checked && <Icon name="tick" size={11} />}
       </span>
       <span className="visually-hidden">Select {label}</span>
     </button>

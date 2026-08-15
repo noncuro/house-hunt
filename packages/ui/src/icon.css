@@ -1,0 +1,8 @@
+/* Icons sit on the text they label rather than on the line's baseline, which is what made the
+   emoji they replaced look dropped. `flex: none` because most of them live in a flex row beside a
+   piece of text that is allowed to shrink, and an icon that shrinks is a smudge. */
+.rm-icon {
+  display: inline-block;
+  vertical-align: -0.15em;
+  flex: none;
+}

@@ -207,50 +207,98 @@ export function criteriaFromUrl(href: string): { criteria: SweepCriteria; ignore
   return { criteria, ignored: [...new Set(ignored)] };
 }
 
+export interface CriteriaSummary {
+  /** Rent and bedrooms, in English. */
+  supported: string[];
+  /** Everything else the pasted search carried, printed as `key=value`. */
+  other: string[];
+}
+
 /** The saved criteria in words, so the page can show what a sweep will actually search without
- *  making anyone read a query string. Unknown parameters are printed as themselves rather than
- *  hidden — a filter we have no name for is still a filter that is narrowing the results. */
-export function describeCriteria(criteria: SweepCriteria): string[] {
-  const said = new Set<string>();
-  const lines: string[] = [];
+ *  making anyone read a query string.
+ *
+ *  Two lists rather than one, and the split is the point. This used to render a hand-written
+ *  sentence for whichever eight parameters somebody had got round to — bathrooms, furnish types,
+ *  let-agreed — which reads as a form this app knows how to fill in and is nothing of the kind: the
+ *  next Rightmove filter along came out as `newHomes: true` beside "Furnishing: furnished", and no
+ *  part of the screen said which of those the app understood. The basics a hunt actually sets are
+ *  rent and bedrooms (the radius is per place, and never comes from the paste — see `SWEEP_OWNS`),
+ *  so those get sentences and everything else is shown as itself, under its own heading.
+ *
+ *  Nothing is hidden either way. A filter we have no name for is still a filter narrowing the
+ *  results, and the surest way to make a sweep look broken is to run it with a constraint nobody on
+ *  screen can see. */
+export function describeCriteria(criteria: SweepCriteria): CriteriaSummary {
+  const supported: string[] = [];
+  // The three that only say "this is a lettings search" (`RENTAL_SEARCH`) are not filters anybody
+  // chose, so they are neither described nor listed as extras.
+  const said = new Set(Object.keys(RENTAL_SEARCH));
+
   const take = (...keys: string[]) => {
     for (const key of keys) said.add(key);
     return keys.map((key) => criteria[key]);
   };
-  const range = (label: string, min?: string, max?: string, unit = '') => {
-    if (min === undefined && max === undefined) return;
-    if (min !== undefined && max !== undefined) lines.push(`${label} ${unit}${min}–${unit}${max}`);
-    else if (min !== undefined) lines.push(`${label} from ${unit}${min}`);
-    else lines.push(`${label} up to ${unit}${max}`);
-  };
 
-  range('Rent', ...(take('minPrice', 'maxPrice') as [string?, string?]), '£');
-  range('Bedrooms', ...(take('minBedrooms', 'maxBedrooms') as [string?, string?]));
-  range('Bathrooms', ...(take('minBathrooms', 'maxBathrooms') as [string?, string?]));
+  const [minPrice, maxPrice] = take('minPrice', 'maxPrice');
+  if (minPrice !== undefined && maxPrice !== undefined) {
+    supported.push(`Rent ${pounds(minPrice)}–${pounds(maxPrice)} pcm`);
+  } else if (minPrice !== undefined) supported.push(`Rent from ${pounds(minPrice)} pcm`);
+  else if (maxPrice !== undefined) supported.push(`Rent up to ${pounds(maxPrice)} pcm`);
 
-  const [types] = take('propertyTypes');
-  if (types) lines.push(`Property types: ${types.split(',').join(', ')}`);
-  const [furnish] = take('furnishTypes');
-  if (furnish) lines.push(`Furnishing: ${furnish.split(',').join(', ')}`);
-  const [must] = take('mustHave');
-  if (must) lines.push(`Must have: ${must.split(',').join(', ')}`);
-  const [dont] = take('dontShow');
-  if (dont) lines.push(`Not shown: ${dont.split(',').join(', ')}`);
-  const [letAgreed] = take('_includeLetAgreed');
-  // `on` is the only value Rightmove sends, and it is a checkbox, so anything else is a URL nobody
-  // here has seen. Printed as itself rather than swallowed — `take` has already claimed the key, so
-  // the unknown-parameter loop below would never reach it.
-  if (letAgreed === 'on') lines.push('Including let-agreed');
-  else if (letAgreed !== undefined) lines.push(`_includeLetAgreed: ${letAgreed}`);
-  const [letType] = take('letType');
-  if (letType) lines.push(`Let type: ${letType}`);
+  const [minBeds, maxBeds] = take('minBedrooms', 'maxBedrooms');
+  if (minBeds !== undefined && minBeds === maxBeds) supported.push(bedrooms(minBeds));
+  else if (minBeds !== undefined && maxBeds !== undefined) {
+    // Only the far end carries the word: "1 to 3 bedrooms", not "1 bedroom to 3 bedrooms".
+    supported.push(`${minBeds === '0' ? 'Studio' : minBeds} to ${bedrooms(maxBeds)}`);
+  } else if (minBeds !== undefined) supported.push(`${bedrooms(minBeds)} or more`);
+  else if (maxBeds !== undefined) supported.push(maxBeds === '0' ? 'Studio' : `Up to ${bedrooms(maxBeds)}`);
 
-  // Everything we have no sentence for, said plainly rather than dropped.
-  take('rent', 'channel', 'transactionType');
-  for (const [key, value] of Object.entries(criteria)) {
-    if (!said.has(key)) lines.push(`${key}: ${value}`);
+  const other = Object.entries(criteria)
+    .filter(([key]) => !said.has(key))
+    .map(([key, value]) => `${key}=${value}`);
+  return { supported, other };
+}
+
+/** "1500" -> "£1,500". Grouped by hand rather than through `toLocaleString`, which returns a
+ *  different string depending on where the browser thinks it is. */
+function pounds(value: string): string {
+  return `£${/^\d+$/.test(value) ? value.replace(/\B(?=(\d{3})+$)/g, ',') : value}`;
+}
+
+/** Rightmove counts a studio as nought bedrooms, which is the one value that cannot be printed as a
+ *  number without saying something false. */
+function bedrooms(value: string): string {
+  if (value === '0') return 'Studio';
+  return value === '1' ? '1 bedroom' : `${value} bedrooms`;
+}
+
+/** Where to go to choose those filters: Rightmove's own search page, already pointed at one of this
+ *  hunt's places.
+ *
+ *  The paste-a-URL design (see `SweepCriteria`) is only as good as the first step, and the first
+ *  step was "go and find the right search on Rightmove yourself" — which is where somebody sets the
+ *  filters for the wrong area and pastes back a search that looks fine. Starting from the place we
+ *  already resolved means the area is right before anybody touches a filter.
+ *
+ *  `locationIdentifier` is used only when we hold one. Rightmove's identifiers are not guessable and
+ *  a made-up one returns a page full of plausible flats somewhere else, so a place that has not been
+ *  resolved gets the plain text search — Rightmove asks which of the matching areas was meant, which
+ *  is honest about what we know. */
+export function rightmoveSearchStart(place: {
+  label: string;
+  locationIdentifier: string | null;
+  displayLocationIdentifier: string | null;
+}): string {
+  const parameters = new URLSearchParams({
+    searchLocation: place.displayLocationIdentifier
+      ? searchLocationFor(place.displayLocationIdentifier)
+      : place.label,
+  });
+  if (place.locationIdentifier) {
+    parameters.set('useLocationIdentifier', 'true');
+    parameters.set('locationIdentifier', place.locationIdentifier);
   }
-  return lines;
+  return `https://www.rightmove.co.uk/property-to-rent/search.html?${parameters.toString()}`;
 }
 
 /** Rightmove's own page size. Only used to turn a page number into the `index` it wants. */

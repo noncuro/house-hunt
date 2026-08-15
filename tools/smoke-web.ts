@@ -30,10 +30,11 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, 
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
+import { chromium, type Browser, type ConsoleMessage, type Locator, type Page } from 'playwright';
 import {
   createInvite,
   offMarketReason,
+  setOffMarketDirectly,
   FIXTURE_EMAIL,
   FIXTURE_NAME,
   fixtureId,
@@ -240,33 +241,60 @@ async function checkHeaders({ page }: Stage): Promise<void> {
 /** Signed in at all, and as whom. Loudly, and first: every other section would pass against a
  *  perfectly rendered sign-in form. */
 async function checkSession({ page }: Stage): Promise<void> {
-  if (await page.locator('.sign-in, [data-testid="signed-out"]').count()) {
+  if (await page.locator('.signin, [data-testid="signed-out"]').count()) {
     note('the website is showing the sign-in view despite a valid session');
   }
-  const whoami = await page.locator('.wrap').innerText();
-  if (!whoami.includes(FIXTURE_NAME)) {
-    note(`the page never names the signed-in user (${FIXTURE_NAME}) — is this really a session?`);
+  // Who you are moved into the account menu in the redesign — the header row carries initials, and
+  // the name is one click away. So this opens it, which also asserts the menu works at all: it is
+  // the only route to signing out.
+  await page.locator('[data-testid="shell"] .shell-account .menu-button').click();
+  const menu = await page.locator('[data-testid="shell"] .menu-panel').innerText();
+  if (!menu.includes(FIXTURE_NAME)) {
+    note(`the account menu never names the signed-in user (${FIXTURE_NAME}) — is this really a session?`);
   }
+  if (!(await page.locator('[data-testid="account-sign-out"]').count())) {
+    note('the account menu offers no way to sign out');
+  }
+  await page.keyboard.press('Escape');
 }
 
-/** The list. `DEFAULT_SHOWING` puts excited and maybe on and leaves unrated and rejected off, so
- *  this is a number the fixture decides: one love, one maybe, one rejection, three unrated. */
+/** Places, in its default rendering: every flat the hunt has, three across, grouped by verdict.
+ *
+ *  Every flat, not two. The cards, the table and the map used to start with the unrated and rejected
+ *  piles hidden and each kept its own pair of switches for them, so the toolbar said one number and
+ *  the screen drew a different set. One lens over all four renderings now, and it starts at
+ *  Everything — which is a number the fixture decides. */
 async function checkList({ page }: Stage): Promise<void> {
-  const cards = await page.locator('article.card').count();
-  console.log(`list: ${cards} card(s) shown by default`);
-  if (cards !== 2) {
-    note(`the list shows ${cards} cards; the fixture has exactly 2 rated excited-or-maybe`);
+  // Places opens on the shortlist, not on the whole hunt. The two flats the fixture rates are the
+  // two the `enter_funnel` trigger puts there, so this asserts the default lens and that trigger at
+  // once — and it is the assertion that fails if the screen ever goes back to opening on everything,
+  // which on a swept project is hundreds of listings nobody has looked at.
+  const cards = await page.locator('[data-testid="flat-card"]').count();
+  const shortlisted = await openLens(page, 'shortlisted');
+  console.log(`places: ${cards} card(s) by default, at "shortlisted"`);
+  if ((await page.locator('[data-testid="lens-shortlisted"]').getAttribute('aria-pressed')) !== 'true') {
+    note('Places did not open on the shortlist');
   }
-  // The rated flats, by id, so a wrong join that returned the right *count* still fails.
+  if (cards !== shortlisted) {
+    note(`the shortlisted chip says ${shortlisted} and the screen drew ${cards}`);
+  }
+  if (await page.locator('[data-testid="lens-all"]').count()) {
+    note('the toolbar still offers an "everything" chip');
+  }
   for (const id of [fixtureId(1), fixtureId(4)]) {
-    if (!(await page.locator(`#card-${id}`).count())) note(`${id} is rated but is not on the list`);
+    if (!(await page.locator(`#card-${id}`).count())) note(`${id} is rated, so it should be shortlisted`);
   }
-  // And the ones default-hidden really are hidden, or "shows 2" means nothing.
+
+  // And the flats outside the funnel, which is where the unrated ones sit and is the other half of
+  // the hunt. Reached only by its chip now, so a chip that counted one thing and drew another would
+  // leave those flats unreachable rather than merely miscounted.
+  const outside = await openLens(page, 'none');
+  const drawn = await page.locator('[data-testid="flat-card"]').count();
+  if (drawn !== outside) note(`the not-in-the-funnel chip says ${outside} and the screen drew ${drawn}`);
   for (const id of [fixtureId(2), fixtureId(5)]) {
-    if (await page.locator(`#card-${id}`).count()) {
-      note(`${id} is rejected or unrated and should not be on the list by default`);
-    }
+    if (!(await page.locator(`#card-${id}`).count())) note(`${id} is in no funnel step but is not drawn there`);
   }
+  await openLens(page, 'shortlisted');
 
   // The shortlist read is the whole point: a card that rendered with no price or no address is a
   // join that half-worked, which looks like a design choice rather than a bug.
@@ -275,13 +303,47 @@ async function checkList({ page }: Stage): Promise<void> {
   for (const expected of ['Flask Walk', '£2,600 pcm']) {
     if (!firstText.includes(expected)) note(`the card for ${fixtureId(1)} is missing "${expected}"`);
   }
-  // Attribution: a shared rating whose author is invisible turns a disagreement into a silent
-  // overwrite, which is the reason `set_by_name` is stored at all.
-  if (!(await first.locator('[data-testid="verdict-by"]').count())) {
-    note('the card does not say who set the verdict');
+
+  // The verdict chips are the other kind of lens, and they cut across the funnel rather than along
+  // it: "the ones we loved" is a complete answer to what you want on screen and is not a step.
+  const lovedSays = await openLens(page, 'excited');
+  const narrowed = await page.locator('[data-testid="flat-card"]').count();
+  console.log(`places: ${narrowed} card(s) at "Loved"`);
+  if (narrowed !== 1) note(`filtering to Loved drew ${narrowed} cards; the fixture loves exactly 1`);
+  if (lovedSays !== narrowed) note(`the Loved chip says ${lovedSays} over ${narrowed} cards`);
+  if (await page.locator(`#card-${fixtureId(2)}`).count()) {
+    note(`${fixtureId(2)} is not loved but survived the Loved chip`);
   }
+  // Pressing the chip you are on does nothing, deliberately: there is no everything to fall back to
+  // and a control that empties the screen when pressed twice is worse than one that ignores you.
+  await page.locator('[data-testid="lens-excited"]').click();
+  await settle(page);
+  if ((await page.locator('[data-testid="flat-card"]').count()) !== narrowed) {
+    note('clicking the chip that is already on changed what the screen shows');
+  }
+  await openLens(page, 'shortlisted');
 
   await page.screenshot({ path: resolve(SHOTS, 'web-list.png'), fullPage: true });
+
+  // And the same screen on a phone, which is where a shortlist is actually read — standing outside
+  // the building, deciding whether to bother. Nothing else here narrows the window, so the whole
+  // mobile layout rested on a media query no check ever evaluated. What is asserted is the one
+  // failure that makes a page unusable rather than merely ugly: content wider than the window, which
+  // gives every vertical scroll a sideways drift and pushes the toolbar half off screen.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await settle(page);
+  const overflow = await page.evaluate(() => ({
+    scroll: document.documentElement.scrollWidth,
+    window: document.documentElement.clientWidth,
+  }));
+  if (overflow.scroll > overflow.window + 1) {
+    note(`on a 390px window the page is ${overflow.scroll}px wide, so it scrolls sideways`);
+  }
+  const shellWidth = await page.locator('[data-testid="shell"]').evaluate((el) => el.getBoundingClientRect().width);
+  if (shellWidth > 391) note(`the shell is ${Math.round(shellWidth)}px wide in a 390px window`);
+  await page.screenshot({ path: resolve(SHOTS, 'web-list-phone.png'), fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await settle(page);
 }
 
 /** Rating a flat, through the buttons, read back from Postgres.
@@ -299,23 +361,25 @@ async function checkList({ page }: Stage): Promise<void> {
  *  `love`, so nothing below it moves: the count, the compare table and the triage pile are all
  *  about a flat that was already showing and is still showing, whether or not this section ran. */
 async function checkRating({ page }: Stage): Promise<void> {
-  const rated = page.locator(`#card-${fixtureId(4)}`);
   const NEW_NOTE = 'Smoke: raised to loved.';
+  const panel = await openFlat(page, fixtureId(4));
+  if (!panel) return;
+
   // The note first, then the rating: the buttons pass the note themselves, precisely so that
   // leaving the field to click a rating does not race two saves. Typing it after would be testing
   // the blur path, which is a different write.
-  await rated.locator('.note-edit').fill(NEW_NOTE);
-  await rated.locator('[data-testid="rate-love"]').click();
+  await panel.locator('.note-edit').fill(NEW_NOTE);
+  await panel.locator('[data-testid="rate-love"]').click();
 
   // What a person would see: the line now reads "Love it", and it is attributed to whoever clicked.
-  await rated
+  await panel
     .locator('[data-testid="verdict-rating"]')
     .filter({ hasText: ratingOf('love').label })
     .waitFor({ timeout: 10_000 })
-    .catch(() => note(`the card never showed the new rating after clicking ${ratingOf('love').label}`));
-  const by = await rated.locator('[data-testid="verdict-by"]').innerText();
+    .catch(() => note(`the flat never showed the new rating after clicking ${ratingOf('love').label}`));
+  const by = await panel.locator('[data-testid="verdict-by"]').innerText();
   if (!by.includes(FIXTURE_NAME)) {
-    note(`the re-rated card is attributed to "${by}", not to ${FIXTURE_NAME} who clicked it`);
+    note(`the re-rated flat is attributed to "${by}", not to ${FIXTURE_NAME} who clicked it`);
   }
 
   // And what is actually stored. Polled rather than read once — the click returns as soon as the
@@ -330,7 +394,7 @@ async function checkRating({ page }: Stage): Promise<void> {
   // On `set_by`, not on `set_by_name`. The name column belongs to the pre-auth identity model and
   // the schema says new rows leave it null; the name a reader sees is resolved from project
   // membership by `authorOf`. Asserting the name here reported a correctly attributed verdict as
-  // anonymous — which is why the check above, on what the card actually renders, is the other half
+  // anonymous — which is why the check above, on what the panel actually renders, is the other half
   // of this and not a duplicate of it.
   if (stored?.setBy !== fixture.userId) {
     note(`the stored verdict is authored by ${stored?.setBy ?? 'nobody'}, not by the user who clicked`);
@@ -348,6 +412,8 @@ async function checkRating({ page }: Stage): Promise<void> {
   } else if (archived?.rating !== 'maybe') {
     note(`the archived rating is "${archived?.rating}"; the fixture set it to maybe`);
   }
+
+  await closeFlat(page);
 }
 
 /** The funnel: moving a place along it, archiving it with a reason, and — the assertion this
@@ -364,33 +430,43 @@ async function checkRating({ page }: Stage): Promise<void> {
 async function checkFunnel({ page }: Stage): Promise<void> {
   await openView(page, 'list');
   const id = fixtureId(4);
-  const card = page.locator(`#card-${id}`);
   const before = await verdictOf(id);
   if (!before) {
     note(`${id} has no verdict, so it should not be in the funnel at all`);
     return;
   }
 
-  // The bar the shortlist is filtered by. It is the funnel's only presence on a page that is not
-  // showing one flat, and it renders every step including the empty ones.
-  const bar = page.locator('[data-testid="funnel"]');
-  if (!(await bar.count())) note('the shortlist has no funnel bar');
+  // The chips Places is filtered by. They are the funnel's only presence on a screen that is not
+  // showing one flat, and every step is drawn including the empty ones.
+  if (!(await page.locator('[data-testid="funnel"]').count())) note('Places has no funnel chips');
+  for (const stage of ['shortlisted', 'enquired', 'viewing_booked', 'viewed', 'offer_made']) {
+    if (!(await page.locator(`[data-testid="lens-${stage}"]`).count())) {
+      note(`the funnel row is missing its "${stage}" chip`);
+    }
+  }
 
-  await card.locator('[data-testid="stage-enquired"]').click();
-  await card
+  const panel = await openFlat(page, id);
+  if (!panel) return;
+
+  await panel.locator('[data-testid="stage-enquired"]').click();
+  await panel
     .locator('[data-testid="stage-now"]')
     .filter({ hasText: 'Reached out' })
     .waitFor({ timeout: 10_000 })
-    .catch(() => note('the card never showed the new stage after clicking Reached out'));
+    .catch(() => note('the flat never showed the new stage after clicking Reached out'));
 
-  const moved = await settleOn(() => stageOf(id), (s) => s?.stage === 'enquired');
-  if (moved?.stage !== 'enquired') note(`the database holds "${moved?.stage ?? 'nothing'}" for ${id}, not enquired`);
-  if (moved?.setBy !== fixture.userId) note(`the move is attributed to ${moved?.setBy ?? 'nobody'}, not to whoever clicked`);
+  const moved = await settleOn(() => stageOf(id), (st) => st?.stage === 'enquired');
+  if (moved?.stage !== 'enquired') {
+    note(`the database holds "${moved?.stage ?? 'nothing'}" for ${id}, not enquired`);
+  }
+  if (moved?.setBy !== fixture.userId) {
+    note(`the move is attributed to ${moved?.setBy ?? 'nobody'}, not to whoever clicked`);
+  }
 
   // Archiving is the one step that asks why, and nothing is written until it is answered.
-  await card.locator('[data-testid="stage-archived"]').click();
-  await card.locator('[data-testid="archive-gone"]').click();
-  const archived = await settleOn(() => stageOf(id), (s) => s?.stage === 'archived');
+  await panel.locator('[data-testid="stage-archived"]').click();
+  await panel.locator('[data-testid="archive-gone"]').click();
+  const archived = await settleOn(() => stageOf(id), (st) => st?.stage === 'archived');
   console.log(`stage: ${archived?.stage} (${archived?.archiveReason ?? 'no reason'})`);
   if (archived?.archiveReason !== 'gone') {
     note(`${id} was archived with reason "${archived?.archiveReason ?? 'none'}"; the click said gone`);
@@ -398,11 +474,25 @@ async function checkFunnel({ page }: Stage): Promise<void> {
 
   const after = await verdictOf(id);
   if (after?.rating !== before.rating) {
-    note(`archiving changed the rating from "${before.rating}" to "${after?.rating ?? 'nothing'}" — the two must move apart`);
+    note(
+      `archiving changed the rating from "${before.rating}" to "${after?.rating ?? 'nothing'}" — the two must move apart`,
+    );
   }
+
+  await closeFlat(page);
+
+  // The board draws the same fact as a layout rather than as a filter over one, which makes it the
+  // rendering that could disagree with the chips without anybody noticing.
+  await openView(page, 'board');
+  const archivedColumn = page.locator('[data-testid="board-archived"] .board-card');
+  if ((await archivedColumn.count()) === 0) {
+    note('the board drew nothing in its archived column after a flat was archived');
+  }
+  await page.screenshot({ path: resolve(SHOTS, 'web-board.png'), fullPage: true });
+  await openView(page, 'list');
 }
 
-/** Off the market: the flat leaves the shortlist, and nothing else about it moves.
+/** Off the market: the flat moves to Archived, and nothing else about it moves.
  *
  *  Both halves are the point. A hunt's own shortlist going on offering places that are gone is what
  *  this was reported as; and the mark is written into the table the verdict-score model reads, so a
@@ -410,268 +500,386 @@ async function checkFunnel({ page }: Stage): Promise<void> {
  *  you loved and lost was one you never liked. Nothing on screen would say so, which is why the
  *  verdict and the stage are read from Postgres either side of the click.
  *
- *  Ends by putting the flat back, because the sections after this one count what is on screen. */
+ *  It used to vanish from every view behind a "1 off the market, hidden" note with a button to show
+ *  them again — a third place to look, for the one fact that already has a name people use for it.
+ *  It is drawn under Archived now, so what is asserted is a move: gone from the shortlist, present
+ *  under the chip, and the two facts underneath it unchanged.
+ *
+ *  Runs against the first flat, which the fixture loves and which the funnel trigger therefore
+ *  shortlists — so there is a lens for it to leave. Ends by putting it back, because the sections
+ *  after this one count what is on screen. */
 async function checkOffMarket({ page }: Stage): Promise<void> {
-  // Read before anything is hidden, so the table assertion below compares against this run's own
-  // number rather than a literal that a change to the fixture would quietly make meaningless.
-  await openView(page, 'table');
-  const tableRows = await page.locator('table tbody tr').count();
   await openView(page, 'list');
-  const id = fixtureId(4);
+  const id = fixtureId(1);
   const card = page.locator(`#card-${id}`);
   const before = { verdict: await verdictOf(id), stage: await stageOf(id) };
   if (!before.verdict) {
     note(`${id} has no verdict, so it cannot be marked off the market`);
     return;
   }
+  const archivedBefore = Number(
+    (await page.locator('[data-testid="lens-archived"] .chip-count').innerText()).trim(),
+  );
 
-  await card.getByRole('button', { name: 'Mark off the market' }).click();
+  const panel = await openFlat(page, id);
+  if (!panel) return;
+  await panel.getByRole('button', { name: 'Mark off the market' }).click();
+  await closeFlat(page);
+
   await card
     .waitFor({ state: 'detached', timeout: 10_000 })
     .catch(() => note('the card was still on the shortlist after being marked off the market'));
 
-  // Hidden, and accounted for. A flat that disappears with nothing on screen saying where it went
-  // is indistinguishable from the shortlist having lost it.
-  const line = page.locator('[data-testid="off-market-hidden"]');
-  await line
-    .waitFor({ timeout: 10_000 })
-    .catch(() => note('nothing on the shortlist said anything had been hidden'));
-  const said = (await line.innerText().catch(() => '')).trim();
-  console.log(`off the market: ${said}`);
-  // The number, not merely the sentence. It is counted over what this view would otherwise show,
-  // and a count taken over the whole hunt instead reads as a lie the moment the funnel is filtered.
-  if (!said.startsWith('1 off the market, hidden')) {
-    note(`the shortlist says "${said}"; one flat was marked off the market`);
+  // Under Archived, and counted there. A flat that leaves one lens without arriving in another is
+  // indistinguishable from the shortlist having lost it, which is the failure the old note existed
+  // to paper over.
+  const archivedNow = await openLens(page, 'archived');
+  if (archivedNow !== archivedBefore + 1) {
+    note(`the archived chip went from ${archivedBefore} to ${archivedNow} for one flat marked gone`);
   }
+  if (!(await card.count())) note(`${id} is off the market but is not drawn under Archived`);
 
-  // Every view here reads the same list, so a flat hidden from the cards has to be gone from the
-  // compare table too — one still offering it is the same bug in another tab.
+  // All four renderings read the same list, so the table under this chip has to hold it too — one
+  // rendering still filing it elsewhere is the same bug in another view.
   await openView(page, 'table');
-  const rows = await page.locator('table tbody tr').count();
-  console.log(`table: ${tableRows} row(s) before, ${rows} while hidden`);
-  if (rows !== tableRows - 1) {
-    note(`the compare table drew ${rows} rows with one flat hidden; it drew ${tableRows} before`);
-  }
+  await openLens(page, 'archived');
+  const rows = await page.locator('table.compare tbody tr').count();
+  if (rows !== archivedNow) note(`the table drew ${rows} rows under an Archived chip saying ${archivedNow}`);
   await openView(page, 'list');
 
   const reason = await settleOn(() => offMarketReason(id), (r) => r !== null);
-  if (reason === null) note(`${id} is hidden on screen but has no training_exclusion row`);
+  if (reason === null) note(`${id} is drawn as gone but has no training_exclusion row`);
 
-  // The two facts that must not have moved.
+  // The two facts that must not have moved. The stage especially: it is still shortlisted, and the
+  // flat is being drawn under Archived anyway — that gap is the whole design, and a version that
+  // closed it by writing the stage would be overwriting somebody's account of what happened.
   const after = { verdict: await verdictOf(id), stage: await stageOf(id) };
   if (after.verdict?.rating !== before.verdict.rating) {
-    note(`marking off the market changed the rating from "${before.verdict.rating}" to "${after.verdict?.rating ?? 'nothing'}"`);
+    note(
+      `marking off the market changed the rating from "${before.verdict.rating}" to "${after.verdict?.rating ?? 'nothing'}"`,
+    );
   }
   if ((after.stage?.stage ?? null) !== (before.stage?.stage ?? null)) {
-    note(`marking off the market changed the stage from "${before.stage?.stage ?? 'none'}" to "${after.stage?.stage ?? 'none'}"`);
+    note(
+      `marking off the market changed the stage from "${before.stage?.stage ?? 'none'}" to "${after.stage?.stage ?? 'none'}"`,
+    );
   }
+  console.log(
+    `off the market: drawn under Archived, still ${after.verdict?.rating} and still ${after.stage?.stage ?? 'unstaged'}`,
+  );
 
-  // And back: the way to a flat you hid has to be on the screen it left.
-  await line.getByRole('button', { name: 'Show them' }).click();
-  await card
-    .waitFor({ timeout: 10_000 })
-    .catch(() => note('“Show them” did not bring the hidden flat back'));
-  await card.getByRole('button', { name: 'Back on the market' }).click();
+  // And back where it was, by its own stage rather than to wherever it was last seen. Reached
+  // under Archived, because that is where it is until it comes back — `openView` above navigated,
+  // which puts the lens back to the default the way a reload does.
+  await openLens(page, 'archived');
+  const back = await openFlat(page, id);
+  if (back) {
+    await back.getByRole('button', { name: 'Back on the market' }).click();
+    await closeFlat(page);
+  }
   const cleared = await settleOn(() => offMarketReason(id), (r) => r === null);
   if (cleared !== null) note(`${id} is still excluded after being put back on the market`);
+  await openLens(page, 'shortlisted');
+  if (!(await card.count())) note(`${id} did not come back to the shortlist it left`);
 }
 
 /** The compare table, which is its own read path and has failed as a blank screen before. */
 async function checkTable({ page }: Stage): Promise<void> {
   await openView(page, 'table');
-  const rows = await page.locator('table tbody tr').count();
-  console.log(`table: ${rows} row(s)`);
-  if (rows < 2) note(`the compare table drew ${rows} rows; the fixture has 2 flats to compare`);
+  // Under the chip holding the flats outside the funnel, which is the fixture's largest slice and
+  // the only one with enough in it to set two against each other. The table draws whatever the lens
+  // leaves, like the other three renderings, so what is checked is that it draws exactly that.
+  const said = await openLens(page, 'none');
+  const rows = await page.locator('table.compare tbody tr').count();
+  console.log(`table: ${rows} row(s) at "not in the funnel"`);
+  if (rows !== said) note(`the table drew ${rows} rows under a chip saying ${said}`);
+
+  // The head-to-head, which is what the tick boxes are for and the only place two flats are set
+  // against each other. It offers nothing until two are ticked — a button that is live with one
+  // picked is a button whose only outcome is a comparison of one thing with itself.
+  const ticks = page.locator('table.compare tbody tr .tick');
+  await ticks.nth(0).click();
+  const one = page.locator('[data-testid="head-to-head"]');
+  if (await one.isEnabled()) note('the side-by-side button is live with one flat picked');
+  await ticks.nth(1).click();
+  if (!(await one.isEnabled())) note('the side-by-side button stayed dead with two flats picked');
+  await one.click();
+  await settle(page);
+  const duel = page.locator('[data-testid="head-to-head-view"]');
+  if (!(await duel.count())) note('the side-by-side never opened');
+  else {
+    // One column per flat, plus the spine of row labels down the left.
+    const columns = await duel.locator('thead th').count();
+    if (columns !== 3) note(`the side-by-side drew ${columns} header cells for two flats and a spine`);
+    // Every row says something. A fact nobody has for a flat is "not rated" or a dash, never the
+    // empty cell a component that renders null for absence leaves behind.
+    const blank = await duel.locator('tbody td:not(:has(*)):text-is("")').count();
+    if (blank > 0) note(`${blank} cell(s) in the side-by-side are blank rather than saying so`);
+    await page.screenshot({ path: resolve(SHOTS, 'web-head-to-head.png'), fullPage: true });
+    await duel.locator('[data-testid="duel-close"]').click();
+    await settle(page);
+  }
+  // Put the table back the way it was found: the ticks are held above this screen, so leaving two
+  // set would leave the next section reading a state this one invented.
+  await ticks.nth(0).click();
+  await ticks.nth(1).click();
+
   await page.screenshot({ path: resolve(SHOTS, 'web-table.png'), fullPage: true });
+  await openLens(page, 'shortlisted');
 }
 
 async function checkMap({ page }: Stage): Promise<void> {
   await openView(page, 'map');
+  // The same slice the table used, for the same reason: walking the pins with the arrow keys needs
+  // more than one pin to walk to.
+  await openLens(page, 'none');
   // The tile layer, not merely the container: an empty map div is what a broken map looks like.
   await page
     .locator('.leaflet-container')
     .waitFor({ timeout: 20_000 })
     .catch(() => note('the map view never rendered a leaflet container'));
+  // After the lens, which re-fits the map: tiles for the new viewport arrive over the network and
+  // counting them the moment the click returns counts the old ones on their way out.
+  await page
+    .locator('.leaflet-tile-loaded')
+    .first()
+    .waitFor({ timeout: 20_000 })
+    .catch(() => note('no map tile ever finished loading'));
   const tiles = await page.locator('.leaflet-tile').count();
   console.log(`map: ${tiles} tile(s) loaded`);
   if (tiles === 0) note('the map drew no tiles');
+
+  // How many of these are in this bit of London — the one number a map is being asked for and the
+  // one it did not have. It is recomputed on every pan, so a static count would pass here and be
+  // wrong the moment anybody moved.
+  const inView = await page.locator('[data-testid="map-in-view"]').innerText().catch(() => '');
+  if (!/\d+ of \d+ in view/.test(inView)) note(`the map says "${inView}" rather than how many are in view`);
+
+  // Clicking a pin docks the flat at the foot and keeps the map. It used to navigate, which threw
+  // away the street you were looking at — so the assertion is both halves: the card arrives, and the
+  // map is still there under it.
+  const pins = page.locator('.leaflet-interactive');
+  if ((await pins.count()) === 0) note('the map drew no pins for a fixture with located flats');
+  else {
+    await pins.first().click();
+    const dock = page.locator('[data-testid="map-dock"]');
+    await dock
+      .waitFor({ timeout: 10_000 })
+      .catch(() => note('clicking a pin docked no card at the foot of the map'));
+    if (!(await page.locator('.leaflet-container').isVisible())) {
+      note('clicking a pin left the map');
+    }
+    // The arrow keys walk the pins, which is the whole reason the dock is a dock rather than a
+    // panel: one flat after another without going back to a list between them.
+    const first = await dock.locator('.flat-address').innerText().catch(() => '');
+    await page.keyboard.press('ArrowRight');
+    await settle(page);
+    const second = await dock.locator('.flat-address').innerText().catch(() => '');
+    if (first !== '' && first === second) note('the right arrow key did not move the dock to another pin');
+  }
+
   await page.screenshot({ path: resolve(SHOTS, 'web-map.png') });
 }
 
-/** Triage opens as a table, not as cards — the pile is mostly a "no" you can see from one row,
- *  which is the whole reason it has a layout of its own. So this asserts rows, then flips to
- *  cards, because "shows the right number" in one layout says nothing about the other. */
+/** Triage: the pile down the left, the flat itself on the right, and the keys that work it.
+ *
+ *  It was the compare table with a tick column and a card that expanded under the row you clicked,
+ *  which made deciding on a flat a matter of opening it, reading down and collapsing it again. The
+ *  work is one flat at a time and always the same three keys. So what is asserted here is the split:
+ *  that the pile lists what is waiting, that moving through it changes the pane, that a keystroke
+ *  writes a verdict — and that ticking, which is the other half of the job, still batches. */
 async function checkTriage({ page }: Stage): Promise<void> {
   await openView(page, 'triage');
-  const triageRows = await page.locator('.triage table tbody tr').count();
-  console.log(`triage: ${triageRows} unrated row(s)`);
-  if (triageRows !== fixture.unratedCount) {
-    note(`triage lists ${triageRows} rows; the fixture has ${fixture.unratedCount} unrated`);
+  const rows = page.locator('[data-testid="triage-pile"] li');
+  const waiting = await rows.count();
+  console.log(`triage: ${waiting} unrated in the pile`);
+  if (waiting !== fixture.unratedCount) {
+    note(`triage lists ${waiting}; the fixture has ${fixture.unratedCount} unrated`);
+  }
+  // The count line says the same number the pile draws. Two places for one fact is where they drift.
+  const counted = await page.locator('[data-testid="triage-count"]').innerText();
+  if (!counted.includes(String(waiting))) {
+    note(`the triage bar says "${counted.trim()}" over a pile of ${waiting}`);
   }
   await page.screenshot({ path: resolve(SHOTS, 'web-triage.png'), fullPage: true });
 
-  // Clicking a row reads the flat; it does not choose it. This was the other way round once, which
-  // made looking at a place and putting it in a batch the same gesture — and three buttons at the
-  // top of the pile then rated the batch for everybody in the hunt. Selecting is the box, and only
-  // the box, so both halves are asserted: the card opens, and nothing is selected.
-  const firstRow = page.locator('.triage table tbody tr').first();
-  await firstRow.click();
-  if (!(await page.locator('.triage .compare-expanded-row .card').count())) {
-    note('clicking a triage row did not open its card');
+  // The pane. One flat is shown from the first frame — a split view that starts empty is a screen
+  // asking you to pick before it will help.
+  if (!(await page.locator('.triage-pane [data-testid="flat-detail"]').count())) {
+    note('triage opened with nothing in its pane');
   }
-  const afterRowClick = await page.locator('.triage-bar .dim').first().textContent();
-  if (afterRowClick?.trim() !== 'Nothing selected') {
-    note(`clicking a triage row selected it — the bar reads "${afterRowClick?.trim()}"`);
-  }
-  // Closed again, so the counts below are about the pile this section found rather than one it left.
-  await firstRow.click();
+  const firstShown = await paneAddress(page);
 
-  // The filters, and the rule underneath them. A bar nothing can clear must empty the pile and say
-  // so — with the filter bar still on screen, since the control that caused it is the only way out.
-  await page.locator('[data-testid="filter-max-rent"]').fill('1');
-  const emptied = await page.locator('.triage table tbody tr').count();
-  if (emptied !== 0) note(`a £1 rent filter left ${emptied} rows`);
+  // `j` moves down the pile. Not a click: the keys are the reason this screen has the shape it has,
+  // and a version where only the mouse works is the table again with extra steps.
+  await page.locator('.triage-pile').click({ position: { x: 5, y: 5 } }).catch(() => {});
+  await page.keyboard.press('j');
+  await settle(page);
+  const afterJ = await paneAddress(page);
+  if (firstShown !== '' && firstShown === afterJ) note('pressing j did not move the pane to the next flat');
+  await page.keyboard.press('k');
+  await settle(page);
+  if ((await paneAddress(page)) !== firstShown) note('pressing k did not come back to the flat j left');
+
+  // The filters, and the rule underneath them: a bar nothing can clear must empty the pile and say
+  // so, with the way out still on screen. They are collapsed to one line now, so opening them is
+  // part of the assertion — a panel that cannot be reopened is a filter nobody can undo.
+  await page.locator('[data-testid="triage-filters-toggle"]').click();
   if (!(await page.locator('[data-testid="triage-filters"]').count())) {
-    note('filtering the pile to nothing took the filter bar away with it');
+    note('the filter summary did not open its panel');
+  }
+  await page.locator('[data-testid="filter-max-rent"]').fill('1');
+  await settle(page);
+  const emptied = await rows.count();
+  if (emptied !== 0) note(`a £1 rent filter left ${emptied} in the pile`);
+  if (!(await page.locator('[data-testid="triage-filters"]').count())) {
+    note('filtering the pile to nothing took the filter panel away with it');
   }
   await page.locator('[data-testid="clear-filters"]').click();
-  const restored = await page.locator('.triage table tbody tr').count();
+  await settle(page);
+  const restored = await rows.count();
   if (restored !== fixture.unratedCount) {
-    note(`clearing the filters left ${restored} rows, not the ${fixture.unratedCount} unrated`);
+    note(`clearing the filters left ${restored}, not the ${fixture.unratedCount} unrated`);
   }
 
-  // The bulk-rate buttons are dead until something is ticked. Checked up to the write and no
-  // further, deliberately: the rest of this harness reads, and a bulk write is the one action here
-  // that would put verdicts nobody gave onto rows — which is exactly what the fixture exists to
-  // keep away from a real house hunt, and worth not relying on that alone.
-  const rate = page.locator('.triage-rate button').first();
-  if (await rate.isEnabled()) note('the bulk-rate buttons are live with nothing selected');
-  const ticks = page.locator('.triage table tbody tr .tick');
+  // The bulk bar appears when something is ticked, and not before. It used to sit there all session
+  // saying "Nothing selected" beside three buttons that write a verdict for the whole hunt.
+  if (await page.locator('[data-testid="triage-bulk"]').count()) {
+    note('the bulk bar is on screen with nothing ticked');
+  }
+  const ticks = page.locator('[data-testid="triage-pile"] .tick');
   await ticks.first().click();
-  if (!(await rate.isEnabled())) note('the bulk-rate buttons stayed dead after ticking a row');
+  const bulk = page.locator('[data-testid="triage-bulk"]');
+  if (!(await bulk.count())) note('ticking a flat did not bring up the bulk bar');
 
-  // Shift-picking a run, from the box rather than the row: the box was the half that was broken,
-  // and it was broken while the row beside it worked, so a check that only drives one of the two
-  // says nothing about the other. Four rows, and the box's own `aria-checked` as well as the
+  // Shift-picking a run, from the box: four rows, and each box's own `aria-checked` as well as the
   // count — a row that is in the selection while drawing itself unticked is the failure this had.
   if ((await ticks.count()) >= 4) {
     await ticks.nth(3).click({ modifiers: ['Shift'] });
-    const selected = await page.locator('.triage-bar .dim').first().textContent();
-    if (selected?.trim() !== '4 selected') {
-      note(`shift-ticking the fourth row read "${selected?.trim()}", not "4 selected"`);
-    }
+    const said = (await bulk.innerText()).trim();
+    if (!said.startsWith('4 ticked')) note(`shift-ticking the fourth row read "${said}", not "4 ticked"`);
     for (const i of [0, 1, 2, 3]) {
       if ((await ticks.nth(i).getAttribute('aria-checked')) !== 'true') {
         note(`row ${i + 1} of the shift-picked run draws itself unticked`);
       }
     }
     // Put the pile back the way it was found. Nothing below writes, but a harness that leaves four
-    // flats selected leaves the next assertion reading a state this one invented.
-    for (const i of [0, 1, 2, 3]) await ticks.nth(i).click();
-    const cleared = await page.locator('.triage-bar .dim').first().textContent();
-    if (cleared?.trim() !== 'Nothing selected') {
-      note(`unticking the run left "${cleared?.trim()}"`);
-    }
+    // flats ticked leaves the next assertion reading a state this one invented.
+    await bulk.getByRole('button', { name: 'Clear' }).click();
+    if (await bulk.count()) note('clearing the ticks left the bulk bar up');
   }
 
-  await page.locator('.triage-layout').click();
-  // Scoped to the pile: `article.card` is the shortlist's card too, and an unscoped count here
-  // quietly included whatever else the page had rendered.
-  const triageCards = await page.locator('.triage article.card').count();
-  console.log(`triage as cards: ${triageCards}`);
-  if (triageCards !== fixture.unratedCount) {
-    note(`triage's card layout shows ${triageCards}; the fixture has ${fixture.unratedCount} unrated`);
+  // A withdrawn flat is not work waiting to be done. This is the incident AGENTS.md records —
+  // eleven withdrawn listings sitting on a worklist that had already been taught to drop them —
+  // and the pile is the one place it hides, because nothing on this screen says which flats are
+  // gone: it just reads as three more to get through. Put back afterwards, since every count below
+  // and in `tabs` is taken against the fixture as seeded.
+  // Written to the database rather than clicked, because there is no button for it: the panel offers
+  // the toggle only on a flat somebody liked, so the only thing that marks an *unrated* one gone is
+  // the extension noticing the listing has been withdrawn. Reopened by navigating away and back,
+  // since the pile is derived from a query this page already holds.
+  const withdrawn = fixtureId(3);
+  await setOffMarketDirectly(withdrawn, true);
+  try {
+    await openView(page, 'list');
+    await openView(page, 'triage');
+    await settle(page);
+    const left = await rows.count();
+    if (left !== waiting - 1) {
+      note(`with ${withdrawn} off the market the pile held ${left}, not ${waiting - 1}`);
+    } else console.log(`triage: a withdrawn flat drops out of the pile (${waiting} → ${left})`);
+  } finally {
+    await setOffMarketDirectly(withdrawn, false);
   }
-  // The card layout keeps its own way out to the listing, at the foot of every card's detail.
-  const cardExits = await page.locator('.triage article.card .rightmove-link').count();
-  if (cardExits !== triageCards) {
-    note(`${cardExits} of ${triageCards} triage cards offer a link to Rightmove`);
-  }
-
-  // Back to the table for the click the pile is actually worked by. The address used to be the
-  // Rightmove link, which made the most obvious thing to click in triage the one that left the
-  // site; it now opens the flat's own card in place, beneath its row, so working the pile never
-  // leaves it. Counting rows says nothing about where they point, so both are read here.
-  //
-  // Reopened rather than toggled back with the layout button, which is one button in two states
-  // and would leave this depending on how many times it had been pressed above. A fresh triage
-  // page is the table by default, which is the layout this asserts about.
+  await openView(page, 'list');
   await openView(page, 'triage');
-  // The row carries the address and nothing else. The way out to Rightmove used to sit in it, one
-  // line under the address, which put the only link that leaves inside the control whose whole job
-  // is to open the thing beside it; it lives at the foot of the card now, asserted below once a card
-  // is actually open.
-  const rowExits = await page.locator('.triage table tbody tr .rightmove-link').count();
-  if (rowExits > 0) note(`${rowExits} triage rows still carry a Rightmove link`);
-  const address = page.locator('.triage table tbody tr .compare-open').first();
-  const href = await address.getAttribute('href');
-  // `#card-<id>`, digits — the shape the shortlist's own hash reader accepts on a cold load. The
-  // click below expands in place rather than following it, but the href still has to be the deep
-  // link, so a looser pattern here would pass on a link that does nothing pasted into a fresh tab.
-  if (href === null || !/^#card-\d+$/.test(href)) {
-    note(`the first triage row's address points at "${href}", not at a #card-<digits> deep link`);
-  } else {
-    const card = page.locator(`.triage .compare-expanded-row article${href}`);
-    if ((await card.count()) > 0) note(`a triage card was already open at ${href} before any click`);
-    await address.click();
-    await settle(page);
-    // In place, under its own row — still on the triage view, not jumped to the shortlist.
-    if (!(await page.locator('.triage table').first().isVisible())) {
-      note(`opening a triage row left the triage table`);
-    }
-    if ((await card.count()) === 0) note(`clicking a triage row opened no ${href} card in place`);
-    else if (!(await card.isVisible())) note(`the ${href} card opened in place but is not visible`);
-    console.log(`triage row expands ${href} in place`);
+  await settle(page);
+  const back = await rows.count();
+  if (back !== waiting) note(`the pile ended this section at ${back}, not the ${waiting} it started with`);
 
-    // And the way out is in the card, where it moved to. A pile you can work without leaving still
-    // has to let you leave deliberately.
-    const cardExit = await card.locator('.rightmove-link').first().getAttribute('href');
-    if (!cardExit?.startsWith('https://www.rightmove.co.uk/')) {
-      note(`the opened triage card's Rightmove link points at "${cardExit}"`);
-    }
-
-    // Clicking the same address again shuts it — the pile you are working is not left holding open
-    // cards you have already read past.
-    await address.click();
-    await settle(page);
-    if ((await card.count()) > 0) note(`clicking a triage row's address twice left ${href} open`);
-
-    // And the same address arrived at cold, which is the half the click cannot reach: the click
-    // expands in place and never goes near the hash reader, so everything above passes whether or
-    // not the hash means anything on load. This is the promise the link makes — send it to the
-    // other laptop, open it a week later — and a different piece of code keeps it.
-    //
-    // A new tab rather than `goto` on this one, which is what this was first and which asserted
-    // nothing: the click above had already left the URL at `/`, so navigating to `/#card-…` differs
-    // only by fragment, and a browser answers that without reloading. The state the click had just
-    // built survived, the pile was already open, and the check passed with the hash reader deleted.
-    const fresh = await page.context().newPage();
-    try {
-      await fresh.goto(`${ORIGIN}/${href}`, { waitUntil: 'domcontentloaded' });
-      // The shell, then the reads, then the card, in that order — the same order `openView` uses,
-      // and the order is the point. Going straight to the card passed here and failed on CI, and
-      // going straight to `settle` would have the same hole: it asks whether anything says
-      // "Working…", and on a tab that has not mounted yet nothing does. `waitForApp` also means a
-      // website that renders nothing at all says so, instead of reaching us as a missing card.
-      await waitForApp(fresh);
-      await settle(fresh);
-      const cold = fresh.locator(`article${href}`);
-      // Unrated and rejected piles start shut on a fresh load, so waiting for *visible* is the whole
-      // assertion: the card exists only if the hash was read, and is visible only if that opened the
-      // pile it is in.
-      const arrived = await cold
-        .waitFor({ state: 'visible', timeout: 20_000 })
-        .then(() => true)
-        .catch(() => false);
-      if (arrived) console.log(`${href} opens that card from cold`);
-      else if ((await fresh.locator('[data-testid="signed-out"]').count()) > 0) {
-        note(`loading ${href} in a new tab landed on the sign-in screen`);
-      } else if ((await cold.count()) === 0) note(`loading ${href} in a new tab drew no such card`);
-      else note(`loading ${href} in a new tab left it in a shut pile`);
-    } finally {
-      await fresh.close();
-    }
+  // The way out to the listing, at the foot of the pane. A pile you can work without leaving still
+  // has to let you leave deliberately.
+  const exit = await page
+    .locator('.triage-pane .rightmove-link')
+    .first()
+    .getAttribute('href')
+    .catch(() => null);
+  if (!exit?.startsWith('https://www.rightmove.co.uk/')) {
+    note(`the triage pane's Rightmove link points at "${exit}"`);
   }
+
+  // And the deep link, which is the half no click can reach: `#card-<id>` opens that flat from cold,
+  // in a tab that has never had any of this state built up in it. A new tab rather than `goto` on
+  // this one — a browser answers a fragment-only navigation without reloading, so the state this
+  // section had already built would have survived and the check would pass with the reader deleted.
+  const id = fixtureId(2);
+  const fresh = await page.context().newPage();
+  try {
+    await fresh.goto(`${ORIGIN}/#card-${id}`, { waitUntil: 'domcontentloaded' });
+    await waitForApp(fresh);
+    await settle(fresh);
+    const arrived = await fresh
+      .locator('[data-testid="flat-panel"]')
+      .waitFor({ state: 'visible', timeout: 20_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (arrived) console.log(`#card-${id} opens that flat from cold`);
+    else if ((await fresh.locator('[data-testid="signed-out"]').count()) > 0) {
+      note(`loading #card-${id} in a new tab landed on the sign-in screen`);
+    } else note(`loading #card-${id} in a new tab opened no panel`);
+  } finally {
+    await fresh.close();
+  }
+}
+
+/** The address the triage pane is currently showing, or '' when it is showing nothing. Read rather
+ *  than remembered, because what the pane shows follows the pile — rating a flat removes it, and the
+ *  pane lands on whatever took its place. */
+async function paneAddress(page: Page): Promise<string> {
+  return (
+    (await page
+      .locator('.triage-pane .detail-address')
+      .first()
+      .innerText()
+      .catch(() => '')) ?? ''
+  ).trim();
+}
+
+/** Open one flat's panel from wherever the page is, and hand back a locator scoped to it.
+ *
+ *  Every write this harness makes goes through here: the verdict buttons, the note, the funnel and
+ *  the off-the-market toggle all live in the panel now, which is the point of it — one renderer for
+ *  the flat, reached identically from a card, a row, a pin or a link. Returns null and says so
+ *  rather than throwing, so one missing flat does not take the rest of a section with it. */
+async function openFlat(page: Page, id: string): Promise<Locator | null> {
+  if ((await page.locator('[data-testid="flat-panel"]').count()) > 0) await closeFlat(page);
+  const card = page.locator(`#card-${id}`);
+  if ((await card.count()) === 0) {
+    note(`${id} is not on screen, so its panel cannot be opened`);
+    return null;
+  }
+  await card.locator('.flat-address').click();
+  const panel = page.locator('[data-testid="flat-panel"]');
+  const opened = await panel
+    .waitFor({ timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!opened) {
+    note(`clicking ${id} opened no panel`);
+    return null;
+  }
+  await settle(page);
+  return panel;
+}
+
+async function closeFlat(page: Page): Promise<void> {
+  const close = page.locator('[data-testid="panel-close"]');
+  if ((await close.count()) === 0) return;
+  await close.click();
+  await page
+    .locator('[data-testid="flat-panel"]')
+    .waitFor({ state: 'detached', timeout: 10_000 })
+    .catch(() => note('the flat panel would not close'));
 }
 
 /** The remaining tabs. Shallow on purpose — each is one navigation and one landmark, which is
@@ -1103,8 +1311,10 @@ async function checkJoining({ browser }: Stage): Promise<void> {
     if (await page.locator('[data-testid="no-project"]').count()) {
       note('the invitee signed in but is in no house hunt — consume_invites did not run');
     }
-    const text = await page.locator('.wrap').innerText();
-    if (!text.includes('Smoke fixture hunt')) {
+    // The hunt's name lives in the header row now — it is the switcher and the rename as well as
+    // the title, so it is the one thing on screen that says which hunt this is.
+    const named = await page.locator('[data-testid="shell"]').innerText().catch(() => '');
+    if (!named.includes('Smoke fixture hunt')) {
       note('the invitee is signed in but not in the project they were invited to');
     }
     console.log('joining: invited, redeemed, signed in, and in the house hunt');
@@ -1174,6 +1384,27 @@ async function openView(page: Page, view: string): Promise<void> {
   await page.goto(`${ORIGIN}/?v=${view}`, { waitUntil: 'domcontentloaded' });
   await waitForApp(page);
   await settle(page);
+}
+
+/** Narrow Places to one chip, and hand back the number that chip claims.
+ *
+ *  Sections below need a lens holding the flat they are about, because Places no longer has an
+ *  "everything" to fall back on — it opens on the shortlist and every other slice is a chip. The
+ *  count comes back so the caller can check the chip against what the screen then draws, which is
+ *  the pair that can disagree: a chip counting the whole hunt over a view that has hidden some of
+ *  it reads as flats that failed to render. */
+async function openLens(page: Page, name: string): Promise<number> {
+  const chip = page.locator(`[data-testid="lens-${name}"]`);
+  if ((await chip.count()) === 0) {
+    note(`Places has no "${name}" chip`);
+    return -1;
+  }
+  const said = Number((await chip.locator('.chip-count').innerText()).trim());
+  if ((await chip.getAttribute('aria-pressed')) !== 'true') {
+    await chip.click();
+    await settle(page);
+  }
+  return said;
 }
 
 /** Wait for the page to stop saying it is working.

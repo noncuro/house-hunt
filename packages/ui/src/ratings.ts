@@ -65,12 +65,17 @@ export function attribution(verdict: Verdict, now?: Date): string {
   return when ? `${verdict.person}, ${when}` : verdict.person;
 }
 
-/** The sentence a hover gets: the same facts, unabbreviated, plus why there is only one of them. */
+/** The sentence a hover gets: the same facts, unabbreviated.
+ *
+ *  No longer explains that a project has one shared verdict. That was a rule of the product being
+ *  restated on every hover of every rating on every screen, long after anybody using it had learned
+ *  it — and it was the longer half of the sentence, so the two facts a hover is actually for, who
+ *  and when, arrived after a clause nobody was reading. */
 export function attributionDetail(verdict: Verdict): string {
   const at = new Date(verdict.updatedAt);
   const when = Number.isFinite(at.getTime())
     ? at.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
     : 'an unrecorded time';
   const note = verdict.note.trim() ? ` — "${verdict.note.trim()}"` : '';
-  return `${ratingOf(verdict.rating).label}, set by ${verdict.person} at ${when}${note}. One rating per property, shared by everyone in this project — changing it replaces theirs.`;
+  return `${ratingOf(verdict.rating).label}, set by ${verdict.person} at ${when}${note}`;
 }

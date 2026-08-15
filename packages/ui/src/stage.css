@@ -4,74 +4,74 @@
 .rm-stage-line {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--s2);
   flex-wrap: wrap;
   font-size: 12px;
 }
 
-.rm-stage-none {
-  color: #93a1af;
+.rm-stage-none,
+.rm-stage-unset {
+  color: var(--fainter);
 }
 
 .rm-stage-now {
   font-weight: 650;
 }
 
-/* The steps warm up as a place gets closer to being yours, and archived steps out of the scale
-   rather than sitting at the hot end of it — it is the end of the road, not the finish line. */
-.rm-stage-shortlisted {
-  color: #5a6b7b;
-}
-
-.rm-stage-enquired {
-  color: #2f6d8a;
-}
-
-.rm-stage-viewing_booked {
-  color: #2f7d6d;
-}
-
-.rm-stage-viewed {
-  color: #1a7f5a;
-}
-
+/* Where a place has got to is a position, not a grade, so the steps do not warm through a colour
+   ramp any more — they were reading as a second verdict beside the actual one. Everything on the
+   road is ink; archived alone steps out of it, because it is the one that means the road ended. */
+.rm-stage-shortlisted,
+.rm-stage-enquired,
+.rm-stage-viewing_booked,
+.rm-stage-viewed,
 .rm-stage-offer_made {
-  color: #8a5a2f;
+  color: var(--ink);
 }
 
 .rm-stage-archived {
-  color: #93a1af;
+  color: var(--faint);
 }
 
 .rm-stage-by {
-  color: #93a1af;
+  color: var(--faint);
   font-size: 11px;
 }
 
-.rm-stage-steps,
-.rm-stage-reasons {
+/* ---- the track ---------------------------------------------------------------------------- */
+
+/* A track rather than a row of buttons. The steps sit shoulder to shoulder with no gap, so they
+   read as one object you move along; the gaps they used to have made six independent choices. */
+.rm-stage-steps {
   display: flex;
-  gap: 4px;
   flex-wrap: wrap;
-  margin-top: 4px;
+  margin-top: var(--s1);
 }
 
-.rm-step,
-.rm-reason {
-  border: 1px solid #d8e0e8;
-  background: #fff;
-  border-radius: 8px;
-  padding: 4px 8px;
+.rm-step {
+  border: 1px solid var(--line-3);
+  border-right-width: 0;
+  background: var(--white);
+  padding: 5px 9px;
   font-size: 11px;
   font-family: inherit;
   cursor: pointer;
-  color: inherit;
+  color: var(--fainter);
   white-space: nowrap;
 }
 
-.rm-step:hover:not(:disabled),
-.rm-reason:hover {
-  background: #f5f8fa;
+.rm-step:first-child {
+  border-radius: var(--r-control) 0 0 var(--r-control);
+}
+
+.rm-step:last-child {
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  border-right-width: 1px;
+}
+
+.rm-step:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--paper);
 }
 
 .rm-step:disabled {
@@ -79,25 +79,155 @@
   opacity: 0.55;
 }
 
-.rm-step-on,
-.rm-reason-on {
-  background: #12263a;
-  border-color: #12263a;
-  color: #fff;
+/* Behind you: filled faintly, because the road travelled is context rather than a choice. */
+.rm-step-done {
+  background: var(--line-3);
+  color: var(--muted);
 }
 
-/* Archiving is the one step that ends a flat's run, so it is the one step that does not look like
-   the others until it is the answer. */
-.rm-step-archive:not(.rm-step-on) {
+/* Where the flat is. The only filled step, and the only one in ink. */
+.rm-step-now {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--white);
+  font-weight: 650;
+}
+
+/* The next step along, outlined so it reads as the thing to press. This is the whole reason the
+   track beats six equal buttons: it says what to do next without a word of instruction. */
+.rm-step-next {
+  border-color: var(--ink);
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.rm-step-ahead {
+  color: var(--fainter);
+}
+
+/* Off the scale entirely — archived, or every step once a flat is archived. */
+.rm-step-aside {
+  color: var(--faint);
   border-style: dashed;
-  color: #6b7a89;
 }
 
 .rm-step-pending {
   background-image: repeating-linear-gradient(
     -45deg,
-    rgb(255 255 255 / 22%) 0 6px,
+    rgb(255 255 255 / 40%) 0 6px,
     transparent 6px 12px
   );
   animation: rm-pending 700ms linear infinite;
+}
+
+/* ---- the reasons an archive asks for ------------------------------------------------------ */
+
+.rm-stage-reasons {
+  display: flex;
+  gap: var(--s1);
+  flex-wrap: wrap;
+  margin-top: var(--s1);
+}
+
+.rm-reason {
+  border: 1px solid var(--line);
+  background: var(--white);
+  border-radius: var(--r-control);
+  padding: 5px 9px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.rm-reason:hover {
+  background: var(--paper);
+  border-color: var(--fainter);
+}
+
+.rm-reason-on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--white);
+}
+
+/* ---- the same funnel in a table cell ------------------------------------------------------ */
+
+.rm-stage-select {
+  position: relative;
+  display: inline-block;
+}
+
+/* Shaped as the select it is not: a bordered field with a chevron, so a cell that can be edited
+   looks like one without the row having to grow a sixth of a metre of track. */
+.rm-stage-current {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 8.5em;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--white);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+.rm-stage-current:hover:not(:disabled) {
+  border-color: var(--fainter);
+}
+
+.rm-stage-current:disabled {
+  cursor: not-allowed;
+  color: var(--fainter);
+}
+
+.rm-stage-chevron {
+  color: var(--faint);
+}
+
+.rm-stage-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + var(--s1));
+  left: 0;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-pop);
+  padding: var(--s2);
+}
+
+/* The same track, stood on end so it fits a popover over a table row. The step styles are shared
+   with the picker above, which is what keeps "where am I" reading identically in both. */
+.rm-stage-options {
+  display: flex;
+  flex-direction: column;
+  min-width: 10em;
+}
+
+.rm-stage-options .rm-step {
+  text-align: left;
+  border-right-width: 1px;
+  border-bottom-width: 0;
+  border-radius: 0;
+}
+
+.rm-stage-options .rm-step:first-child {
+  border-radius: var(--r-chip) var(--r-chip) 0 0;
+}
+
+.rm-stage-options .rm-step:last-child {
+  border-radius: 0 0 var(--r-chip) var(--r-chip);
+  border-bottom-width: 1px;
+}
+
+.rm-stage-menu .rm-stage-reasons {
+  flex-direction: column;
+  margin-top: 0;
+  min-width: 12em;
 }

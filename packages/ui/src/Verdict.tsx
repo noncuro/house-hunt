@@ -1,4 +1,5 @@
 import { Hint } from './Hint';
+import { Icon, type IconName } from './Icon';
 import { RATINGS, attribution, attributionDetail, ratingOf } from './ratings';
 import './ratings.css';
 import type { Rating, Verdict } from '@house-hunt/core';
@@ -7,8 +8,49 @@ import type { Rating, Verdict } from '@house-hunt/core';
  *
  *  Rendered here rather than in each view because the panel and the shortlist have drifted apart
  *  on exactly this before — the panel said "Them", the card said a name and an emoji, and neither
- *  said when. `null` is a state with words of its own: a blank line reads as a rating that failed
- *  to load rather than as a flat nobody has judged. */
+ *  said when.
+ *
+ *  The emoji are gone from every one of these. They were the only three glyphs on either surface
+ *  that could not be recoloured or aligned, and a rating already has a shape and a colour of its
+ *  own: the stamp carries the meaning, which is what makes it legible at the size a card gives it.
+ *  `RATINGS[].emoji` survives in ratings.ts because the search-page badge is plain DOM injected
+ *  into Rightmove's own card and has room for a character and not an SVG. */
+
+/** The card's pill: the verdict, as one mark.
+ *
+ *  The author is on the hover and not on the pill. A card is scanned rather than read, and what is
+ *  being scanned for is loved-or-not; a name beside every one of them doubles the width of the mark
+ *  to answer a question nobody asked of a grid — and on a shared shortlist it is the same one or
+ *  two names over and over. It is still one keystroke away, and `VerdictLine` still says it in
+ *  words where the verdict is the subject rather than a mark in the corner of a card.
+ *
+ *  Null renders nothing at all, unlike `VerdictLine`. A card is a wall of small facts and "No
+ *  verdict yet" on every unrated one is a column of noise saying what the absence of a stamp
+ *  already says. */
+export function VerdictStamp({ verdict }: { verdict: Verdict | null }) {
+  if (!verdict) return null;
+  const meta = ratingOf(verdict.rating);
+  return (
+    <Hint
+      className={`rm-stamp rm-stamp-${verdict.rating}`}
+      underline={false}
+      text={attributionDetail(verdict)}
+    >
+      <span className="rm-stamp-word" data-testid="verdict-rating">
+        {capitalise(meta.word)}
+      </span>
+    </Hint>
+  );
+}
+
+function capitalise(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+/** The verdict as a line of text, where it is the thing being read rather than a mark on a card.
+ *
+ *  `null` is a state with words of its own here: a blank line reads as a rating that failed to
+ *  load rather than as a flat nobody has judged. */
 export function VerdictLine({ verdict }: { verdict: Verdict | null }) {
   if (!verdict) {
     return (
@@ -22,7 +64,7 @@ export function VerdictLine({ verdict }: { verdict: Verdict | null }) {
   return (
     <Hint as="div" className="rm-verdict-line" underline={false} text={attributionDetail(verdict)}>
       <span className={`rm-verdict-rating rm-rating-${verdict.rating}`} data-testid="verdict-rating">
-        {meta.emoji} {meta.label}
+        {meta.label}
       </span>
       {/* The author is the point, not a footnote: it is what keeps one person overruling the
           other from looking like the flat was always rated this way. */}
@@ -33,6 +75,11 @@ export function VerdictLine({ verdict }: { verdict: Verdict | null }) {
   );
 }
 
+/** A shape per rating, so the three are told apart without reading the words and without seeing the
+ *  colours. Three identically shaped buttons in three tints is one cue, and it is the cue a tenth of
+ *  the men looking at this screen do not have. */
+const RATING_ICON: Record<Rating, IconName> = { no: 'close', maybe: 'tick', love: 'heart' };
+
 /** The three buttons, wherever a rating is set. `pending` is the value clicked but not yet
  *  acknowledged by the database — it reads as pressed straight away, and the stripe says the
  *  other laptop has not seen it yet. */
@@ -42,6 +89,7 @@ export function RatingButtons({
   onRate,
   disabled,
   compact,
+  keys,
 }: {
   value: Rating | null | undefined;
   pending?: Rating | null;
@@ -52,24 +100,26 @@ export function RatingButtons({
   /** A sentence saying *why* rating is unavailable, or undefined when it is available. Never a
    *  bare boolean: a dead button with no explanation is the fail-loudly rule inverted. */
   disabled?: string;
+  /** Draw `1` `2` `3` on the buttons. Only triage passes it, and only because triage binds those
+   *  keys — a keycap on a screen where the key does nothing is a lie about the interface, so this
+   *  is opt-in rather than a default the caller has to remember to turn off. */
+  keys?: boolean;
 }) {
   return (
     <div className={compact ? 'rm-ratings rm-ratings-compact' : 'rm-ratings'} data-testid="ratings">
-      {RATINGS.map((r) => (
+      {RATINGS.map((r, i) => (
         <Hint
           key={r.value}
           underline={false}
-          text={
-            disabled
-              ? disabled
-              : pending === r.value
-                ? 'Saving…'
-                : `${r.label} — one shared rating for this project, replacing whatever is set now`
-          }
+          // Only when there is something to say. A hover that repeats the label and then explains
+          // how shared verdicts work is three buttons' worth of tooltip covering the flat you are
+          // deciding about.
+          text={disabled ? disabled : pending === r.value ? 'Saving…' : ''}
         >
           <button
             className={[
               'rm-rate',
+              `rm-rate-${r.value}`,
               value === r.value ? 'rm-rate-on' : '',
               pending === r.value ? 'rm-rate-pending' : '',
             ]
@@ -79,7 +129,15 @@ export function RatingButtons({
             data-testid={`rate-${r.value}`}
             onClick={() => onRate(r.value)}
           >
-            {r.emoji} {r.label}
+            <Icon name={RATING_ICON[r.value]} size={13} className="rm-rate-icon" />
+            {r.label}
+            {/* Aria-hidden: the shortcut is a hint to the hands, and read aloud after every label
+                it is three characters of noise on a control that is already reachable by tab. */}
+            {keys && (
+              <span className="rm-rate-key" aria-hidden="true">
+                {i + 1}
+              </span>
+            )}
           </button>
         </Hint>
       ))}

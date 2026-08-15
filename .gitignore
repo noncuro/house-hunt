@@ -51,3 +51,6 @@ apps/web/next-env.d.ts
 # Python bytecode from the tools/ scripts.
 __pycache__/
 .playwright-mcp/
+
+# Scratch notes and working files for whatever is being built at the time.
+.working/

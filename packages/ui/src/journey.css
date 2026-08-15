@@ -41,24 +41,27 @@
 }
 
 .rm-route-arrow {
-  color: #93a1af;
+  color: var(--faint);
   font-size: 12px;
 }
 
 .rm-route-quiet {
   grid-column: 2;
   font-size: 11px;
-  color: #93a1af;
+  color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 
 .rm-leg-walk {
-  color: #6b7a89;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
 .rm-leg-line {
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 1px 7px;
   font-size: 11px;
   font-weight: 650;
@@ -76,14 +79,14 @@
   background: none;
   border: none;
   padding: 0 0 0 2px;
-  color: #93a1af;
+  color: var(--faint);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
 }
 
 .rm-maps:hover {
-  color: #4a7fb5;
+  color: var(--ink);
 }
 
 .rm-modes {
@@ -95,6 +98,72 @@
 
 .rm-mode {
   font-variant-numeric: tabular-nums;
+}
+
+/* ---- the fixed grid: every destination against every mode ---------------------------------- */
+
+/* One grid for the whole block rather than a grid per row, which is the only way the three mode
+   columns line up down the page — and lining up is the entire point. `subgrid` would do it too and
+   is not available in the panel's shadow root on every browser we support, so the rows are
+   `display: contents` and the columns are declared once here. */
+.rm-travel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(3, minmax(3.2em, auto));
+  align-items: baseline;
+  column-gap: var(--s3);
+  row-gap: var(--s1);
+}
+
+.rm-travel-row,
+.rm-travel-head {
+  display: contents;
+}
+
+/* The heading names the basis once. Repeating "weekday 09:00" on every transit number is how it
+   became three lines of body text above the numbers in the first place. */
+.rm-travel-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.rm-travel-mode {
+  justify-self: end;
+  color: var(--muted);
+  padding-bottom: var(--s1);
+  border-bottom: 1px solid var(--line-3);
+}
+
+.rm-travel-place {
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Right-aligned and tabular, so 8m and 48m agree on where their digits are — the comparison the
+   grid exists for is made by reading straight down a column. */
+.rm-travel-time {
+  justify-self: end;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* The fastest of the three ways of making this particular trip. Weight rather than colour: colour
+   here would be a fourth palette on a page that already spends green, amber and red on a verdict. */
+.rm-travel-best {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* A number we do not have, and never a blank or a zero. The hint says which of the four ways it
+   is missing. */
+.rm-travel-dash {
+  color: var(--dash);
+  cursor: help;
 }
 
 /* The transit basis, as an aside inside a section heading. The headings are uppercase, small and

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Icon } from '@house-hunt/ui';
 
 /** A name you can change where it is written, rather than in a form somewhere else.
  *
@@ -70,7 +71,7 @@ export function InlineName({
           disabled={locked}
           onClick={() => setEditing(true)}
         >
-          ✎
+          <Icon name="pencil" size={12} />
         </button>
       </span>
     );

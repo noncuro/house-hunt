@@ -1,48 +1,68 @@
 /* Everything lives inside a shadow root, so Rightmove's CSS can't leak in and ours can't leak
-   out. Class names are ours, never theirs — their hashed CSS-module names change every deploy. */
+   out. Class names are ours, never theirs — their hashed CSS-module names change every deploy.
+
+   Every colour, radius and gap here is a token from `packages/ui/src/tokens.css`, which Panel.tsx
+   imports first so `:host` carries the palette inside this shadow root. A literal in this file is a
+   value that has escaped the palette. What is *not* here: anything a shared component renders. The
+   station row, the greys either side of it, the line pills, the rating buttons and the toast all
+   come with their own stylesheets from `packages/ui`, and re-stating them here is how the panel and
+   the shortlist drifted apart the last time. */
 
 .rm-panel,
 .rm-reopen {
   position: fixed;
-  right: 16px;
-  bottom: 16px;
+  right: var(--s4);
+  bottom: var(--s4);
   z-index: 2147483000;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
-  color: #12263a;
+  color: var(--ink);
 }
 
 .rm-panel {
   width: 320px;
   max-height: 80vh;
   overflow-y: auto;
-  background: #fff;
-  border: 1px solid #d8e0e8;
-  border-radius: 12px;
-  box-shadow: 0 12px 32px rgb(18 38 58 / 18%);
-  padding: 12px 14px 14px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-pop);
+  padding: var(--s3) 14px 14px;
 }
 
+/* On Rightmove's page rather than in a panel of our own, so it cannot be paper on paper: a dark
+   slab reads against a photo, a white card or their green header alike. */
 .rm-reopen {
-  background: #00deb6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--ink);
+  color: var(--paper);
   border: none;
-  border-radius: 999px;
-  padding: 10px 16px;
+  border-radius: var(--r-pill);
+  padding: 10px var(--s4);
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 8px 20px rgb(18 38 58 / 22%);
+  box-shadow: var(--shadow-pop);
 }
 
 .rm-head {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--s2);
   align-items: flex-start;
 }
 
+/* Serif, as the address is everywhere else: it is the name of the thing, and the one line on the
+   panel you read as a place rather than as data. */
 .rm-address {
-  font-weight: 650;
-  line-height: 1.3;
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 /* One fact per line. Wrapped into a row they ran together into a paragraph you had to parse;
@@ -52,14 +72,15 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 1px;
-  margin-top: 4px;
-  color: #4a5b6c;
+  margin-top: var(--s1);
+  color: var(--ink-soft);
 }
 
 /* Facts that belong together share a line; everything else gets its own. */
 .rm-fact-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
 }
 
@@ -69,8 +90,12 @@
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
-  color: #7b8a99;
+  color: var(--faint);
   padding: 0 2px;
+}
+
+.rm-collapse:hover {
+  color: var(--ink);
 }
 
 .rm-row {
@@ -86,14 +111,19 @@
   margin: 6px 0 0;
 }
 
+/* The same chip a neutral flag is (`.rm-flag-good`): white ground, hairline, body-weight text. The
+   two sit within a few pixels of each other in the header, so anything else reads as two systems. */
 .rm-chip {
-  border: 1px solid #d8e0e8;
-  border-radius: 999px;
-  background: #f5f8fa;
-  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  background: var(--white);
+  padding: 4px 9px;
   font-size: 12px;
   font-family: inherit;
-  color: inherit;
+  color: var(--ink-soft);
 }
 
 .rm-chip-action {
@@ -101,14 +131,15 @@
 }
 
 .rm-chip-action:hover {
-  background: #e8f0f5;
+  border-color: var(--fainter);
+  background: var(--paper);
 }
 
 /* A missing floorplan is a finding, not a gap — it should read as a warning, not as absence. */
 .rm-chip-warn {
-  background: #fdf3e6;
-  border-color: #f0d3a8;
-  color: #8a5a12;
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
   font-weight: 650;
 }
 
@@ -116,7 +147,7 @@
 .rm-retry {
   background: none;
   border: 1px solid currentcolor;
-  border-radius: 6px;
+  border-radius: var(--r-chip);
   padding: 1px 6px;
   font: inherit;
   font-size: 11px;
@@ -126,30 +157,8 @@
 
 /* A price cut is the one listing-history event worth catching your eye. */
 .rm-reduced {
-  color: #1a7f5a;
+  color: var(--good-ink);
   font-weight: 650;
-}
-
-.rm-station {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-
-.rm-lines {
-  display: inline-flex;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-/* Official TfL line colours, set inline from the line id. Bordered so Northern's black and the
-   Circle's yellow both stay visible against white. */
-.rm-line-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 15%);
 }
 
 /* A claim the model read off the photos, and the rings that say how sure it was. They are one
@@ -163,57 +172,45 @@
 }
 
 .rm-section {
-  margin-top: 12px;
-  border-top: 1px solid #eef2f5;
-  padding-top: 8px;
+  margin-top: var(--s3);
+  border-top: 1px solid var(--line-2);
+  padding-top: var(--s2);
 }
 
+/* A small-caps mono label, naming the block rather than titling it — the same mark the website
+   puts over a block of settings. */
 .rm-section h4 {
   margin: 0 0 6px;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #7b8a99;
-  font-weight: 650;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+  font-weight: 500;
   display: flex;
   align-items: baseline;
   gap: 6px;
 }
 
 /* A caveat that belongs to the whole section, sitting in its heading rather than above its rows.
-   As a paragraph it was the largest thing in the section and pushed every number down. */
+   As a paragraph it was the largest thing in the section and pushed every number down. Sentence
+   case inside a small-caps heading, because it is prose that happens to live in a label. */
 .rm-section-note {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
   font-weight: 400;
 }
 
-.rm-line {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px 0;
-}
-
-.rm-value {
-  color: #4a5b6c;
-  text-align: right;
-  flex-shrink: 0;
-  max-width: 62%;
-  white-space: nowrap;
-}
-
 .rm-bad {
-  color: #b23a48;
+  color: var(--bad-ink);
 }
 
 /* The one place we say something is better than fine — a main room worth the rent. */
 .rm-good {
-  color: #1a7f5a;
+  color: var(--good-ink);
   font-weight: 650;
-}
-
-.rm-empty,
-.rm-dim {
-  color: #93a1af;
 }
 
 /* Loading states pulse, because a still "Working…" is indistinguishable from a stuck one. */
@@ -233,29 +230,31 @@
 
 /* Marks a size parsed out of prose rather than published as data — worth less trust. */
 .rm-approx {
-  border-bottom: 1px dotted #93a1af;
+  border-bottom: 1px dotted var(--fainter);
 }
 
 /* The rating buttons themselves (`.rm-ratings`, `.rm-rate*`) live with the component that renders
-   them, in components/ratings.css, so the panel and the shortlist cannot drift apart on what a
+   them, in packages/ui/src/ratings.css, so the panel and the shortlist cannot drift apart on what a
    verdict looks like. Only what is particular to this panel stays here. */
 
 /* Declared after `.rm-panel` on purpose: both selectors are one class deep, so source order is
    what decides the background. Move these above it and the tint silently stops working.
    The verdict tints the whole panel, so which pile a place is in is legible before you read a
-   word of it. Kept faint — this is a background, not a highlight. */
+   word of it. Mixed halfway back to paper rather than taken straight from the verdict grounds:
+   the stamp and the pressed rating button use those grounds undiluted and sit on top of this, and
+   a chip the same colour as the thing behind it is a chip you cannot see. */
 .rm-mood-love {
-  background: #f2fbf7;
-  border-color: #bfe6d4;
+  background: color-mix(in oklab, var(--good-bg) 50%, var(--paper));
+  border-color: var(--good-line);
 }
 
 .rm-mood-maybe {
-  background: #fffcf4;
-  border-color: #efe0bd;
+  background: color-mix(in oklab, var(--warn-bg) 50%, var(--paper));
+  border-color: var(--warn-line);
 }
 
 .rm-mood-no {
-  background: #f7f8f9;
+  background: var(--line-3);
 }
 
 /* A place one of you rejected reads as closed at a glance. The decision bar keeps its colour so
@@ -269,15 +268,15 @@
 .rm-decide {
   position: sticky;
   bottom: -14px;
-  margin: 12px -14px -14px;
-  padding: 10px 14px 12px;
+  margin: var(--s3) -14px -14px;
+  padding: 10px 14px var(--s3);
   background: inherit;
-  border-top: 1px solid #e6ecf1;
+  border-top: 1px solid var(--line);
   backdrop-filter: blur(2px);
 }
 
 .rm-note-add {
-  margin-top: 8px;
+  margin-top: var(--s2);
 }
 
 
@@ -285,67 +284,51 @@
 .rm-note-text {
   display: block;
   width: 100%;
-  margin-top: 8px;
+  margin-top: var(--s2);
   text-align: left;
-  background: #f5f8fa;
-  border: 1px solid #e3eaf0;
-  border-radius: 8px;
-  padding: 6px 8px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 6px var(--s2);
   font: inherit;
   font-size: 12px;
-  color: inherit;
+  color: var(--ink-soft);
   cursor: text;
   white-space: pre-wrap;
 }
 
 .rm-note-text:hover {
-  border-color: #c7d5e0;
+  border-color: var(--fainter);
 }
 
 .rm-note {
   width: 100%;
   margin-top: 6px;
-  border: 1px solid #d8e0e8;
-  border-radius: 8px;
-  padding: 6px 8px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 6px var(--s2);
   font-family: inherit;
   font-size: 12px;
   resize: vertical;
   box-sizing: border-box;
-  color: inherit;
+  color: var(--ink);
 }
 
 .rm-error {
   margin-top: 10px;
-  background: #fdf0f1;
-  border: 1px solid #f0c8cc;
-  color: #b23a48;
-  border-radius: 8px;
-  padding: 8px;
+  background: var(--bad-bg);
+  border: 1px solid var(--bad-line);
+  color: var(--bad-ink);
+  border-radius: var(--r-card);
+  padding: var(--s2);
   font-size: 12px;
-}
-
-/* Line names as pills in their own colour, so the dot in the row and the name in the tooltip
-   teach each other. Deliberately not grouped by mode — what matters is which lines you can get
-   on, not who runs them. */
-.rm-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.rm-line-pill {
-  border-radius: 999px;
-  padding: 2px 9px;
-  font-size: 12px;
-  font-weight: 650;
-  white-space: nowrap;
 }
 
 /* The price leads; how long it has sat is context beside it, not a headline of its own. */
 .rm-price {
   font-weight: 650;
-  color: #12263a;
+  color: var(--ink);
 }
 
 .rm-since {
@@ -361,17 +344,17 @@
 }
 
 .rm-signed-out-how {
-  margin-top: 4px;
+  margin-top: var(--s1);
   font-size: 12px;
-  color: #7b8a99;
+  color: var(--muted);
 }
 
 /* Failures interrupt. An optimistic UI has already told you the save worked, so the correction
    has to be impossible to miss, and an error one does not time out. */
 .rm-toasts {
   position: fixed;
-  right: 16px;
-  bottom: 16px;
+  right: var(--s4);
+  bottom: var(--s4);
   z-index: 2147483002;
   display: flex;
   flex-direction: column;
@@ -379,7 +362,7 @@
   width: 320px;
 }
 
-/* The look of a toast is shared — see components/toast.css. Only the stack's geometry is
+/* The look of a toast is shared — see packages/ui/src/toast.css. Only the stack's geometry is
    the panel's own: it floats over Rightmove's page, so it needs their z-index ceiling. */
 
 
@@ -389,19 +372,19 @@
 .rm-offmarket-confirm {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
-  padding: 8px 10px;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  padding: var(--s2) 10px;
   font-size: 13px;
-  background: #fff8e6;
-  border: 1px solid #f0d488;
-  border-radius: 8px;
-  color: #5a4a1a;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-card);
+  color: var(--warn-ink);
 }
 
 .rm-offmarket-confirm-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--s2);
 }
 
 .rm-offmarket-confirm-actions button {
@@ -410,14 +393,14 @@
   font: inherit;
   font-size: 12px;
   padding: 3px 10px;
-  border-radius: 6px;
-  border: 1px solid #c9ba8a;
-  background: #fff;
-  color: #5a4a1a;
+  border-radius: var(--r-control);
+  border: 1px solid var(--warn-line);
+  background: var(--white);
+  color: var(--warn-ink);
 }
 
 .rm-offmarket-confirm-actions button:first-child {
-  background: #5a4a1a;
-  border-color: #5a4a1a;
-  color: #fff;
+  background: var(--warn-ink);
+  border-color: var(--warn-ink);
+  color: var(--white);
 }

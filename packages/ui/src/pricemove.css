@@ -1,7 +1,7 @@
 /* Beside the price and clearly subordinate to it: the current figure is what you are deciding on,
    and the old one is context. Same size as the price would read as two prices. */
 .price-move {
-  margin-left: 6px;
+  margin-left: var(--s2);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -10,10 +10,10 @@
    body grey — an increase is news, but it is not an opportunity, and colouring both trains the eye
    to ignore the pair. */
 .price-move-down {
-  color: #1a7f4b;
+  color: var(--good-ink);
 }
 
 .price-move-up,
 .price-move-unknown {
-  color: #6b7a86;
+  color: var(--muted);
 }

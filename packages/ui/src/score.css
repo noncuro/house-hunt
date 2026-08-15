@@ -1,65 +1,72 @@
-/* The score pill. Sized to sit inline in a card's fact row or beside an address, never shouting
-   louder than the price. The ramp is the rating palette: love-green through maybe-amber to no-red,
-   so a high score and a "love" verdict share a colour on purpose. */
+/* The score gauge. A track filled to the model's guess, with the word beside it — sized to sit
+   inline in a card's fact row or in a triage cell, never shouting louder than the price.
+
+   It was a pill printing "3%" in a red badge. Two things were wrong with that and only one of them
+   was loudness: a model fitted on a couple of hundred verdicts genuinely cannot distinguish 0% from
+   3%, so the digits promised a precision the number does not have, and a reader ranking two flats
+   on that difference was ranking them on noise. A bar can only ever be read to about a fifth, which
+   is exactly the resolution the model has. */
 .score {
   display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  line-height: 1.5;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
-  border: 1px solid transparent;
+  font-size: 11px;
 }
 
-.score-pct {
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
+.score-track {
+  display: inline-block;
+  width: 52px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--line-3);
+  overflow: hidden;
+  flex: none;
+}
+
+/* Without the word the gauge is a column in a table, where 52px of track per row is more width
+   than the comparison needs. */
+.score-bare .score-track {
+  width: 32px;
+}
+
+.score-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentcolor;
 }
 
 .score-word {
-  font-size: 11px;
-  opacity: 0.85;
+  color: inherit;
 }
 
-.score-yes {
-  background: #eafaf1;
-  border-color: #bfe6d4;
-  color: #1b7a45;
-}
-
+/* The five bands, in the rating palette: a high score and a "love" verdict share a colour on
+   purpose. The fill takes `currentcolor`, so one declaration per band colours both halves. */
+.score-yes,
 .score-lean-yes {
-  background: #f2fbf7;
-  border-color: #cfe9db;
-  color: #2f8f59;
+  color: var(--good-ink);
+}
+
+.score-lean-yes .score-fill {
+  opacity: 0.7;
 }
 
 .score-unsure {
-  background: #fffbf0;
-  border-color: #efe0bd;
-  color: #9a6b12;
+  color: var(--warn-ink);
 }
 
-.score-lean-no {
-  background: #fdf3f1;
-  border-color: #f0d2cb;
-  color: #b0492f;
-}
-
+.score-lean-no,
 .score-no {
-  background: #fcecec;
-  border-color: #f0cccc;
-  color: #b02a2a;
+  color: var(--bad-ink);
 }
 
-/* A rating the model disagrees with: outline it so it catches the eye in a pile, and let the lamp
-   say why on hover. Not a colour change — the band colour still has to read as the leaning. */
-.score-surprise {
-  box-shadow: 0 0 0 1px currentcolor inset;
+.score-lean-no .score-fill {
+  opacity: 0.7;
 }
 
+/* A rating the model disagrees with. The band colour still has to read as the leaning, so the mark
+   is a glyph beside the gauge rather than a colour change, and the hint says which way. */
 .score-surprise-mark {
-  font-size: 11px;
-  transform: translateY(-0.5px);
+  color: var(--warn-ink);
 }

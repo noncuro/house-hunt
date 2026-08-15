@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { Hint } from './Hint';
+import { Icon } from './Icon';
 import { agoLabel } from './ratings';
 import './stage.css';
 import {
   ARCHIVE_REASONS,
   STAGES,
+  stageMeta,
+  stageRank,
   stageSentence,
   type ArchiveReason,
   type PropertyStage,
@@ -41,7 +44,14 @@ export function StageLine({ stage }: { stage: PropertyStage | null }) {
   );
 }
 
-/** The funnel as a row of steps, wherever a place is moved along it.
+/** The funnel as a track, wherever a place is moved along it.
+ *
+ *  A stage is progress, not an opinion, and the track is what says so. It used to be a row of
+ *  buttons identical to the rating buttons sitting directly above it, which put "Viewed" and
+ *  "Love it" in the same typeface, the same box and the same dark fill — two facts the whole design
+ *  is built on keeping apart, drawn as one control repeated twice. So the steps behind where you
+ *  are now are a hairline, the step you are on is filled, the next one is outlined and inviting,
+ *  and the rest are quiet: you can read how far along a flat is without reading a word.
  *
  *  Archiving is the one step that asks a question back, because "archived" on its own answers
  *  nothing a month later: whether a flat went because somebody outbid you or because you walked
@@ -72,56 +82,159 @@ export function StagePicker({
   return (
     <div className="rm-stage" data-testid="stage-picker">
       <div className="rm-stage-steps">
-        {STAGES.map((step) => {
-          const on = current === step.value;
-          const isArchive = step.value === 'archived';
-          return (
-            <Hint key={step.value} underline={false} text={disabled ?? step.hint}>
-              <button
-                className={[
-                  'rm-step',
-                  on ? 'rm-step-on' : '',
-                  pending === step.value ? 'rm-step-pending' : '',
-                  isArchive ? 'rm-step-archive' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                disabled={Boolean(disabled)}
-                aria-expanded={isArchive ? archiving : undefined}
-                data-testid={`stage-${step.value}`}
-                onClick={() => {
-                  if (isArchive) setArchiving((open) => !open);
-                  else {
-                    setArchiving(false);
-                    onSet(step.value, null);
-                  }
-                }}
-              >
-                {step.label}
-                {isArchive && '…'}
-              </button>
-            </Hint>
-          );
-        })}
-      </div>
-
-      {archiving && (
-        <div className="rm-stage-reasons" data-testid="stage-reasons">
-          {ARCHIVE_REASONS.map((reason) => (
+        {STAGES.map((step) => (
+          <Hint key={step.value} underline={false} text={disabled ?? step.hint}>
             <button
-              key={reason.value}
-              className={
-                stage?.archiveReason === reason.value ? 'rm-reason rm-reason-on' : 'rm-reason'
-              }
-              data-testid={`archive-${reason.value}`}
+              className={stepClass(step.value, current, pending)}
+              disabled={Boolean(disabled)}
+              aria-expanded={step.value === 'archived' ? archiving : undefined}
+              aria-current={current === step.value ? 'step' : undefined}
+              data-testid={`stage-${step.value}`}
               onClick={() => {
-                setArchiving(false);
-                onSet('archived', reason.value);
+                if (step.value === 'archived') setArchiving((open) => !open);
+                else {
+                  setArchiving(false);
+                  onSet(step.value, null);
+                }
               }}
             >
-              {reason.label}
+              {step.label}
+              {step.value === 'archived' && '…'}
             </button>
-          ))}
+          </Hint>
+        ))}
+      </div>
+
+      {archiving && <ArchiveReasons stage={stage} onPick={(reason) => {
+        setArchiving(false);
+        onSet('archived', reason);
+      }} />}
+    </div>
+  );
+}
+
+/** Which of the four positions on the track a step is in. Archived is deliberately outside the
+ *  scale — it is the end of the road rather than the finish line, so it is never "done" and never
+ *  "next". */
+function stepClass(step: Stage, current: Stage | null, pending: Stage | null | undefined): string {
+  const at = current === null ? -1 : stageRank(current);
+  const mine = stageRank(step);
+  const where =
+    current === step
+      ? 'now'
+      : step === 'archived' || current === 'archived'
+        ? 'aside'
+        : mine < at
+          ? 'done'
+          : mine === at + 1
+            ? 'next'
+            : 'ahead';
+  return ['rm-step', `rm-step-${where}`, pending === step ? 'rm-step-pending' : ''].filter(Boolean).join(' ');
+}
+
+/** The four reasons a flat leaves the funnel. Shared by both controls so the question is asked the
+ *  same way in a panel and in a table cell. */
+function ArchiveReasons({
+  stage,
+  onPick,
+}: {
+  stage: PropertyStage | null;
+  onPick: (reason: ArchiveReason) => void;
+}) {
+  return (
+    <div className="rm-stage-reasons" data-testid="stage-reasons">
+      {ARCHIVE_REASONS.map((reason) => (
+        <button
+          key={reason.value}
+          className={stage?.archiveReason === reason.value ? 'rm-reason rm-reason-on' : 'rm-reason'}
+          data-testid={`archive-${reason.value}`}
+          onClick={() => onPick(reason.value)}
+        >
+          {reason.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The same funnel, in a table cell.
+ *
+ *  A table row is one line high and holds nine columns; the six-step track does not fit in one and
+ *  drawing it there would be the second renderer of a fact this file exists to have one of. So the
+ *  cell shows where the flat is and opens the identical list on a click — the steps carry the same
+ *  testids, and archiving asks the same question before it writes anything.
+ *
+ *  Shaped as a `<select>` rather than being one, because a native option list cannot draw the
+ *  track's own progression and cannot ask a follow-up question before committing — and archiving
+ *  without recording why is the one thing the funnel must not let you do quietly. */
+export function StageSelect({
+  stage,
+  pending,
+  onSet,
+  disabled,
+}: {
+  stage: PropertyStage | null;
+  pending?: Stage | null;
+  onSet: (stage: Stage, archiveReason: ArchiveReason | null) => void;
+  disabled?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const current = stage?.stage ?? null;
+  const shown = pending ?? current;
+
+  return (
+    <div className="rm-stage-select" data-testid="stage-select">
+      <Hint underline={false} text={disabled}>
+        <button
+          className={pending ? 'rm-stage-current rm-step-pending' : 'rm-stage-current'}
+          disabled={Boolean(disabled)}
+          aria-expanded={open}
+          onClick={() => {
+            setArchiving(false);
+            setOpen((was) => !was);
+          }}
+        >
+          <span className={shown ? `rm-stage-${shown}` : 'rm-stage-unset'}>
+            {shown ? stageMeta(shown).label : 'Not in the funnel'}
+          </span>
+          <Icon name="chevron" size={12} className="rm-stage-chevron" />
+        </button>
+      </Hint>
+
+      {open && (
+        <div className="rm-stage-menu">
+          {archiving ? (
+            <ArchiveReasons
+              stage={stage}
+              onPick={(reason) => {
+                setArchiving(false);
+                setOpen(false);
+                onSet('archived', reason);
+              }}
+            />
+          ) : (
+            <div className="rm-stage-options">
+              {STAGES.map((step) => (
+                <button
+                  key={step.value}
+                  className={stepClass(step.value, current, pending)}
+                  data-testid={`stage-${step.value}`}
+                  aria-current={current === step.value ? 'step' : undefined}
+                  onClick={() => {
+                    if (step.value === 'archived') setArchiving(true);
+                    else {
+                      setOpen(false);
+                      onSet(step.value, null);
+                    }
+                  }}
+                >
+                  {step.label}
+                  {step.value === 'archived' && '…'}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

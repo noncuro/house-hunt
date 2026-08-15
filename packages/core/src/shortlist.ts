@@ -23,18 +23,6 @@ export function enthusiasm(verdicts: Verdict[]): number {
   return verdicts.reduce((total, v) => total + score[v.rating], 0);
 }
 
-/** What a view shows before anyone touches a filter: the places one of you has said something
- *  about. A shortlist of fifty is mostly flats nobody has looked at properly yet, and mixed in
- *  with the ones you're weighing up they drown the decision — a map of fifty dots or a compare
- *  table of fifty rows is not a shortlist. The unrated ones are one click back in every view
- *  that offers this, which is where you go when you want to work through them. */
-export const DEFAULT_SHOWING: Record<Group, boolean> = {
-  excited: true,
-  maybe: true,
-  unrated: false,
-  rejected: false,
-};
-
 /** Drop the flats that are off the market, unless they have been asked for.
  *
  *  Off the market is written for the model — the verdict-score model must not learn from a place

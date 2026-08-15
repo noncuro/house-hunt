@@ -80,7 +80,10 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 | ext `entrypoints/{panel,search,sweep}.content/` | Listing panel (Shadow DOM), search-card badges, sweep panel |
 | ext `entrypoints/bridge.content.ts` | On the website's origin only; relays three messages so the two sessions stay in step |
 | ext `entrypoints/background.ts` | All network + the only Supabase client in the extension |
-| web `screens/*.tsx` | Shortlist, Compare, Map, Detail, Settings, Sweep, SignIn, Project, Admin |
+| web `components/Shell.tsx` | The one header row, the hunt switcher, the account menu, the phone's tab bar |
+| web `screens/Places.tsx` | Everything the hunt has looked at, drawn four ways — Cards, Table (`Compare.tsx`), Board, Map — under one filter (`lib/lens.ts`) |
+| web `screens/*.tsx` | Triage, HeadToHead, FirstRun, Settings, Sweep, SignIn, Project, Install, Admin |
+| web `components/Flat*.tsx` | One flat: the card in a grid, the whole of it (`FlatDetail`), and the panel it opens in over any screen |
 | `packages/core/` | Facts, hubs, stage (the funnel), sweep, travel, analysis, db, bridge contract |
 | `supabase/functions/` | `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `invite`, `resolve-location`, `password` |
 
@@ -113,12 +116,18 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   `20260813000000_property_stage.sql` owns the coupling.
 - **Off the market is a third fact, and it hides rather than writes.** The mark lives in
   `training_exclusion` — it is what withholds a flat from the verdict-score model — and it is also
-  the only thing anybody records to mean "this one is gone". So the shortlist stops drawing them
-  (`withoutOffMarket`, with a line under the tally saying how many and offering them back), and
-  that is all it does: the verdict and the stage are untouched, which is what makes a flat you
-  loved and lost still readable as loved. Making the toggle archive would have it write over
-  somebody's account of what happened, which is the same objection `background.ts` makes to a
-  background tab doing it.
+  the only thing anybody records to mean "this one is gone". So a flat that is off the market is
+  drawn under **Archived** and nowhere else (`lensMatches` in `apps/web/src/lib/lens.ts`), and it is
+  kept out of the triage pile, which is a list of work still to do. That is all it does: the verdict
+  and the stage are untouched, which is what makes a flat you loved and lost still readable as
+  loved. Making the toggle archive would have it *write* over somebody's account of what happened,
+  which is the same objection `background.ts` makes to a background tab doing it — the point is that
+  gone flats stop appearing among the live ones, not that the funnel gets edited.
+
+  This replaced a separate "hide off-market" switch with a line under the tally offering them back.
+  Two controls narrowed one list, and the flats they hid had to go somewhere the eye could find them
+  again; Archived is where somebody already looks for a flat that is no longer in play, so the
+  question "where did it go" stopped needing an answer.
 - **Driving times deliberately throw** (TfL can't do them) rather than mislabel a transit number.
 - **The travel backlog is derived, not enqueued.** Nothing inserts a job when a place is added:
   `travel_gaps` computes what is missing from a project's properties, its places and the modes we
@@ -129,8 +138,8 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   opened, which is how adding a place left a column of dashes that filled in only by hand.
 
 **Every other decision is documented as a comment on the code that owns it** (`TRAVEL_BASIS` in
-`tfl.ts`, `SWEEP_MARGIN_HOURS` in `sweep.ts`, `DEFAULT_SHOWING` and `duplicateIds` in
-`shortlist.ts`, `FLAG_ICON` in `facts.ts`, `claim_analysis` in the migrations) — including new
+`tfl.ts`, `SWEEP_MARGIN_HOURS` in `sweep.ts`, `duplicateIds` in `shortlist.ts`, `Lens` in
+`apps/web/src/lib/lens.ts`, `claim_analysis` in the migrations) — including new
 ones. This file holds only cross-cutting rules and the decisions an agent working elsewhere
 could silently violate. Accepted gaps live in `TODO.md`.
 

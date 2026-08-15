@@ -9,6 +9,8 @@
  *  injected into and talks to the background worker — so it lives with the extension.
  */
 export * from './host';
+export * from './Icon';
+export * from './Amenity';
 export * from './Confidence';
 export * from './Flags';
 export * from './Gallery';

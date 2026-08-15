@@ -1,12 +1,6 @@
-
-/* A caveat that belongs to a whole section rather than to any one row in it — today, that every
-   public-transport number is measured at the same weekday hour. Said once under the heading
-   instead of on each row, where three copies of the same sentence would crowd out the numbers. */
-.rm-section-note {
-  margin: -2px 0 8px;
-  font-size: 11px;
-  color: #93a1af;
-}
+/* What Panel.tsx renders and no other surface does. The section caveat used to live here too, in a
+   second `.rm-section-note` rule that fought the one in the panel's own stylesheet over the same
+   class; it is now stated once, there, beside the heading it sits in. */
 
 /* The first-run nudge under the flags. Deliberately quiet — it is a link, not a warning, and it
    disappears the moment anything is set. */
@@ -14,17 +8,20 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: 4px;
-  padding: 6px 8px;
-  border: 1px dashed rgba(0, 0, 0, 0.2);
-  border-radius: 6px;
-  color: inherit;
+  margin-top: var(--s1);
+  padding: 6px var(--s2);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-chip);
+  color: var(--muted);
   font-size: 12px;
   text-decoration: none;
 }
+
 .rm-prefs-note:hover {
-  border-color: rgba(0, 0, 0, 0.4);
+  border-color: var(--fainter);
+  color: var(--ink);
 }
+
 .rm-prefs-note small {
-  opacity: 0.7;
+  color: var(--faint);
 }

@@ -20,7 +20,7 @@ import {
   listInvites,
   revokeInvite,
 } from '@house-hunt/core/db';
-import { money, WARN_AT } from '@house-hunt/ui';
+import { charge, Icon, money, SpendBar } from '@house-hunt/ui';
 
 /** What everyone is spending, and the ceilings on it.
  *
@@ -64,6 +64,21 @@ export function Admin() {
 
   const lastMonth = useMemo(() => bucketPreviousMonth(usage.data ?? [], months), [usage.data, months]);
 
+  /** What Charges is worth opening for, in the same place the other three tabs say how many rows
+   *  they hold. A count of charges would be the wrong figure — nobody is rationing rows — so the
+   *  tab carries the month's total across every user, which is the number a cap is set against.
+   *  Summed from the stored `cost_usd` of the rows this month, the way every other figure here is:
+   *  a total recomputed from tokens and a price would disagree with the caps the database
+   *  enforces. */
+  const spentThisMonth = useMemo(
+    () =>
+      (usage.data ?? []).reduce(
+        (sum, row) => (Date.parse(row.occurredAt) >= months.currentStart ? sum + row.costUsd : sum),
+        0,
+      ),
+    [usage.data, months],
+  );
+
   function drill(next: Focus) {
     setFocus(next);
     setTab('charges');
@@ -74,23 +89,26 @@ export function Admin() {
       <div className="admin-tabs">
         {(
           [
-            ['users', `Users${users.data ? ` (${users.data.length})` : ''}`],
-            ['projects', `Projects${projects.data ? ` (${projects.data.length})` : ''}`],
-            ['invites', `Invites${invites.data ? ` (${invites.data.length})` : ''}`],
-            ['charges', 'Charges'],
+            ['users', 'Users', users.data ? String(users.data.length) : null],
+            ['projects', 'Projects', projects.data ? String(projects.data.length) : null],
+            ['invites', 'Invites', invites.data ? String(invites.data.length) : null],
+            ['charges', 'Charges', usage.data ? charge(spentThisMonth) : null],
           ] as const
-        ).map(([key, label]) => (
+        ).map(([key, label, count]) => (
           <button
             key={key}
-            className={tab === key ? 'key key-on' : 'key'}
+            className={tab === key ? 'admin-pill admin-pill-on' : 'admin-pill'}
             aria-pressed={tab === key}
             onClick={() => setTab(key)}
           >
             {label}
+            {/* Absent while the query is in flight rather than a zero, which would be a figure
+                somebody could act on. */}
+            {count !== null && <span className="admin-pill-count">{count}</span>}
           </button>
         ))}
-        <span className="dim admin-note">
-          Spend is this calendar month, Europe/London — the same boundary the cap is enforced on.
+        <span className="admin-note" title="The same boundary the cap is enforced on">
+          this calendar month, Europe/London
         </span>
       </div>
 
@@ -215,50 +233,11 @@ function bucketPreviousMonth(rows: UsageRow[], months: Months) {
 // Money, drawn.
 // ------------------------------------------------------------------------------------------------
 
-/** A cap is rendered by `money()` from `components/Spend`, the same renderer the panel's capped
- *  notice and the shortlist's 80% warning use, and `WARN_AT` is the same 80%. A limit on someone
+/** Every figure here goes through the renderers in `packages/ui/src/Spend.tsx` — `money()` for a
+ *  cap, `charge()` for a single charge, `SpendBar` for one against the other. A limit on someone
  *  else's money phrased two ways in two views is exactly the drift the one-fact-one-renderer rule
- *  exists to stop.
- *
- *  What a charge costs needs one thing more. `cost_usd` is `numeric(10, 6)` and a single analysis
- *  is routinely a fraction of a cent, so rounding to the cent — right for a $20 cap — prints a
- *  real charge as "$0.00" and a table of them as a free API. Same money, one magnitude down. */
-function charge(amount: number): string {
-  if (amount === 0) return '$0';
-  return amount < 0.005 ? '<$0.01' : money(amount);
-}
-
-type BudgetLevel = 'under' | 'near' | 'over' | 'none';
-
-function levelOf(spent: number, cap: number): BudgetLevel {
-  if (!(cap > 0)) return 'none';
-  if (spent >= cap) return 'over';
-  return spent / cap >= WARN_AT ? 'near' : 'under';
-}
-
-/** Spend against a cap, as a bar and the two numbers behind it.
- *
- *  The track is drawn at full width whatever the fill, so every row's bar occupies the same space
- *  and a column of them can be read down: the eye compares fills, not footprints. A cap of zero is
- *  its own state rather than a division by zero rendered as an empty bar, because "no budget at
- *  all" and "nothing spent yet" look identical once you draw them the same way. */
-function Budget({ spent, cap, label }: { spent: number; cap: number; label?: string }) {
-  const level = levelOf(spent, cap);
-  const fraction = level === 'none' ? 0 : Math.min(spent / cap, 1);
-  const percent = level === 'none' ? '' : `${Math.round((spent / cap) * 100)}%`;
-
-  return (
-    <span className="budget" title={`${label ? `${label}: ` : ''}$${spent.toFixed(6)} of ${money(cap)}${percent ? ` — ${percent}` : ''}`}>
-      <span className={`budget-track budget-${level}`}>
-        <span className="budget-fill" style={{ width: `${fraction * 100}%` }} />
-      </span>
-      <span className="budget-figures">
-        <b className={level === 'under' ? undefined : `budget-word budget-${level}`}>{charge(spent)}</b>
-        <span className="dim"> of {level === 'none' ? 'no budget' : money(cap)}</span>
-      </span>
-    </span>
-  );
-}
+ *  exists to stop, and the bar moved into that file when its fill turned out to be invisible: the
+ *  colour it was drawn in lived in `admin.css`, where nothing shared could reach it. */
 
 // ------------------------------------------------------------------------------------------------
 // Caps. The admin RPCs are the only writable path — RLS gates rows and not columns, so there is no
@@ -296,7 +275,7 @@ function Editable({
   if (!editing) {
     return (
       <button
-        className="cap"
+        className="admin-cap"
         title={`Change this ${unit}`}
         onClick={() => {
           setDraft(String(value));
@@ -324,7 +303,7 @@ function Editable({
   };
 
   return (
-    <span className="cap-edit">
+    <span className="admin-edit">
       <input
         type="number"
         min={min}
@@ -453,11 +432,11 @@ function Users({
               </td>
               <td className="budget-cell">
                 <button
-                  className="drill"
+                  className="admin-drill"
                   title="The individual charges behind this"
                   onClick={() => onDrill({ kind: 'user', id: user.id, label: user.displayName || user.email })}
                 >
-                  <Budget spent={user.spentThisMonthUsd} cap={user.monthlyCapUsd} label={user.email} />
+                  <SpendBar spent={user.spentThisMonthUsd} cap={user.monthlyCapUsd} label={user.email} />
                 </button>
               </td>
               <td className="num dim">{charge(lastMonth.byUser.get(user.id) ?? 0)}</td>
@@ -544,7 +523,7 @@ function SetPassword({
   };
 
   return (
-    <span className="cap-edit">
+    <span className="admin-edit">
       <input
         type="text"
         value={draft}
@@ -621,11 +600,11 @@ function Projects({
               </td>
               <td className="budget-cell">
                 <button
-                  className="drill"
+                  className="admin-drill"
                   title="The individual charges behind this"
                   onClick={() => onDrill({ kind: 'project', id: project.id, label: project.name })}
                 >
-                  <Budget spent={project.spentThisMonthUsd} cap={project.monthlyCapUsd} label={project.name} />
+                  <SpendBar spent={project.spentThisMonthUsd} cap={project.monthlyCapUsd} label={project.name} />
                 </button>
               </td>
               <td className="num dim">{charge(lastMonth.byProject.get(project.id) ?? 0)}</td>
@@ -751,7 +730,7 @@ function Invites({ query, onNotice }: { query: Loadable<Invite[]>; onNotice: (me
                     {invite.projectName ?? <span className="dim">a new project of their own</span>}
                   </td>
                   <td>
-                    <span className={`chip chip-${state}`}>{INVITE_WORD[state]}</span>
+                    <span className={`admin-chip admin-chip-${state}`}>{INVITE_WORD[state]}</span>
                   </td>
                   <td className="dim">{ago(invite.createdAt)}</td>
                   <td className={state === 'pending' ? 'dim' : 'dim admin-struck'}>{ago(invite.expiresAt)}</td>
@@ -835,7 +814,7 @@ function Charges({
         ).map(([key, label]) => (
           <button
             key={key}
-            className={when === key ? 'key key-on' : 'key'}
+            className={when === key ? 'admin-pill admin-pill-on' : 'admin-pill'}
             aria-pressed={when === key}
             onClick={() => setWhen(key)}
           >
@@ -846,7 +825,7 @@ function Charges({
           kinds.map((name) => (
             <button
               key={name}
-              className={kind === name ? 'key key-on' : 'key'}
+              className={kind === name ? 'admin-pill admin-pill-on' : 'admin-pill'}
               aria-pressed={kind === name}
               onClick={() => setKind(kind === name ? null : name)}
             >
@@ -854,11 +833,16 @@ function Charges({
             </button>
           ))}
         {focus && (
-          <button className="key key-on" onClick={() => setFocus(null)} title="Show every charge again">
-            {focus.kind === 'user' ? 'by' : 'in'} {focus.label} ✕
+          <button
+            className="admin-pill admin-pill-on"
+            onClick={() => setFocus(null)}
+            title="Show every charge again"
+          >
+            {focus.kind === 'user' ? 'by' : 'in'} {focus.label}
+            <Icon name="close" size={11} />
           </button>
         )}
-        <span className="dim admin-note">
+        <span className="admin-note">
           {rows.length === 0
             ? 'nothing here'
             : `${rows.length} ${rows.length === 1 ? 'charge' : 'charges'}, ${charge(total)}`}

@@ -1,0 +1,27 @@
+/* An amenity's word and its picture, kept together — see Amenity.tsx. */
+
+.rm-amenity {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+/* The subject's own hue, on the icon alone, wherever a subject is drawn: an amenity label, a flag
+   chip, a preference row. One table of colours rather than one per surface — the flags and the Your
+   Hunt rows had already drifted to different hues for the same washing machine. */
+.rm-subject-water {
+  color: var(--subject-water);
+}
+
+.rm-subject-green {
+  color: var(--subject-green);
+}
+
+.rm-subject-warm {
+  color: var(--subject-warm);
+}
+
+.rm-subject-muted {
+  color: var(--muted);
+}
