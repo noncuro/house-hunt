@@ -88,6 +88,7 @@ interface Stage {
  *  section that only passes as part of the whole run is a section nobody can iterate on, which is
  *  the reason for naming them in the first place. */
 const SECTIONS = [
+  { name: 'headers', run: checkHeaders },
   { name: 'session', run: checkSession },
   { name: 'list', run: checkList },
   { name: 'rating', run: checkRating },
@@ -200,6 +201,38 @@ if (problems.length > 0) {
 console.log('\nok');
 
 // --------------------------------------------------------------------------------------------- //
+
+/** The Content-Security-Policy a built app actually serves.
+ *
+ *  `next dev` is granted `'unsafe-eval'` because React's development build calls `eval()`, and the
+ *  grant is keyed on the build phase. It used to be keyed on `NODE_ENV`, which Next preserves when
+ *  it is set explicitly — so a host that exported `NODE_ENV=development` for any reason of its own
+ *  put `'unsafe-eval'` into a production artifact, and nothing anywhere said so. This harness
+ *  serves a production build, which makes it the one place that can read the real header back.
+ *
+ *  Ahead of `session` because a header is served before anything renders, and because a CSP that
+ *  is wrong makes every section below it lie in one direction or the other.
+ *
+ *  Fetched rather than navigated to. Driving the shared page here reloaded the shortlist out from
+ *  under every section after it, and `list` then reported the fixture's own rated flats missing —
+ *  a harness that breaks the thing it is measuring, which is the failure this file is least able
+ *  to spot in itself. */
+async function checkHeaders({ page }: Stage): Promise<void> {
+  const response = await page.request.get(`http://127.0.0.1:${PORT}/`);
+  const csp = response.headers()['content-security-policy'];
+  if (!csp) {
+    note('the website served no Content-Security-Policy at all');
+    return;
+  }
+  console.log(`headers: CSP present, ${csp.length} chars`);
+  if (csp.includes('unsafe-eval')) {
+    note(`the production CSP grants 'unsafe-eval' — the dev-server grant has leaked into a build`);
+  }
+  // The tiles and the photos both load cross-origin, and both were missing from this header once.
+  for (const origin of ['https://tile.openstreetmap.org', 'https://media.rightmove.co.uk']) {
+    if (!csp.includes(origin)) note(`the CSP's img-src does not allow ${origin}`);
+  }
+}
 
 /** Signed in at all, and as whom. Loudly, and first: every other section would pass against a
  *  perfectly rendered sign-in form. */

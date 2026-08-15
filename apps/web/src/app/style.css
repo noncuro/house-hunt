@@ -256,6 +256,11 @@ h2 {
   width: 320px;
 }
 
+/* Loud, because the failure it names looks exactly like a map of somewhere with no streets. */
+.card-map-failed {
+  color: #b23a48;
+}
+
 .card-map-missing {
   flex: 0 0 auto;
   margin: 0;

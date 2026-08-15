@@ -45,9 +45,18 @@ export function CardMap({
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const [open, setOpen] = useState(false);
+  const [tilesFailed, setTilesFailed] = useState(false);
+
+  // The coordinates, not the object. `point` is built fresh on every render of the card, so as an
+  // effect dependency it changed every time anything on the page did — rating another flat tore
+  // this map down and rebuilt it, throwing away wherever you had panned to and asking for every
+  // tile again.
+  const lat = point?.lat ?? null;
+  const lon = point?.lon ?? null;
 
   useEffect(() => {
-    if (!open || !point || !host.current || map.current) return;
+    if (!open || lat === null || lon === null || !host.current || map.current) return;
+    const point = { lat, lon };
     const lonScale = Math.cos((point.lat * Math.PI) / 180);
     const dLat = HALF_SPAN_MILES / MILES_PER_DEGREE_LAT;
     const dLon = dLat / lonScale;
@@ -63,7 +72,16 @@ export function CardMap({
     );
     map.current = instance;
 
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(instance);
+    // The attribution OpenStreetMap's licence asks for, same words as the Map view. Leaflet's own
+    // control is off — it puts a link in the corner of a thumbnail the size of a postcard — so the
+    // credit is rendered as a line under the map instead, where it is readable.
+    //
+    // A tile that will not load is reported. Leaflet's own answer to a refused or throttled tile is
+    // to leave the square blank, so a rate-limited map and a map of somewhere with no streets look
+    // the same, and the second one is a fact about the flat.
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 })
+      .on('tileerror', () => setTilesFailed(true))
+      .addTo(instance);
 
     // Every hub the flat could be placed against, named on the map rather than in a legend a card
     // has no room for. `nearestHub`'s own answer is marked, so the picture and the sentence beside
@@ -99,7 +117,7 @@ export function CardMap({
       instance.remove();
       map.current = null;
     };
-  }, [open, point, hubs, colour]);
+  }, [open, lat, lon, hubs, colour]);
 
   // A missing location is a real fact about the listing rather than a hole in the page, and a
   // button that opened a blank grey square would say the opposite.
@@ -115,9 +133,15 @@ export function CardMap({
       {open && (
         <>
           <div className="card-map" ref={host} role="img" aria-label={`Map of ${address}`} />
+          {tilesFailed && (
+            <span className="card-map-note card-map-failed">
+              The map tiles would not load — the streets below are missing, not absent.
+            </span>
+          )}
           {approximate && (
             <span className="card-map-note dim">Rightmove's approximate pin, not the postcode.</span>
           )}
+          <span className="card-map-note dim">© OpenStreetMap contributors</span>
         </>
       )}
     </div>
