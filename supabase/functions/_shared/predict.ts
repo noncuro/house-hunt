@@ -473,27 +473,44 @@ function gradientDescent(
 ): { weights: number[]; bias: number } {
   const n = X.length;
   const d = X[0]?.length ?? 0;
-  const weights: number[] = Array.from({ length: d }, () => 0);
+
+  // Flat typed arrays, allocated once. The arithmetic is unchanged — same operations in the same
+  // order, so the same weights come out — but `check:predict` runs this loop about forty thousand
+  // times over its nested leave-one-out, and the row-of-arrays form spent most of that in bounds
+  // checks and in the per-iteration gradient allocation. Twenty seconds against twenty minutes.
+  const flat = new Float64Array(n * d);
+  for (let i = 0; i < n; i++) {
+    const row = X[i] ?? [];
+    for (let j = 0; j < d; j++) flat[i * d + j] = row[j] ?? 0;
+  }
+  const target = new Float64Array(n);
+  for (let i = 0; i < n; i++) target[i] = y[i] ?? 0;
+  const prior = new Float64Array(d);
+  for (let j = 0; j < d; j++) prior[j] = priors[j] ?? 0;
+
+  const w = new Float64Array(d);
+  const gradW = new Float64Array(d);
   let bias = 0;
 
   for (let it = 0; it < iterations; it++) {
-    const gradW: number[] = Array.from({ length: d }, () => 0);
+    gradW.fill(0);
     let gradB = 0;
     for (let i = 0; i < n; i++) {
-      const row = X[i] ?? [];
-      const err = sigmoid(linear(weights, row, bias)) - (y[i] ?? 0);
-      for (let j = 0; j < d; j++) gradW[j] = (gradW[j] ?? 0) + err * (row[j] ?? 0);
+      const base = i * d;
+      let z = bias;
+      for (let j = 0; j < d; j++) z += w[j]! * flat[base + j]!;
+      const err = 1 / (1 + Math.exp(-z)) - target[i]!;
+      for (let j = 0; j < d; j++) gradW[j] = gradW[j]! + err * flat[base + j]!;
       gradB += err;
     }
     for (let j = 0; j < d; j++) {
-      const w = weights[j] ?? 0;
-      const prior = priors[j] ?? 0;
-      const stepped = w - lr * ((gradW[j] ?? 0) / n + (lambda * (w - prior)) / n);
-      weights[j] = prior > 0 ? Math.max(0, stepped) : prior < 0 ? Math.min(0, stepped) : stepped;
+      const p = prior[j]!;
+      const stepped = w[j]! - lr * (gradW[j]! / n + (lambda * (w[j]! - p)) / n);
+      w[j] = p > 0 ? Math.max(0, stepped) : p < 0 ? Math.min(0, stepped) : stepped;
     }
     bias -= lr * (gradB / n);
   }
-  return { weights, bias };
+  return { weights: [...w], bias };
 }
 
 /** P(yes) in [0, 1] for one flat under a fitted model. Pure and synchronous — a surface computes
