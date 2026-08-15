@@ -50,8 +50,17 @@ comment on table travel_backoff is
 -- The gap set.
 -- ------------------------------------------------------------------------------------------------
 
--- Every (origin, destination, mode) the hunt wants and `travel_time` does not have, oldest work
--- first, with the total outstanding carried on every row.
+-- Every (origin, destination, mode) the hunt wants and `travel_time` does not have, in postcode
+-- order, with the total outstanding carried on every row.
+--
+-- Postcode order rather than anything resembling age, because a derived gap set has no age: the
+-- only date within reach is when the *property* was first seen, which says nothing about when the
+-- leg became outstanding — adding a place makes gaps against flats first seen months ago. What the
+-- ordering has to be is stable and cheap, and this is both: the `distinct on` has already sorted
+-- the rows this way, so it costs no second sort, and it keeps the three modes of a pair together.
+-- Nothing starves behind it. An answered leg leaves the gap set, so each run resumes where the last
+-- one stopped rather than re-drawing the same slice, and a leg that keeps failing is held out by
+-- `travel_backoff` until its next attempt is due instead of eating a slot every run.
 --
 -- `remaining` is `count(*) over ()`, which Postgres computes over the whole matching set *before*
 -- `limit` applies — so one call answers both "what should I work on" and "how much is left", and the
@@ -68,26 +77,50 @@ comment on table travel_backoff is
 -- Two properties can share a postcode and two places can share one, so the set is distinct on the
 -- postcode pair rather than on the rows behind it — the cache is keyed on postcodes (design D5) and
 -- one lookup answers for every property and place at those two points.
-create or replace function public.travel_gaps(p_limit int default 50)
+--
+-- Every postcode is trimmed, on both sides of every join and on the way out, because that is what
+-- `cache_travel` stores: it writes `nullif(trim(...), '')`. Comparing the raw column against the
+-- trimmed key makes a leg with a stray space in its postcode permanently outstanding — resolved,
+-- written under the trimmed key, not matched here, and asked for again every quarter of an hour
+-- forever, spending the run's budget on the one leg that can never leave the set.
+--
+-- Dropped and recreated rather than replaced: the return type gains a column, and `create or
+-- replace function` refuses that.
+drop function if exists public.travel_gaps(int);
+
+create function public.travel_gaps(p_limit int default 50)
 returns table (
   origin_postcode text,
   dest_postcode   text,
   dest_lat        double precision,
   dest_lon        double precision,
   mode            text,
+  has_backoff     boolean,
   remaining       bigint
 )
-language sql
+language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
+begin
+  -- The same guard as every other function in this file, and needed more than they are: this one
+  -- reads across every project with RLS off and hands back the postcode of every flat and every
+  -- saved place in the deployment. The revoke above already refuses a client, but a grant is a line
+  -- somebody can add and a `security definer` function that leaks the whole deployment when they do
+  -- should say no itself.
+  if not public.is_service_role() then
+    raise exception 'travel_gaps: the travel function reads the backlog, not clients';
+  end if;
+
+  return query
   with pairs as (
-    select distinct on (p.postcode, pl.postcode, m.mode)
-           p.postcode  as origin_postcode,
-           pl.postcode as dest_postcode,
-           pl.lat      as dest_lat,
-           pl.lon      as dest_lon,
-           m.mode      as mode
+    select distinct on (trim(p.postcode), trim(pl.postcode), m.mode)
+           trim(p.postcode)  as origin_postcode,
+           trim(pl.postcode) as dest_postcode,
+           pl.lat            as dest_lat,
+           pl.lon            as dest_lon,
+           m.mode            as mode,
+           tb.origin_postcode is not null as has_backoff
       from project_property pp
       join property p  on p.rightmove_id = pp.rightmove_id
       join place    pl on pl.project_id  = pp.project_id
@@ -96,24 +129,24 @@ as $$
         on ps.project_id   = pp.project_id
        and ps.rightmove_id = pp.rightmove_id
       left join travel_time tt
-        on tt.origin_postcode = p.postcode
-       and tt.dest_postcode   = pl.postcode
+        on tt.origin_postcode = trim(p.postcode)
+       and tt.dest_postcode   = trim(pl.postcode)
        and tt.mode            = m.mode
       left join travel_backoff tb
-        on tb.origin_postcode = p.postcode
-       and tb.dest_postcode   = pl.postcode
+        on tb.origin_postcode = trim(p.postcode)
+       and tb.dest_postcode   = trim(pl.postcode)
        and tb.mode            = m.mode
-     where p.postcode  is not null
+     where nullif(trim(p.postcode), '') is not null
        -- A place with no postcode is not a destination: routing is postcode to postcode, and a
        -- neighbourhood the hunt searches around has no journey to ask about (`travelDestinations`).
-       and pl.postcode is not null
+       and nullif(trim(pl.postcode), '') is not null
        and tt.origin_postcode is null
        and (ps.stage is null or ps.stage <> 'archived')
        and (tb.next_attempt_at is null or tb.next_attempt_at <= now())
      -- `distinct on` needs the ordering to start with its own expressions; `pl.id` after them only
      -- decides *which* of two places at one postcode lends its coordinates, and they are the same
      -- point either way.
-     order by p.postcode, pl.postcode, m.mode, pl.id
+     order by trim(p.postcode), trim(pl.postcode), m.mode, pl.id
   )
   -- Qualified with the CTE name throughout: the `returns table` columns are parameters in scope
   -- here, and an unqualified `mode` would be ambiguous against them.
@@ -122,10 +155,12 @@ as $$
          pairs.dest_lat,
          pairs.dest_lon,
          pairs.mode,
+         pairs.has_backoff,
          count(*) over () as remaining
     from pairs
    order by pairs.origin_postcode, pairs.dest_postcode, pairs.mode
    limit greatest(p_limit, 0);
+end;
 $$;
 
 comment on function public.travel_gaps(int) is

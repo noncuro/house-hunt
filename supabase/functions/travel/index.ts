@@ -39,7 +39,7 @@ import {
   type StationInfo,
 } from '../_shared/tfl.ts';
 import { lookupPostcode } from '../_shared/postcode.ts';
-import type { JourneyOption, TravelMode } from '../_shared/types.ts';
+import { TRAVEL_MODES, type JourneyOption, type TravelMode } from '../_shared/types.ts';
 
 requireEnv({
   SUPABASE_URL: Deno.env.get('SUPABASE_URL'),
@@ -88,19 +88,33 @@ const MAX_TFL_CONCURRENCY = 6;
 const MAX_BACKFILL_CONCURRENCY = 2;
 
 /** A plain counting semaphore. Two of these exist and they behaved identically when each was
- *  written out by hand, which is the argument for the parameter. */
+ *  written out by hand, which is the argument for the parameter.
+ *
+ *  The count is taken **synchronously**, at the moment the slot is granted. Incrementing it a
+ *  microtask later — inside the `.then` that runs the work — is a bound that does not exist: the
+ *  backfill hands sixty legs to this in one synchronous `map`, no microtask runs between them, so
+ *  all sixty read `active === 0`, all sixty take the fast path, and sixty TfL calls leave at once
+ *  under a comment promising two. It looked correct because it is correct for a caller that awaits
+ *  between acquisitions, which is the one caller nobody writes. */
 function semaphore(limit: number): <T>(run: () => Promise<T>) => Promise<T> {
   let active = 0;
   const waiting: Array<() => void> = [];
+  /** Hand the slot to the next waiter rather than freeing it and letting them re-take it: between
+   *  the decrement and a woken waiter's increment there is a microtask in which a fresh caller can
+   *  slip past the limit and the waiter is left queued behind work that arrived after it. */
+  const release = () => {
+    const next = waiting.shift();
+    if (next) next();
+    else active--;
+  };
   return <T>(run: () => Promise<T>): Promise<T> => {
-    const slot = active < limit ? Promise.resolve() : new Promise<void>((resolve) => waiting.push(resolve));
-    return slot.then(() => {
-      active++;
-      return run().finally(() => {
-        active--;
-        waiting.shift()?.();
-      });
-    });
+    const queued = active >= limit;
+    if (!queued) active++;
+    const slot = queued ? new Promise<void>((resolve) => waiting.push(resolve)) : Promise.resolve();
+    // `slot.then(run)` rather than calling `run()` here: it turns a synchronous throw inside `run`
+    // into a rejection, so `finally` still runs and the slot is not lost for the life of the
+    // instance — a leaked slot is a queue that quietly stops draining.
+    return slot.then(run).finally(release);
   };
 }
 
@@ -506,8 +520,29 @@ interface Gap {
   dest_lat: number | null;
   dest_lon: number | null;
   mode: TravelMode;
+  /** Whether a backoff row stands against this pair, so a run that answers it knows whether there
+   *  is anything to clear. */
+  has_backoff: boolean;
   /** The whole outstanding count, carried on every row — see `travel_gaps`. */
   remaining: number;
+}
+
+/** The mode list is stated twice — `TRAVEL_MODES` here and an `array[...]` inside `travel_gaps` —
+ *  because there is no way to share a constant across the SQL boundary. Two statements of one fact
+ *  can disagree, and this is the point where the disagreement would otherwise pass unnoticed: an
+ *  unknown mode falls through `journeyTime`'s lookup to the planner's default and gets cached as a
+ *  transit number under whatever label the migration invented. So the rows are checked rather than
+ *  trusted, and a divergence stops the run instead of poisoning the shared cache. */
+function checkModes(gaps: Gap[]): void {
+  const unknown = [...new Set(gaps.map((g) => g.mode).filter((mode) => !TRAVEL_MODES.includes(mode)))];
+  if (unknown.length > 0) {
+    throw new HttpError(
+      500,
+      'bad-gap',
+      `travel_gaps returned ${unknown.map((m) => `"${String(m)}"`).join(', ')}, which is not a mode we route — ` +
+        'the migration and TRAVEL_MODES have diverged',
+    );
+  }
 }
 
 /** Is this the service role itself calling, rather than a person?
@@ -547,6 +582,7 @@ async function runBackfill(ask: SystemAsk) {
     console.log('travel backfill: nothing outstanding');
     return { attempted: 0, routed: 0, noRoute: 0, failed: 0, outstanding: 0 };
   }
+  checkModes(gaps);
 
   let routed = 0;
   let noRoute = 0;
@@ -582,6 +618,10 @@ async function runBackfill(ask: SystemAsk) {
         // served its purpose.
         if (leg.settled) noRoute++;
         else routed++;
+        // Only where there is one to clear. The healthy case is a clean backlog, and clearing
+        // unconditionally spends a round trip per leg — a whole budget's worth per run — deleting
+        // nothing.
+        if (!gap.has_backoff) return;
         await rpc('clear_travel_failure', {
           p_origin_postcode: gap.origin_postcode,
           p_dest_postcode: gap.dest_postcode,

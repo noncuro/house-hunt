@@ -28,6 +28,12 @@ on:
         required: false
         default: '60'
 
+# Nothing at all. This job checks nothing out, reads no repository content and writes nowhere on
+# GitHub — it makes one HTTPS call to Supabase with a secret. Without the block the token inherits
+# whatever the repository default happens to be, which is a wider grant than a curl needs and one
+# that changes under you when somebody edits a settings page.
+permissions: {}
+
 # One run at a time. Two overlapping runs would draw the same gaps — `travel_gaps` reads what is
 # missing, and nothing is missing any less until the first run has written its answers — so they
 # would spend twice the calls on one set of legs.
@@ -49,6 +55,18 @@ jobs:
 
           if [ -z "${FUNCTIONS_URL:-}" ] || [ -z "${SERVICE_ROLE_KEY:-}" ]; then
             echo "SUPABASE_FUNCTIONS_URL and SUPABASE_SERVICE_ROLE_KEY must both be set as repository secrets." >&2
+            exit 1
+          fi
+
+          # The budget is free text on the dispatch form and goes into the request body as a JSON
+          # number, so anything that is not one produces a body the function cannot parse — and the
+          # run then fails with "unexpected token", which reads like the function is broken rather
+          # than like the number was. Checked here so the message names the actual mistake.
+          case "${BUDGET}" in
+            ''|*[!0-9]*) echo "budget must be a whole number of TfL calls, not '${BUDGET}'." >&2; exit 1 ;;
+          esac
+          if [ "${BUDGET}" -lt 1 ]; then
+            echo "budget must be at least 1 TfL call, not '${BUDGET}'." >&2
             exit 1
           fi
 
