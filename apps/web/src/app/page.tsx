@@ -10,6 +10,7 @@ import { Toasts, useToasts } from '@house-hunt/ui';
 import { Sweep } from '@/screens/Sweep';
 import {
   applyFilter,
+  placePoints,
   duplicateIds,
   enthusiasm,
   groupOf,
@@ -846,7 +847,10 @@ function Triage({
   // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave
   // the ranking meaning something about flats that are no longer on screen. `unknowns` is what the
   // filter kept without an answer either way, which the bar says out loud.
-  const { kept, unknowns } = applyFilter(entries, filter, travel.data);
+  // Where the places are, for the bars measured as the crow flies rather than by a journey. Memoed
+  // because the pile is refiltered on every keystroke in the bar's number box.
+  const points = useMemo(() => placePoints(cardProps.places), [cardProps.places]);
+  const { kept, unknowns } = applyFilter(entries, filter, travel.data, points);
   const shown = sortForTriage(kept, cardProps.scores, sortMode);
   const metrics = storedModel?.model.metrics;
 

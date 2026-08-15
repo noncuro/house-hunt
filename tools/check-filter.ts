@@ -12,6 +12,7 @@
 import {
   NO_FILTER,
   applyFilter,
+  CROW,
   filterIsOn,
   matchesFilter,
   parseFilter,
@@ -168,7 +169,7 @@ function reachIndex(postcode: string, rows: Array<Partial<TravelTime>>): TravelI
 
 const near = flat({ rightmoveId: 'near', postcode: 'N1 1AA' });
 const far = flat({ rightmoveId: 'far', postcode: 'E1 1AA' });
-const toWork = only({ travel: [{ placeId: 'work', mode: 'transit', maxMinutes: 20 }] });
+const toWork = only({ travel: [{ placeId: 'work', mode: 'transit', max: 20 }] });
 
 check('a filter with only a travel bar is on', filterIsOn(toWork), true);
 check(
@@ -226,7 +227,7 @@ check(
 // failure rather than a missing measurement.
 check(
   'a 90-minute walk fails a 20-minute walking bar',
-  matchesFilter(near, only({ travel: [{ placeId: 'work', mode: 'walking', maxMinutes: 20 }] }),
+  matchesFilter(near, only({ travel: [{ placeId: 'work', mode: 'walking', max: 20 }] }),
     reachIndex('N1 1AA', [{ mode: 'walking', seconds: 90 * 60 }])),
   false,
 );
@@ -237,8 +238,8 @@ check(
   matchesFilter(
     near,
     only({ travel: [
-      { placeId: 'work', mode: 'transit', maxMinutes: 20 },
-      { placeId: 'gym', mode: 'walking', maxMinutes: 10 },
+      { placeId: 'work', mode: 'transit', max: 20 },
+      { placeId: 'gym', mode: 'walking', max: 10 },
     ] }),
     reachIndex('N1 1AA', [
       { seconds: 15 * 60 },
@@ -273,8 +274,61 @@ check(
   parseFilter(JSON.parse(JSON.stringify(toWork))),
   toWork,
 );
-check('a travel bar with no place is dropped', parseFilter({ travel: [{ mode: 'transit', maxMinutes: 20 }] }), NO_FILTER);
-check('so is one with a mode we do not have', parseFilter({ travel: [{ placeId: 'work', mode: 'teleport', maxMinutes: 20 }] }), NO_FILTER);
+check('a travel bar with no place is dropped', parseFilter({ travel: [{ mode: 'transit', max: 20 }] }), NO_FILTER);
+check('so is one with a mode we do not have', parseFilter({ travel: [{ placeId: 'work', mode: 'teleport', max: 20 }] }), NO_FILTER);
+
+// --------------------------------------------------------------------------------------------- //
+console.log('\ndistance: the bar TfL cannot answer');
+
+// The neighbourhoods folded in from the old hub list have a coordinate and no postcode, so there is
+// no journey to look up and there is a straight line to measure. Angel is the place; the two flats
+// are a quarter-mile and two miles off it.
+const ANGEL = { lat: 51.5322, lon: -0.1058 };
+const points = { angel: ANGEL };
+const onTop = flat({ rightmoveId: 'ontop', lat: 51.5322, lon: -0.1058 });
+const nearby = flat({ rightmoveId: 'nearby', lat: 51.5358, lon: -0.1058 }); // ~0.25 mi due north
+const away = flat({ rightmoveId: 'away', lat: 51.5612, lon: -0.1058 });     // ~2 mi due north
+const withinMile = only({ travel: [{ placeId: 'angel', mode: CROW, max: 1 }] });
+
+check('a filter with only a distance bar is on', filterIsOn(withinMile), true);
+check('the same spot is within any bar', matchesFilter(onTop, withinMile, undefined, points), true);
+check('a quarter mile off stays', matchesFilter(nearby, withinMile, undefined, points), true);
+check('two miles off goes', matchesFilter(away, withinMile, undefined, points), false);
+
+// The rule the whole file is about, applied to the one measure that does not need the cache: no
+// coordinate at either end is not "far away", it is not knowing.
+check(
+  'a flat with no coordinates stays',
+  matchesFilter(flat({ lat: null, lon: null }), withinMile, undefined, points),
+  true,
+);
+check('a place with no coordinates keeps everything', matchesFilter(away, withinMile, undefined, {}), true);
+check('and so does being handed no places at all', matchesFilter(away, withinMile, undefined, undefined), true);
+
+// A distance bar needs no postcode and no cache — which is the point of it. A flat that could never
+// have a journey time still has an answer here.
+check(
+  'a flat with no postcode is still measured',
+  matchesFilter(flat({ postcode: null, lat: 51.5322, lon: -0.1058 }), withinMile, undefined, points),
+  true,
+);
+
+const milePile = applyFilter([onTop, nearby, away, flat({ rightmoveId: 'nowhere' })], withinMile, undefined, points);
+check('the pile keeps the two near ones and the unplaceable one', milePile.kept.length, 3);
+check('and counts the unplaceable one as unknown', milePile.unknowns, 1);
+
+check(
+  'a distance bar survives the round trip',
+  parseFilter(JSON.parse(JSON.stringify(withinMile))),
+  withinMile,
+);
+// The field was `maxMinutes` before a bar could be measured in miles. A filter left in somebody's
+// localStorage has to keep narrowing rather than quietly widening to "any distance".
+check(
+  'a bar stored under the old field name is read',
+  parseFilter({ travel: [{ placeId: 'work', mode: 'transit', maxMinutes: 20 }] }),
+  toWork,
+);
 
 // A place can be deleted while a filter naming it is still stored, and a bar nobody can see is a
 // bar nobody can clear — so it goes, which shows more flats rather than fewer.
