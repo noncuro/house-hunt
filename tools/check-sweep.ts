@@ -115,7 +115,8 @@ check(
 );
 check(
   'a hub with no verified identifier gets no URL at all',
-  sweepSearchUrl({ hub: { name: 'Nowhere', rightmove: null }, days: 14, criteria: CRITERIA }),
+  // A radius, so the missing identifier is the only thing that can be refusing.
+  sweepSearchUrl({ hub: { name: 'Nowhere', rightmove: null, radiusMiles: 1 }, days: 14, criteria: CRITERIA }),
   null,
 );
 
@@ -386,7 +387,6 @@ function readSeededHubs(path: string): Place[] {
         lon: Number(m[4]),
         locationIdentifier: m[5]!,
         displayLocationIdentifier: m[6]!,
-        sortOrder: Number(m[7]),
       }),
     );
   }

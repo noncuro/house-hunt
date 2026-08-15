@@ -330,7 +330,10 @@ async function checkFunnel({ page }: Stage): Promise<void> {
   const id = fixtureId(4);
   const card = page.locator(`#card-${id}`);
   const before = await verdictOf(id);
-  if (!before) return note(`${id} has no verdict, so it should not be in the funnel at all`);
+  if (!before) {
+    note(`${id} has no verdict, so it should not be in the funnel at all`);
+    return;
+  }
 
   // The bar the shortlist is filtered by. It is the funnel's only presence on a page that is not
   // showing one flat, and it renders every step including the empty ones.
