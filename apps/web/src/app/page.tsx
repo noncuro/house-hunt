@@ -427,10 +427,7 @@ function App({
    *  scrolling away and toggling a pile does not yank you back. */
   const jumped = useRef<string | null>(null);
   useEffect(() => {
-    // Waits for the off-market read as well as the shortlist. A flat somebody has marked gone is
-    // not drawn, so jumping before that read lands either scrolls to a card that is about to be
-    // removed or, if it lands first, to one that was never there.
-    if (!all || offMarketQuery.isPending) return;
+    if (!all) return;
     const id = /^#card-(\d+)$/.exec(window.location.hash)?.[1];
     if (!id || jumped.current === id) return;
     const entry = all.find((e) => e.rightmoveId === id);
@@ -441,7 +438,22 @@ function App({
     if (!matchesStage(entry.stage, stageFilter)) setStageFilter('all');
     openCard(id, groupOf(entry.verdicts));
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [all, offMarketQuery.isPending]);
+  }, [all]);
+
+  /** The same link, once the exclusions arrive. They are a second read and usually the slower one,
+   *  so the jump above has often already happened by the time we know the flat is off the market —
+   *  and it is then removed from under whoever followed the link. Waiting for this read instead
+   *  would make a deep link depend on a request that can stay pending indefinitely, so it jumps on
+   *  what it has and comes back for the rest. */
+  const revealed = useRef<string | null>(null);
+  useEffect(() => {
+    if (!offMarket) return;
+    const id = /^#card-(\d+)$/.exec(window.location.hash)?.[1];
+    if (!id || revealed.current === id || !offMarket.has(id)) return;
+    revealed.current = id;
+    openCard(id, byId.get(id) ? groupOf(byId.get(id)!.verdicts) : undefined);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [offMarket]);
   // Every entry's P(yes) under the current model, computed once and shared by the cards, the
   // triage sort and the mismatch marker. Null while there is no model (never trained, or too few
   // verdicts) — the UI then simply shows no scores rather than an error.
@@ -600,7 +612,9 @@ function App({
             {offMarketQuery.isError && (
               <span className="error-inline" data-testid="off-market-unknown">
                 {' '}
-                Which places are off the market could not be read, so all of them are shown.
+                {offMarket === null
+                  ? 'Which places are off the market could not be read, so all of them are shown.'
+                  : 'Which places are off the market could not be refreshed, so this may be out of date.'}
               </span>
             )}
             {shortlist.isFetching && <span className="working"> · refreshing</span>}
