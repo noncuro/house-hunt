@@ -7,7 +7,7 @@ import { toSweepHub, recheckTargets, RECHECK_AFTER_DAYS } from '@house-hunt/core
 import { listHubSweeps, locateProperties, pendingSightings, type HubSweep } from '@house-hunt/core/db';
 import { keys, useHubs, useProjectSettings, useShortlist } from '@/lib/queries';
 import { helloExtension } from '@/lib/bridge';
-import type { ProjectHub, SweepCriteria } from '@house-hunt/core';
+import type { Place, SweepCriteria } from '@house-hunt/core';
 import { sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
 
 /** Going looking, in two separate halves.
@@ -53,23 +53,23 @@ export function Sweep() {
     refetchOnWindowFocus: true,
   });
 
-  // Keyed on the hub's id rather than its name: `hub_sweep` re-keyed onto `project_hub.id`, and a
-  // renamed neighbourhood must keep the sweep history that dates its next window.
-  const byHubId = new Map((sweeps.data ?? []).map((s) => [s.hubId, s]));
+  // Keyed on the place's id rather than its name: a renamed place must keep the sweep history that
+  // dates its next window.
+  const byPlaceId = new Map((sweeps.data ?? []).map((s) => [s.placeId, s]));
   const projectHubs = hubs.data ?? [];
 
   return (
     <section className="sweep">
       <h2 className="sweep-fill-heading">Scan</h2>
       <p className="dim">
-        Each link opens Rightmove's own search for that neighbourhood, filtered to what has
+        Each link opens Rightmove's own search around one of your places, filtered to what has
         appeared or changed since it was last swept. The panel on that page records every card and
-        says when it is safe to page on. Scan as many hubs and pages as you like — filling them in
-        is the separate step below, and it works through everything you have scanned.
+        says when it is safe to page on. Scan as many places and pages as you like — filling them
+        in is the separate step below, and it works through everything you have scanned.
       </p>
 
       {(hubs.isPending || sweeps.isPending) && <p className="working">Working…</p>}
-      {hubs.isError && <p className="error">Could not read this project's neighbourhoods.</p>}
+      {hubs.isError && <p className="error">Could not read this project's places.</p>}
       {sweeps.isError && <p className="error">Could not read when each hub was last swept.</p>}
 
       {/* A project with no neighbourhoods gets this rather than an empty grid or, worse, the five
@@ -77,16 +77,16 @@ export function Sweep() {
           is not a friendlier first run, it is a wrong one. */}
       {hubs.isSuccess && projectHubs.length === 0 && (
         <p className="dim">
-          No neighbourhoods yet. A sweep works one neighbourhood's search results to the end, so
-          there is nothing to sweep until you add one — Your Hunt → Neighbourhoods, by name or
-          postcode.
+          Nowhere to sweep yet. A sweep works one place's search results to the end, so there is
+          nothing to do until you tick <em>search around</em> on one of your places — Your Hunt →
+          Places.
         </p>
       )}
 
       {settings.isSuccess && criteria === null && (
         <p className="dim">
           Nothing to sweep for yet — this hunt has not said what it is looking for. Set the
-          Rightmove filters on Your Hunt and every neighbourhood below becomes a link. There is
+          Rightmove filters on Your Hunt and every place below becomes a link. There is
           deliberately no default: a price band nobody chose returns a search that looks like it
           worked and is somebody else&rsquo;s.
         </p>
@@ -94,7 +94,7 @@ export function Sweep() {
 
       <div className="sweep-hubs">
         {projectHubs.map((hub) => (
-          <HubRow key={hub.id} hub={hub} sweep={byHubId.get(hub.id) ?? null} criteria={criteria} />
+          <HubRow key={hub.id} hub={hub} sweep={byPlaceId.get(hub.id) ?? null} criteria={criteria} />
         ))}
       </div>
 
@@ -179,9 +179,9 @@ function Recheck() {
   );
 }
 
-/** One neighbourhood: the link to go looking with, how far back that search reaches, and how much
+/** One place we search around: the link to go looking with, how far back that search reaches, and how much
  *  of a sweep already in progress is still outstanding. */
-function HubRow({ hub, sweep, criteria }: { hub: ProjectHub; sweep: HubSweep | null; criteria: SweepCriteria | null }) {
+function HubRow({ hub, sweep, criteria }: { hub: Place; sweep: HubSweep | null; criteria: SweepCriteria | null }) {
   // From `hub_sweep` and nowhere else. `project_hub` briefly carried a copy and the migration
   // dropped it — two homes for this one date is how they come to disagree, and a disagreement here
   // narrows the next window past listings nobody looked at.
@@ -205,10 +205,10 @@ function HubRow({ hub, sweep, criteria }: { hub: ProjectHub; sweep: HubSweep | n
             which is the failure that looks like success. */}
         {url ? (
           <a className="sweep-go" href={url} target="_blank" rel="noopener">
-            {hub.name} ↗
+            {hub.label} ↗
           </a>
         ) : (
-          <span className="sweep-go sweep-go-off">{hub.name}</span>
+          <span className="sweep-go sweep-go-off">{hub.label}</span>
         )}
         {sweep?.lastResultCount !== null && sweep?.lastResultCount !== undefined && (
           <span className="dim">{sweep.lastResultCount} last time</span>

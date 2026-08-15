@@ -57,11 +57,10 @@ export function Settings({
         </p>
       </section>
 
-      {/* Neighbourhoods used to sit here, and moved to Your Hunt. Which places this hunt searches
-          is a property of the hunt — shared, and the same for everyone in it — where everything
-          left on this page is one person's own: their display name, and the destinations they
-          measure journeys to. Filing a shared setting under a personal heading is how it comes to
-          be edited by whoever happened to find it. */}
+      {/* The places moved to Your Hunt. Where this hunt measures to and searches around is a
+          property of the hunt — shared, and the same for everyone in it — while the only thing
+          left on this page is one person's own. `place` was always a project table; filing it under
+          a personal heading is how a shared setting comes to be changed by whoever found it. */}
 
       {/* The extension keeps a Diagnostics section here — a ring buffer in `chrome.storage` with a
           Copy log button — because a background worker's console is wiped every time Chrome idles it

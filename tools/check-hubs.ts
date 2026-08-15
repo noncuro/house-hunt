@@ -11,11 +11,10 @@ import {
   distanceMiles,
   hubLabel,
   hubsFromProject,
-  hubsWithPlaces,
   initialBearing,
   nearestHub,
 } from '../packages/core/src/hubs';
-import type { ProjectHub } from '../apps/extension/src/lib/messages';
+import type { Place } from '../packages/core/src/types';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -130,87 +129,102 @@ check(
   hubLabel(nearestHub({ lat: OLD_STREET.lat + 0.004, lon: OLD_STREET.lon }, FIVE)!),
   '0.3 mi N of Old Street',
 );
-console.log('hubsWithPlaces');
-// A saved place answers where a neighbourhood cannot, and never where one can. Duncan Terrace is
-// 0.24 mi from Angel, so even an office on the same street loses: "0.3 mi NW of Work" says how
-// far the commute is and nothing about where the flat is.
-const nearbyOffice = { label: 'Work', lat: 51.535, lon: -0.1045 };
-const withWork = nearestHub(duncanTerrace, hubsWithPlaces([nearbyOffice], FIVE));
-check('a nearer saved place still loses to a neighbourhood', withWork?.hub.name, 'Angel');
-
-// The case places were added for: somewhere near the office and near nothing we are searching.
-// Marylebone is over a mile from all five hubs, so without the place there is no answer at all.
-const marylebone = { lat: 51.5185, lon: -0.1515 };
-check('with no hub in range, the label is the hub-less one', nearestHub(marylebone, FIVE)?.hub.name, undefined);
-const officeInTown = { label: 'Work', lat: 51.5165, lon: -0.1445 };
-check(
-  'a place answers when no neighbourhood does',
-  nearestHub(marylebone, hubsWithPlaces([officeInTown], FIVE))?.hub.name,
-  'Work',
-);
-// ...and a distant one never does, however much we care about it.
-const heathrow = { label: 'Heathrow', lat: 51.4706, lon: -0.4619 };
-check(
-  'a far-off place does not displace anything',
-  nearestHub(duncanTerrace, hubsWithPlaces([heathrow], FIVE))?.hub.name,
-  'Angel',
-);
-// A place saved before addPlace resolved postcodes has no coordinates. Guessing would rotate
-// every bearing computed from it with nothing on screen looking wrong.
-check(
-  'a place with no coordinates is skipped, not guessed at',
-  hubsWithPlaces([{ label: 'Nowhere', lat: null, lon: null }], FIVE).length,
-  FIVE.length,
-);
-
-
-console.log('hubsFromProject');
-// Hubs are `project_hub` rows now, and two of the rows the migration keeps have no coordinates:
-// King's Cross and Highbury & Islington were hubs, were dropped, and their hub_sweep history is
-// carried by a coordinate-less row rather than deleted. Defaulting a point onto one of those would
-// rotate every bearing computed from it and nothing on screen would look wrong, which is the
-// failure this file exists to catch.
-const row = (over: Partial<ProjectHub>): ProjectHub => ({
-  id: over.name ?? 'id',
-  name: 'Somewhere',
+console.log('hubsFromProject — one list, two jobs');
+// Places and neighbourhoods are one table now. The tie-break survives as what a row *does*: a place
+// the hunt searches around beats one it only measures to. Duncan Terrace is 0.24 mi from Angel, so
+// even an office on the same street loses — "0.3 mi NW of Work" says how far the commute is and
+// nothing about where the flat is.
+const place = (over: Partial<Place>): Place => ({
+  id: over.label ?? 'id',
+  label: 'Somewhere',
+  postcode: null,
   lat: null,
   lon: null,
   locationIdentifier: null,
   displayLocationIdentifier: null,
+  sweepRadiusMiles: null,
   maxDaysSinceAdded: null,
-  sortOrder: 0,
   ...over,
 });
 
+/** A place the hunt sweeps around: both halves of the identifier and a radius. */
+const swept = (over: Partial<Place>): Place =>
+  place({
+    locationIdentifier: 'STATION^1',
+    displayLocationIdentifier: 'Somewhere.html',
+    sweepRadiusMiles: 1,
+    ...over,
+  });
+
+const SEARCHED = SEED_HUBS.map((h) => swept({ label: h.name, lat: h.lat, lon: h.lon }));
+
+const nearbyOffice = place({ label: 'Work', lat: 51.535, lon: -0.1045 });
+check(
+  'a nearer destination still loses to somewhere we search',
+  nearestHub(duncanTerrace, hubsFromProject([...SEARCHED, nearbyOffice]))?.hub.name,
+  'Angel',
+);
+
+// The case destinations were added for: somewhere near the office and near nothing we are searching.
+// Marylebone is over a mile from all five, so without the office there is no answer at all.
+const marylebone = { lat: 51.5185, lon: -0.1515 };
+check('with nothing searched in range, there is no fix', nearestHub(marylebone, FIVE)?.hub.name, undefined);
+const officeInTown = place({ label: 'Work', lat: 51.5165, lon: -0.1445 });
+check(
+  'a destination answers when nothing searched does',
+  nearestHub(marylebone, hubsFromProject([...SEARCHED, officeInTown]))?.hub.name,
+  'Work',
+);
+// ...and a distant one never does, however much we care about it.
+const heathrow = place({ label: 'Heathrow', lat: 51.4706, lon: -0.4619 });
+check(
+  'a far-off destination does not displace anything',
+  nearestHub(duncanTerrace, hubsFromProject([...SEARCHED, heathrow]))?.hub.name,
+  'Angel',
+);
+// A place saved before addPlace resolved postcodes has no coordinates, and so does a neighbourhood
+// that was dropped but kept for its sweep history. Guessing a point would rotate every bearing
+// computed from it with nothing on screen looking wrong, which is the failure this file exists to
+// catch.
+check(
+  'a place with no coordinates is skipped, not guessed at',
+  hubsFromProject([...SEARCHED, place({ label: 'Nowhere' })]).length,
+  SEARCHED.length,
+);
+
 const projectRows = [
-  ...SEED_HUBS.map((h) => row({ name: h.name, lat: h.lat, lon: h.lon })),
+  ...SEARCHED,
   // The real shape of the dropped hubs: a name, sweep history, and no place on the map.
-  row({ name: "King's Cross" }),
-  row({ name: 'Highbury & Islington' }),
+  swept({ label: "King's Cross" }),
+  swept({ label: 'Highbury & Islington' }),
 ];
 
-check('the five seeded rows come back as hubs', hubsFromProject(projectRows).length, 5);
+check('the five searched rows come back', hubsFromProject(projectRows).length, 5);
 check(
-  'a hub with no coordinates is skipped, not placed',
+  'one with no coordinates is skipped, not placed',
   hubsFromProject(projectRows).map((h) => h.name).includes("King's Cross"),
   false,
 );
 check(
   'and the coordinates that do come back are the seeded ones, unrounded',
   hubsFromProject(projectRows).find((h) => h.name === 'Angel'),
-  { name: 'Angel', lat: ANGEL.lat, lon: ANGEL.lon },
+  { name: 'Angel', lat: ANGEL.lat, lon: ANGEL.lon, fromPlace: false },
 );
 // The same fix, computed from database rows rather than from the constant. If these two ever
 // disagree, every bearing in the extension moved and nothing said so.
 check(
   'a fix from project rows is the fix from the constant',
-  nearestHub(duncanTerrace, hubsFromProject(projectRows)),
-  nearestHub(duncanTerrace, FIVE),
+  nearestHub(duncanTerrace, hubsFromProject(projectRows))?.hub.name,
+  nearestHub(duncanTerrace, FIVE)?.hub.name,
 );
-// Nothing at all is a real state — a new project before it has added a neighbourhood — and it must
-// answer "no hub", not throw and not fall back to somebody else's London.
-check('a project with no hubs places nothing', nearestHub(duncanTerrace, hubsFromProject([])), null);
-check('and its saved places still answer', nearestHub(duncanTerrace, hubsWithPlaces([nearbyOffice], []))?.hub.name, 'Work');
+// Nothing at all is a real state — a new project before it has added anywhere — and it must answer
+// "nothing nearby", not throw and not fall back to somebody else's London.
+check('a project with no places places nothing', nearestHub(duncanTerrace, hubsFromProject([])), null);
+check(
+  'and a lone destination still answers',
+  nearestHub(duncanTerrace, hubsFromProject([nearbyOffice]))?.hub.name,
+  'Work',
+);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

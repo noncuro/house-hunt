@@ -12,7 +12,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SEED_HUBS, toSweepHub } from '../packages/core/src/hubs';
-import type { ProjectHub } from '../apps/extension/src/lib/messages';
+import type { Place } from '../packages/core/src/types';
 import { readSearchPage, staleAgainst, type SearchPage } from '../apps/extension/src/lib/search-page';
 import {
   RESULTS_PER_PAGE,
@@ -186,17 +186,17 @@ const seededRows = readSeededHubs(MIGRATION);
 
 check('the migration seeds five neighbourhoods', seededRows.length, 5);
 for (const seeded of seededRows) {
-  const constant = SEED_HUBS.find((h) => h.name === seeded.name);
+  const constant = SEED_HUBS.find((h) => h.name === seeded.label);
   if (!constant) {
     failures++;
-    console.log(`  FAIL the migration seeds "${seeded.name}", which SEED_HUBS does not have`);
+    console.log(`  FAIL the migration seeds "${seeded.label}", which SEED_HUBS does not have`);
     continue;
   }
   // Coordinates first: these came from TfL's StopPoint API and were reverse-geocoded to confirm the
   // ward, and re-deriving one would rotate every bearing computed from it.
-  check(`${seeded.name} keeps its exact coordinates`, [seeded.lat, seeded.lon], [constant.lat, constant.lon]);
+  check(`${seeded.label} keeps its exact coordinates`, [seeded.lat, seeded.lon], [constant.lat, constant.lon]);
   check(
-    `${seeded.name} builds the identical search URL from the database`,
+    `${seeded.label} builds the identical search URL from the database`,
     sweepSearchUrl({ hub: toSweepHub(seeded), days: 14, criteria: CRITERIA }),
     sweepSearchUrl({ hub: constant, days: 14, criteria: CRITERIA }),
   );
@@ -219,7 +219,47 @@ check(
 );
 // The coordinate-less rows the migration keeps for dropped hubs. They carry sweep history and
 // nothing else, and they must not produce a search.
-check('a hub kept only for its history has no search', sweepSearchUrl({ hub: toSweepHub(hubRow({ name: "King's Cross" })), days: 14 }), null);
+check(
+  'a place kept only for its history has no search',
+  sweepSearchUrl({ hub: toSweepHub(hubRow({ label: "King's Cross" })), days: 14, criteria: CRITERIA }),
+  null,
+);
+// A place with an identifier but no radius is not a sweep centre — nobody has said how far to look,
+// and picking a distance is the same class of invention as picking a price band.
+check(
+  'an identifier without a radius is not searchable',
+  sweepSearchUrl({
+    hub: toSweepHub(
+      hubRow({
+        locationIdentifier: 'STATION^4187',
+        displayLocationIdentifier: 'Hampstead-Station.html',
+        sweepRadiusMiles: null,
+      }),
+    ),
+    days: 14,
+    criteria: CRITERIA,
+  }),
+  null,
+);
+// The place's radius wins over one carried in on a pasted URL: one radius for every place is what
+// having a radius per place exists to prevent.
+check(
+  "the place's own radius, not the pasted one",
+  new URL(
+    sweepSearchUrl({
+      hub: toSweepHub(
+        hubRow({
+          locationIdentifier: 'STATION^4187',
+          displayLocationIdentifier: 'Hampstead-Station.html',
+          sweepRadiusMiles: 0.5,
+        }),
+      ),
+      days: 14,
+      criteria: CRITERIA,
+    })!,
+  ).searchParams.get('radius'),
+  '0.5',
+);
 
 console.log('sweepWindow — a hub\'s own floor');
 // `project_hub.max_days_since_added` is a floor and never a ceiling. A per-hub setting that could
@@ -294,17 +334,20 @@ if (!existsSync(fixture)) {
 }
 
 
-/** A `project_hub` row, with only the fields a case cares about spelled out. */
-function hubRow(over: Partial<ProjectHub>): ProjectHub {
+/** A `place` row, with only the fields a case cares about spelled out. A radius by default,
+ *  because these cases are about the identifier: a row missing both would be refused for the wrong
+ *  reason and the check would pass without testing anything. */
+function hubRow(over: Partial<Place>): Place {
   return {
     id: 'id',
-    name: 'Somewhere',
+    label: 'Somewhere',
+    postcode: null,
     lat: null,
     lon: null,
     locationIdentifier: null,
     displayLocationIdentifier: null,
+    sweepRadiusMiles: 1,
     maxDaysSinceAdded: null,
-    sortOrder: 0,
     ...over,
   };
 }
@@ -315,7 +358,7 @@ function hubRow(over: Partial<ProjectHub>): ProjectHub {
  *  test is "what the database holds resolves to the same search as the constant did", and a copy of
  *  the values in this file would only ever prove that a copy agrees with itself. Strict on purpose
  *  — a shape it does not recognise is a failure with a sentence, never zero rows quietly passing. */
-function readSeededHubs(path: string): ProjectHub[] {
+function readSeededHubs(path: string): Place[] {
   const sql = readFileSync(path, 'utf8');
   const block =
     /insert into project_hub \(project_id, name, lat, lon, rightmove_location_id, display_location_id, sort_order\)\s*values\s*([\s\S]*?)on conflict/.exec(
@@ -326,7 +369,7 @@ function readSeededHubs(path: string): ProjectHub[] {
     console.log(`  FAIL could not find the project_hub seed in ${path} — has the migration been reshaped?`);
     return [];
   }
-  const rows: ProjectHub[] = [];
+  const rows: Place[] = [];
   for (const line of block[1]!.split('\n')) {
     if (!line.trim().startsWith('(')) continue;
     const m = /\('([^']+)',\s*'([^']+)',\s*(-?[\d.]+),\s*(-?[\d.]+),\s*'([^']+)',\s*'([^']+)',\s*(\d+)\)/.exec(line);
@@ -338,7 +381,7 @@ function readSeededHubs(path: string): ProjectHub[] {
     rows.push(
       hubRow({
         id: m[1]!,
-        name: m[2]!,
+        label: m[2]!,
         lat: Number(m[3]),
         lon: Number(m[4]),
         locationIdentifier: m[5]!,

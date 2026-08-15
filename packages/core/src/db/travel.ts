@@ -289,6 +289,10 @@ export async function cachedTravelTimes(postcodes: string[]): Promise<Record<str
 function destinationIndex(places: Place[]): Map<string, string[]> {
   const index = new Map<string, string[]>();
   for (const place of places) {
+    // A place with no postcode is a neighbourhood we search around, not a destination. It has
+    // nothing to route to and is skipped rather than given a blank key, which would collect every
+    // such place under one imaginary journey.
+    if (place.postcode === null) continue;
     const list = index.get(place.postcode) ?? [];
     list.push(place.id);
     index.set(place.postcode, list);

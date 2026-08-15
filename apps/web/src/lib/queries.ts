@@ -13,7 +13,6 @@ import {
   cachedTravelTimes,
   getShortlist,
   getPriceHistoryFor,
-  listHubs,
   listPlaces,
   getProjectModel,
   getProjectSettings,
@@ -30,6 +29,7 @@ import {
   type RetrainResult,
   type ShortlistEntry,
 } from '@house-hunt/core/db';
+import { sweepableHubs } from '@house-hunt/core';
 import type {
   ArchiveReason,
   AuthState,
@@ -197,8 +197,12 @@ export function usePlaces() {
   return useQuery({ queryKey: keys.places, queryFn: listPlaces });
 }
 
+/** The places a hunt searches around, which is a reading of the same list — see `sweepableHubs`.
+ *  Kept as its own hook so the sweep view says what it means, but it shares `usePlaces`' cache
+ *  rather than fetching a second list that could disagree with the first. */
 export function useHubs() {
-  return useQuery({ queryKey: keys.hubs, queryFn: listHubs });
+  const places = usePlaces();
+  return { ...places, data: places.data ? sweepableHubs(places.data) : places.data };
 }
 
 /** Who is signed in, which projects they are in, and which one is active — the one answer the whole

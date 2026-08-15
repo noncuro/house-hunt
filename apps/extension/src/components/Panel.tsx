@@ -150,12 +150,11 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
     setStagePending(null);
 
     void (async () => {
-      const [existing, placeList, spending, hubList, storedModel, offState, stageState, settings] =
+      const [existing, placeList, spending, storedModel, offState, stageState, settings] =
         await Promise.all([
         send({ type: 'verdicts:get', rightmoveIds: [listing.rightmoveId] }),
         send({ type: 'places:list' }),
         send({ type: 'spend:summary' }),
-        send({ type: 'hubs:list' }),
         send({ type: 'model:get' }),
         send({ type: 'off-market:get', rightmoveId: listing.rightmoveId }),
         send({ type: 'stage:get', rightmoveId: listing.rightmoveId }),
@@ -181,9 +180,11 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       // side) comes back as a successful read of nothing, which does null it. What must not happen
       // is the failure passing unmentioned, so it joins the list below.
       if (storedModel.ok) setModel(storedModel.data?.model ?? null);
-      // Rows with no coordinate are dropped by `hubsFromProject` rather than guessed at, so a hub
-      // kept only for its sweep history never rotates a bearing.
-      setHubs(hubList.ok ? hubsFromProject(hubList.data) : null);
+      // One list now: the places a hunt measures against and the places it searches around are the
+      // same rows (see the `places_are_hubs` migration). Rows with no coordinate are dropped by
+      // `hubsFromProject` rather than guessed at, so a place kept only for its sweep history never
+      // rotates a bearing.
+      setHubs(placeList.ok ? hubsFromProject(placeList.data) : null);
       if (existing.ok) {
         // At most one row comes back now — the project shares one rating (design D6).
         const current = existing.data[0] ?? null;
@@ -204,9 +205,9 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
         else void toggleOffMarket(true, 'Marked off the market — it is no longer listed on Rightmove.');
       }
 
-      // Surface the first failure of the five. Swallowing these is what made a broken
-      // background look like an empty database.
-      const failure = [placeList, existing, spending, hubList, storedModel, stageState].find((r) => !r.ok);
+      // Surface the first failure. Swallowing these is what made a broken background look like an
+      // empty database.
+      const failure = [placeList, existing, spending, storedModel, stageState, settings].find((r) => !r.ok);
       if (failure && !failure.ok) setError(failure.error);
 
       // Recording the listing is what gives this project a `project_property` link, and the
@@ -512,7 +513,7 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       {/* Directly under the address, because it is the answer to the same question the address
           is asking and mostly failing to answer. */}
       <div className="rm-row rm-row-hub">
-        <HubFact point={point} hubs={hubs} places={places} />
+        <HubFact point={point} hubs={hubs} />
       </div>
 
       <div className="rm-row">

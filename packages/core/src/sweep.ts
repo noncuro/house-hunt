@@ -150,6 +150,10 @@ const SWEEP_OWNS = new Set([
   'maxDaysSinceAdded',
   'index',
   'sortType',
+  // The radius belongs to the place being swept, not to the hunt's filters. A pasted URL carries
+  // whatever was on screen when it was copied, and applying that one number to every place is
+  // exactly what a per-place radius exists to stop.
+  'radius',
 ]);
 
 
@@ -260,7 +264,7 @@ export interface SweepSearch {
  *  Returns null for a hub whose identifier we could not verify, because a search URL with a
  *  wrong `locationIdentifier` still returns a page full of plausible flats somewhere else. */
 export function sweepSearchUrl({ hub, days, page = 1, criteria }: SweepSearch): string | null {
-  if (!hub.rightmove) return null;
+  if (!hub.rightmove || hub.radiusMiles === null) return null;
   // Nothing chosen, no link. The alternative is a search with no price and no bedroom filter at all,
   // which returns every rental within a mile and reads as a broken sweep rather than as an unset
   // one — and the alternative to *that* is inventing a budget, which is what this stopped doing.
@@ -278,6 +282,11 @@ export function sweepSearchUrl({ hub, days, page = 1, criteria }: SweepSearch): 
     searchLocation: searchLocationFor(displayLocationIdentifier),
     useLocationIdentifier: 'true',
     locationIdentifier,
+    // The place's own radius, written with the sweep-owned parameters rather than left to the
+    // saved criteria. A pasted search URL carries the radius that was on screen when it was
+    // copied, and one radius for every place is exactly what having a radius per place is for —
+    // half a mile around the office is not half a mile around the whole search area.
+    radius: hub.radiusMiles.toFixed(1),
     maxDaysSinceAdded: String(days),
     index: String(Math.max(0, page - 1) * RESULTS_PER_PAGE),
     sortType: SORT_NEWEST_FIRST,

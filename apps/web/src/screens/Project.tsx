@@ -6,13 +6,10 @@ import { keys as shellKeys, useAuth, useProjectSettings, useSetProjectSettings }
 import { Hint, TRANSIT_BASIS_NOTE } from '@house-hunt/ui';
 import { attempt } from '@/lib/attempt';
 import {
-  addHub,
   addPlace as addPlaceRow,
   removePlace as removePlaceRow,
-  listHubs,
-  removeHub,
   resolveLocation,
-  updateHub,
+  updatePlace,
 } from '@house-hunt/core/db';
 import {
   authState,
@@ -27,6 +24,7 @@ import {
 } from '@house-hunt/core/db';
 import {
   AMENITIES,
+  SWEEP_RADII,
   SWEEP_WINDOWS,
   criteriaFromUrl,
   describeCriteria,
@@ -42,7 +40,7 @@ import type {
   InviteResult,
   LocationResult,
   Place,
-  ProjectHub,
+  PlacePatch,
   ProjectSummary,
   SweepCriteria,
 } from '@house-hunt/core';
@@ -94,16 +92,11 @@ export function Project({
   return (
     <div className="settings">
       <HuntSettings notify={notify} />
-      {/* Where journeys are measured to. It sat under Settings beside the display name, as though
-          it were one person's own — but `place` is a project table, so adding the office added it
-          for everyone in the hunt while the heading above it said otherwise. */}
+      {/* Where, straight after what: a search is filters plus somewhere to point them at, and the
+          two were a page apart. This list sat under Settings beside the display name as though it
+          were one person's own, while `place` has always been a project table. */}
       <Places places={places} setPlaces={setPlaces} notify={notify} />
       <SearchCriteria notify={notify} />
-      {/* Where, straight after what. These two are one thought — a search is filters plus a place
-          to point them at — and they were a page apart, with the neighbourhoods filed under the
-          sweep that consumes them. Nothing on the sweep page changes them; this is where the hunt
-          is described. */}
-      <Neighbourhoods notify={notify} />
       <Members projectId={activeProject.id} />
       {/* Keyed on the project so switching hunts starts the invite form empty. Without it the
           sentence under the field — "they are already in this hunt" — would still be on screen,
@@ -133,6 +126,12 @@ const GREAT_ROOM_MAX_SQFT = 2000;
 /** The whole-flat bar, same shape. Defaults to a comfortable one-bedroom and ranges from a studio
  *  to a house — wider than the room bar because it is measuring a different thing. */
 const DEFAULT_MIN_SQFT = 600;
+
+/** Offered when a place is first ticked as somewhere to search. One mile is what every sweep URL
+ *  this project has ever built used, so it is the radius already in force rather than a new
+ *  invention — and it is a starting point on a control right beside the tick, not a value chosen
+ *  behind anybody's back. */
+const DEFAULT_SWEEP_RADIUS = 1;
 const MIN_SQFT_FLOOR = 150;
 const MIN_SQFT_CEILING = 5000;
 
@@ -821,7 +820,7 @@ function SearchCriteria({ notify }: { notify: Notify }) {
       <h3>What we search for</h3>
       <p className="dim">
         Set the filters you want on Rightmove — any of them, including ones this app has never heard
-        of — then copy the address bar and paste it here. Every neighbourhood below is swept with
+        of — then copy the address bar and paste it here. Every place you search around is swept with
         these, so the area and the date range in what you paste are ignored: those are what a sweep
         works out for itself.
       </p>
@@ -864,7 +863,7 @@ function SearchCriteria({ notify }: { notify: Notify }) {
       {read && pasted.trim() !== '' && (
         <div className="dim">
           Ready to save. {read.ignored.length > 0 && (
-            <>Ignoring {read.ignored.join(', ')} — the neighbourhood, the date range and the sort
+            <>Ignoring {read.ignored.join(', ')} — the place, the radius, the date range and the sort
             order are the sweep&rsquo;s own.</>
           )}
         </div>
@@ -873,7 +872,7 @@ function SearchCriteria({ notify }: { notify: Notify }) {
       <h4>Sweeping for</h4>
       {current === null ? (
         <p className="dim" data-testid="criteria-summary">
-          Nothing yet — so there is nothing to sweep, and the neighbourhoods on the Sweep page have
+          Nothing yet — so there is nothing to sweep, and the places below have
           no links. That is deliberate: the alternative is a built-in price band, which every hunt
           using this app would search whether or not it was theirs, and a search that returns
           results always looks like it worked.
@@ -895,179 +894,14 @@ function SearchCriteria({ notify }: { notify: Notify }) {
 }
 
 
-/** The neighbourhoods this project searches around.
- *
- *  They used to be five constants in `lib/hubs.ts`, which was right while the hubs *were* the
- *  search. They are project rows now (design D11), so this section is the only way to change what
- *  we are looking for, and it has to be honest about a row being able to answer one question and
- *  not the other:
- *
- *    - A **point** (lat/lon) is what lets a listing read "0.4 mi NE of Angel". Without one the hub
- *      names nothing, and we say so rather than placing it somewhere plausible — a hub in the wrong
- *      place silently rotates every bearing computed from it.
- *    - A **Rightmove location** is what lets a sweep open that neighbourhood's search. Without one
- *      the hub is not searchable, and the sweep view says that instead of offering a dead link.
- *
- *  Both are resolved by a person pressing a button, never in the background. */
-function Neighbourhoods({ notify }: { notify: Notify }) {
-  const [hubs, setHubs] = useState<ProjectHub[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [name, setName] = useState('');
-  const [where, setWhere] = useState('');
-  const [busy, setBusy] = useState(false);
-  /** Hub id -> what the last resolve attempt said. Kept per hub rather than as one banner: two
-   *  hubs can be in different states at once and a shared line would attribute one's failure to
-   *  the other. */
-  const [located, setLocated] = useState<Record<string, LocationResult>>({});
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        setHubs(await listHubs());
-      } catch {
-        setFailed(true);
-      }
-    })();
-  }, []);
-
-  async function add() {
-    setBusy(true);
-    // `postcode` also takes a pasted "lat,lon" — the same field `places:add` accepts, resolved by
-    // the same code. A hub added with neither is legitimate: it can be given a location identifier
-    // and swept without ever being placeable.
-    const hub = await attempt(() => addHub({ name, postcode: where.trim() || undefined }), notify);
-    setBusy(false);
-    if (!hub) return;
-    setHubs([...(hubs ?? []), hub]);
-    setName('');
-    setWhere('');
-  }
-
-  async function remove(hub: ProjectHub) {
-    // Removing a hub takes its sweep history with it — `hub_sweep` cascades on `project_hub`. That
-    // is the whole record of having worked that neighbourhood to the end, so it is worth a stop.
-    if (!confirm(`Remove ${hub.name}? Its sweep history goes with it.`)) return;
-    const gone = await attempt(async () => {
-      await removeHub(hub.id);
-      return true;
-    }, notify);
-    if (!gone) return;
-    setHubs((hubs ?? []).filter((h) => h.id !== hub.id));
-  }
-
-  /** Ask Rightmove what it calls this neighbourhood, once, because somebody pressed a button.
-   *
-   *  This is the standing no-crawl rule's one sanctioned fetch, and the reasoning is repeated here
-   *  rather than left in AGENTS.md because this is exactly the kind of call that gets cited as
-   *  precedent later: **one** request, for **one** hub, initiated by a person who is looking at the
-   *  screen. Nothing here loops, nothing here runs in the background, and nothing here enumerates.
-   *  It is `pnpm find:locations` with the terminal taken out. */
-  async function resolve(hub: ProjectHub) {
-    setBusy(true);
-    const result = await attempt(() => resolveLocation(hub.name), notify);
-    setBusy(false);
-    if (!result) return;
-    setLocated({ ...located, [hub.id]: result });
-    if (result.status !== 'resolved') return;
-
-    const saved = await attempt(
-      () =>
-        updateHub(hub.id, {
-          locationIdentifier: result.locationIdentifier,
-          displayLocationIdentifier: result.displayLocationIdentifier,
-        }),
-      notify,
-    );
-    if (!saved) return;
-    setHubs((hubs ?? []).map((h) => (h.id === hub.id ? saved : h)));
-  }
-
-  async function setWindow(hub: ProjectHub, days: number | null) {
-    const saved = await attempt(() => updateHub(hub.id, { maxDaysSinceAdded: days ?? undefined }), notify);
-    if (!saved) return;
-    setHubs((hubs ?? []).map((h) => (h.id === hub.id ? saved : h)));
-  }
-
-  return (
-    <section className="setting">
-      <h2>Neighbourhoods we search</h2>
-      <p className="dim">
-        Each one fixes a listing — "0.4 mi NE of Angel" — and, once Rightmove's own name for it is
-        resolved, gives the sweep a search to work through.
-      </p>
-
-      {hubs === null && !failed && <p className="working">Working…</p>}
-      {failed && <p className="error">Could not read this project's neighbourhoods.</p>}
-      {hubs !== null && hubs.length === 0 && (
-        <p className="dim">Nothing yet — add the neighbourhoods you are actually looking in.</p>
-      )}
-
-      {(hubs ?? []).map((hub) => (
-        <div className="place" key={hub.id}>
-          <span>
-            {hub.name}{' '}
-            <span className="dim">
-              {hub.lat === null || hub.lon === null
-                ? 'no coordinates — cannot place a listing against it'
-                : `${hub.lat.toFixed(4)}, ${hub.lon.toFixed(4)}`}
-              {' · '}
-              {/* `STATION^4187` is Rightmove's own name for the area, and it is shown rather than
-                  hidden because it is what a sweep searches and the thing to check when a sweep
-                  brings back the wrong neighbourhood. Unexplained it looks like a fault. */}
-              <Hint text="Rightmove's own id for this area, from Resolve. It is what a sweep searches — if the results look like the wrong neighbourhood, this is the thing to re-resolve.">
-                {hub.locationIdentifier ?? 'not searchable yet'}
-              </Hint>
-              {hub.maxDaysSinceAdded !== null && ` · always looks back ${hub.maxDaysSinceAdded} days`}
-            </span>
-            {located[hub.id] && <LocationNote result={located[hub.id]!} hub={hub} />}
-          </span>
-          <span className="fields">
-            <select
-              value={hub.maxDaysSinceAdded ?? ''}
-              title="A floor on how far back this hub's sweep looks. It can only widen the window — a setting that narrowed it would drop listings and still report the page fully recorded."
-              onChange={(e) => void setWindow(hub, e.target.value === '' ? null : Number(e.target.value))}
-            >
-              <option value="">window from the last sweep</option>
-              {SWEEP_WINDOWS.map((days) => (
-                <option key={days} value={days}>
-                  at least {days} {days === 1 ? 'day' : 'days'}
-                </option>
-              ))}
-            </select>
-            <button disabled={busy} onClick={() => void resolve(hub)}>
-              {hub.locationIdentifier ? 'Re-resolve' : 'Resolve'}
-            </button>
-            <button className="remove" title="Remove" onClick={() => void remove(hub)}>
-              ×
-            </button>
-          </span>
-        </div>
-      ))}
-
-      <div className="fields">
-        <input value={name} placeholder="Hampstead" onChange={(e) => setName(e.target.value)} />
-        <input
-          value={where}
-          placeholder="Postcode or lat,lon (optional)"
-          title="Where the neighbourhood is, for the compass on every listing. A UK postcode, or coordinates pasted from Google Maps. Leave it blank and the hub can still be swept — it just cannot say what a flat is near."
-          onChange={(e) => setWhere(e.target.value)}
-        />
-        <button className="primary" disabled={busy || !name.trim()} onClick={() => void add()}>
-          Add
-        </button>
-      </div>
-    </section>
-  );
-}
-
-/** What one resolve attempt said. All four states are rendered: a silent failure here is a hub
- *  that looks added and never appears in the sweep. */
-function LocationNote({ result, hub }: { result: LocationResult; hub: ProjectHub }) {
+/** What one resolve attempt said. All four states are rendered: a silent failure here is a place
+ *  that looks searchable and never appears in the sweep. */
+function LocationNote({ result, place }: { result: LocationResult; place: Place }) {
   if (result.status === 'not-found') {
     return (
       <div className="error">
         Rightmove has no page at <code>{result.slug}</code>. Its own spelling is the one that works
-        — try "{hub.name} Station", or the area rather than the stop.
+        — try "{place.label} Station", or the area rather than the stop.
       </div>
     );
   }
@@ -1088,8 +922,8 @@ function LocationNote({ result, hub }: { result: LocationResult; hub: ProjectHub
   // new. Two independent sources agreeing is what makes it trustworthy, so a disagreement is shown
   // rather than assumed away — and Rightmove's centre is never written over the hub's own point.
   const apart =
-    result.centroid !== null && hub.lat !== null && hub.lon !== null
-      ? distanceMiles({ lat: hub.lat, lon: hub.lon }, result.centroid)
+    result.centroid !== null && place.lat !== null && place.lon !== null
+      ? distanceMiles({ lat: place.lat, lon: place.lon }, result.centroid)
       : null;
   return (
     <div className="dim">
@@ -1097,15 +931,26 @@ function LocationNote({ result, hub }: { result: LocationResult; hub: ProjectHub
       {apart === null
         ? ' No coordinate here to check it against — worth adding one before you trust the sweep.'
         : apart > 1
-          ? ` Rightmove puts its centre ${apart.toFixed(1)} mi from where this hub is — check which of the two is wrong before sweeping it.`
+          ? ` Rightmove puts its centre ${apart.toFixed(1)} mi from where this place is — check which of the two is wrong before sweeping it.`
           : ` Rightmove's centre agrees to within ${apart.toFixed(1)} mi.`}
     </div>
   );
 }
 
-/** The destinations every listing is timed against.
+/** The places this hunt cares about, and what it does with each one.
  *
- *  Shared by the hunt, like everything else on this page. */
+ *  One list, three jobs, and each row says which it can do. Every place with a postcode is timed by
+ *  walking, bike and transit; every place with coordinates fixes a listing ("0.4 mi NE of Angel");
+ *  and a place you tick "search around" becomes a sweep centre.
+ *
+ *  This was two sections on two pages — places here, neighbourhoods under the sweep — with their
+ *  own add forms, their own lists, and the compass quietly merging them on every card. Angel had to
+ *  be typed twice to be both searched and commuted from. The tables are one table now (see the
+ *  `places_are_hubs` migration) and so is this.
+ *
+ *  Searching around a place needs Rightmove's own name for it, which is resolved by a person
+ *  pressing a button and never in the background — the standing no-crawl rule's one sanctioned
+ *  fetch: one request, for one place, by somebody looking at the screen. */
 function Places({
   places,
   setPlaces,
@@ -1118,6 +963,11 @@ function Places({
   const [label, setLabel] = useState('');
   const [postcode, setPostcode] = useState('');
   const [busy, setBusy] = useState(false);
+  /** Place id -> what its last resolve attempt said. Per place rather than one banner: two can be
+   *  in different states at once and a shared line would attribute one's failure to the other. */
+  const [located, setLocated] = useState<Record<string, LocationResult>>({});
+
+  const replace = (next: Place) => setPlaces(places.map((p) => (p.id === next.id ? next : p)));
 
   async function addPlace() {
     setBusy(true);
@@ -1129,44 +979,144 @@ function Places({
     setPostcode('');
   }
 
-  async function removePlace(id: string) {
+  async function removePlace(place: Place) {
+    // A place that is swept takes its sweep history with it — `hub_sweep` cascades. That is the
+    // whole record of having worked this search to the end, so it is worth a stop.
+    if (place.sweepRadiusMiles !== null && !confirm(`Remove ${place.label}? Its sweep history goes with it.`)) {
+      return;
+    }
     const gone = await attempt(async () => {
-      await removePlaceRow(id);
+      await removePlaceRow(place.id);
       return true;
     }, notify);
     if (!gone) return;
-    setPlaces(places.filter((p) => p.id !== id));
+    setPlaces(places.filter((p) => p.id !== place.id));
+  }
+
+  const patch = async (place: Place, change: PlacePatch) => {
+    const saved = await attempt(() => updatePlace(place.id, change), notify);
+    if (saved) replace(saved);
+    return saved;
+  };
+
+  /** Ask Rightmove what it calls this place, once, because somebody pressed a button. */
+  async function resolve(place: Place) {
+    setBusy(true);
+    const result = await attempt(() => resolveLocation(place.label), notify);
+    setBusy(false);
+    if (!result) return;
+    setLocated({ ...located, [place.id]: result });
+    if (result.status !== 'resolved') return;
+    await patch(place, {
+      locationIdentifier: result.locationIdentifier,
+      displayLocationIdentifier: result.displayLocationIdentifier,
+    });
+  }
+
+  /** Turning sweeping on is one act with two halves: give the place a radius, and — the first time
+   *  — find out what Rightmove calls it. Doing the second automatically is the difference between
+   *  a tickbox and a two-step setup where the tick appears to do nothing. */
+  async function setSweeping(place: Place, on: boolean) {
+    const saved = await patch(place, { sweepRadiusMiles: on ? DEFAULT_SWEEP_RADIUS : null });
+    if (saved && on && saved.locationIdentifier === null) await resolve(saved);
   }
 
   return (
     <section className="setting">
-        <h2>Places we measure against</h2>
-        <p className="dim">
-          Each is measured by walking, bike and public transport. {TRANSIT_BASIS_NOTE}
-        </p>
-        {places.length === 0 && <p className="dim">Nothing yet — add the office, the in-laws, Heathrow.</p>}
-        {places.map((p) => (
-          <div className="place" key={p.id}>
-            <span>
-              {p.label} <span className="dim">{p.postcode}</span>
+      <h2>Places</h2>
+      <p className="dim">
+        The office, the in-laws, the neighbourhoods you are looking in. Every one is timed by
+        walking, bike and public transport, and fixes each listing on the compass — &ldquo;0.4 mi NE
+        of Angel&rdquo;. Tick <em>search around</em> and it also becomes somewhere the sweep goes
+        looking. {TRANSIT_BASIS_NOTE}
+      </p>
+      {places.length === 0 && (
+        <p className="dim">Nothing yet — add the office, the in-laws, the areas you are searching.</p>
+      )}
+      {places.map((place) => (
+        <div className="place place-row" key={place.id}>
+          <span className="place-what">
+            <strong>{place.label}</strong>{' '}
+            <span className="dim">
+              {place.postcode ?? (place.lat === null ? 'no location' : 'no postcode — not timed')}
             </span>
-            <button className="remove" title="Remove" onClick={() => void removePlace(p.id)}>
+            {located[place.id] && <LocationNote result={located[place.id]!} place={place} />}
+          </span>
+
+          <span className="fields place-sweep">
+            <label>
+              <input
+                type="checkbox"
+                checked={place.sweepRadiusMiles !== null}
+                disabled={busy}
+                onChange={(e) => void setSweeping(place, e.target.checked)}
+              />{' '}
+              search around
+            </label>
+
+            {place.sweepRadiusMiles !== null && (
+              <>
+                <select
+                  value={place.sweepRadiusMiles}
+                  title="How far around this place Rightmove searches. The same steps its own radius control offers."
+                  onChange={(e) => void patch(place, { sweepRadiusMiles: Number(e.target.value) })}
+                >
+                  {SWEEP_RADII.map((miles) => (
+                    <option key={miles} value={miles}>
+                      within {miles} mi
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={place.maxDaysSinceAdded ?? ''}
+                  title="A floor on how far back this sweep looks. It can only widen the window — a setting that narrowed it would drop listings and still report the page fully recorded."
+                  onChange={(e) =>
+                    void patch(place, {
+                      maxDaysSinceAdded: e.target.value === '' ? null : Number(e.target.value),
+                    })
+                  }
+                >
+                  <option value="">window from the last sweep</option>
+                  {SWEEP_WINDOWS.map((days) => (
+                    <option key={days} value={days}>
+                      at least {days} {days === 1 ? 'day' : 'days'}
+                    </option>
+                  ))}
+                </select>
+                {/* Rightmove's own id for the area. Shown rather than hidden because it is what a
+                    sweep actually searches, and the thing to check when a sweep brings back the
+                    wrong neighbourhood — unexplained it looks like a fault. */}
+                <Hint text="Rightmove's own id for this area. It is what a sweep searches — if the results look like the wrong place, re-resolve it.">
+                  <span className="dim">{place.locationIdentifier ?? 'not searchable yet'}</span>
+                </Hint>
+                <button disabled={busy} onClick={() => void resolve(place)}>
+                  {place.locationIdentifier ? 'Re-resolve' : 'Resolve'}
+                </button>
+              </>
+            )}
+
+            <button className="remove" title="Remove" onClick={() => void removePlace(place)}>
               ×
             </button>
-          </div>
-        ))}
-        <div className="fields">
-          <input value={label} placeholder="Label" onChange={(e) => setLabel(e.target.value)} />
-          <input
-            value={postcode}
-            placeholder="Postcode or lat,lon"
-            title="A UK postcode, or coordinates pasted from Google Maps (51.4708,-0.4523)"
-            onChange={(e) => setPostcode(e.target.value)}
-          />
-          <button className="primary" disabled={busy || !label.trim() || !postcode.trim()} onClick={() => void addPlace()}>
-            Add
-          </button>
+          </span>
         </div>
-      </section>
+      ))}
+      <div className="fields">
+        <input value={label} placeholder="Label" onChange={(e) => setLabel(e.target.value)} />
+        <input
+          value={postcode}
+          placeholder="Postcode or lat,lon"
+          title="A UK postcode, or coordinates pasted from Google Maps (51.4708,-0.4523)"
+          onChange={(e) => setPostcode(e.target.value)}
+        />
+        <button
+          className="primary"
+          disabled={busy || !label.trim() || !postcode.trim()}
+          onClick={() => void addPlace()}
+        >
+          Add
+        </button>
+      </div>
+    </section>
   );
 }

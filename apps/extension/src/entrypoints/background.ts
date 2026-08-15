@@ -15,7 +15,6 @@ import {
   type ResponseMap,
 } from '@/lib/messages';
 import {
-  addHub,
   addPlace,
   adminProjects,
   adminSetMaxMembers,
@@ -37,7 +36,6 @@ import {
   getSweepKnowledge,
   headcount,
   leaveProject,
-  listHubs,
   listHubSweeps,
   listInvites,
   listMembers,
@@ -52,8 +50,8 @@ import {
   recordProperty,
   redeemInvite,
   recordSightings,
-  removeHub,
   removePlace,
+  updatePlace,
   renameProject,
   resendInvite,
   resolveLocation,
@@ -64,7 +62,6 @@ import {
   setStage,
   setVerdict,
   spendSummary,
-  updateHub,
 } from '@house-hunt/core/db';
 import { logWarn } from '@house-hunt/core';
 
@@ -329,21 +326,10 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
     case 'postcode:point':
       return await locatePostcode(request.postcode);
 
-    // --- hubs ------------------------------------------------------------------------------
-    case 'hubs:list':
-      return await listHubs();
+    case 'places:update':
+      return await updatePlace(request.id, request.patch);
 
-    case 'hubs:add':
-      return await addHub(request.hub);
-
-    case 'hubs:update':
-      return await updateHub(request.id, request.patch);
-
-    case 'hubs:remove':
-      await removeHub(request.id);
-      return null;
-
-    case 'hubs:resolve-location':
+    case 'places:resolve-location':
       return await resolveLocation(request.name);
 
     // --- spend and admin ---------------------------------------------------------------------

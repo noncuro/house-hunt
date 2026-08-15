@@ -1205,7 +1205,6 @@ function Card({
         <HubFact
           point={entry.lat !== null && entry.lon !== null ? { lat: entry.lat, lon: entry.lon } : null}
           hubs={hubs}
-          places={places}
           approximate={!entry.exactLocation}
         />
       </div>

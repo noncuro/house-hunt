@@ -60,13 +60,13 @@ export function Sweep() {
       // project searching Manchester must not be offered another project's five (design D11).
       const [history, list, prefs] = await Promise.all([
         send({ type: 'sweep:hubs' }),
-        send({ type: 'hubs:list' }),
+        send({ type: 'places:list' }),
         send({ type: 'settings:get' }),
       ]);
       if (history.ok) setSweeps(history.data);
       else push(`Couldn't read the sweep history: ${history.error}`);
       if (list.ok) setHubs(sweepableHubs(list.data).map(toSweepHub));
-      else push(`Couldn't read this project's neighbourhoods: ${list.error}`);
+      else push(`Couldn't read this project's places: ${list.error}`);
       if (prefs.ok) setCriteria(prefs.data.search ?? null);
       else push(`Couldn't read what this hunt is looking for: ${prefs.error}`);
     })();

@@ -206,7 +206,11 @@ const MAPS_MODE: Record<TravelMode, string> = {
 };
 
 export function mapsUrl(postcode: string | null, place: Place, mode: TravelMode): string {
-  const destination = place.lat !== null && place.lon !== null ? `${place.lat},${place.lon}` : place.postcode;
+  // Coordinates first, then the postcode. A place with neither is not a destination at all — a
+  // neighbourhood we sweep around — and never reaches here, but an empty `destination` would send
+  // Google Maps a route to nowhere rather than failing, so it is spelled out.
+  const destination =
+    place.lat !== null && place.lon !== null ? `${place.lat},${place.lon}` : (place.postcode ?? '');
   const params = new URLSearchParams({
     api: '1',
     origin: postcode ?? '',

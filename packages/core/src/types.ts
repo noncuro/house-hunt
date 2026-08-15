@@ -121,16 +121,48 @@ export type Laundry = 'in-unit' | 'in-building' | 'none';
 
 export type LightLevel = 'low' | 'medium' | 'high';
 
-/** A place we measure travel time to. Every place is measured in every mode — the panel shows
- *  walking, cycling and transit side by side, so a place no longer picks one. */
+/** Somewhere this hunt cares about: the office, the in-laws, Angel.
+ *
+ *  One row does up to three jobs, and says for itself which it can do.
+ *
+ *    - **Measured to** — every place with a postcode is timed by walking, cycling and transit.
+ *      Every place is measured in every mode; the panel shows all three side by side.
+ *    - **Named on a listing** — every place with coordinates fixes a flat: "0.4 mi NE of Angel".
+ *    - **Swept around** — a place with a Rightmove location *and* a radius is a search centre.
+ *
+ *  This used to be two tables. `project_hub` held the third job and half of the second, and the
+ *  compass merged the two lists on every card. Adding Angel as somewhere to search and somewhere
+ *  to commute from meant typing it twice, into two forms, on two pages. See the
+ *  `places_are_hubs` migration. */
 export interface Place {
   id: string;
   label: string;
-  postcode: string;
+  /** Null for a place that arrived as a neighbourhood — a name resolved to a coordinate and a
+   *  Rightmove identifier, with no postcode in sight. Travel skips a place without one rather than
+   *  routing from the coordinate: the postcode is what TfL is asked about (see AGENTS.md). */
+  postcode: string | null;
   /** Resolved at entry. Journeys route from these, never from the postcode string. */
   lat: number | null;
   lon: number | null;
+  /** `<locationType>^<id>`, e.g. `STATION^4187` — how Rightmove names this place in a search URL.
+   *  Null means we have not verified one, and no search URL is built rather than a guessed one:
+   *  a wrong identifier returns a page of plausible flats somewhere else, which is the failure
+   *  that looks exactly like success. */
+  locationIdentifier: string | null;
+  /** The SEO path segment the identifier was read out of, kept so a wrong one is traceable. Both
+   *  halves are needed before a place is searchable. */
+  displayLocationIdentifier: string | null;
+  /** How far around this place to search, in miles, or null for a place we do not sweep from.
+   *  Never defaulted — a radius nobody chose is a search nobody asked for. */
+  sweepRadiusMiles: number | null;
+  /** A per-place override of the sweep window. Null leaves it to `sweepWindow`, which decides from
+   *  when this place was last swept completely. */
+  maxDaysSinceAdded: number | null;
 }
+
+/** The steps Rightmove's own radius control offers. Stored as the number that goes into the URL,
+ *  so nothing converts on the way out. */
+export const SWEEP_RADII = [0.25, 0.5, 1, 3, 5, 10] as const;
 
 export type TravelMode = 'walking' | 'cycling' | 'transit';
 

@@ -24,11 +24,9 @@ import type {
   AdminUser,
   AuthState,
   Headcount,
-  HubDraft,
   Invite,
   InviteResult,
   LocationResult,
-  ProjectHub,
   ProjectMember,
   ProjectSummary,
   RedeemResult,
@@ -628,7 +626,27 @@ export async function setProjectSettings(preferences: HuntPreferences): Promise<
 // Places.
 // ------------------------------------------------------------------------------------------------
 
-const PLACE_COLUMNS = 'id, label, postcode, lat, lon';
+const PLACE_COLUMNS =
+  'id, label, postcode, lat, lon, rightmove_location_id, display_location_id, sweep_radius_miles, max_days_since_added';
+
+function toPlace(r: any): Place {
+  return {
+    id: r.id,
+    label: r.label,
+    postcode: r.postcode ?? null,
+    lat: r.lat,
+    lon: r.lon,
+    locationIdentifier: r.rightmove_location_id ?? null,
+    displayLocationIdentifier: r.display_location_id ?? null,
+    // Postgres hands `numeric` back as a string, so a radius that survived the round trip would
+    // otherwise compare and format as "1.0" rather than 1 — and reach the URL as a string that
+    // happens to look right until somebody does arithmetic with it.
+    sweepRadiusMiles: r.sweep_radius_miles === null || r.sweep_radius_miles === undefined
+      ? null
+      : Number(r.sweep_radius_miles),
+    maxDaysSinceAdded: r.max_days_since_added ?? null,
+  };
+}
 
 export async function listPlaces(): Promise<Place[]> {
   const projectId = await activeProjectId();
@@ -639,13 +657,7 @@ export async function listPlaces(): Promise<Place[]> {
     .order('sort_order')
     .order('created_at');
   fail('loading places', error);
-  return (data ?? []).map((r: any) => ({
-    id: r.id,
-    label: r.label,
-    postcode: r.postcode,
-    lat: r.lat,
-    lon: r.lon,
-  }));
+  return (data ?? []).map(toPlace);
 }
 
 export async function addPlace(label: string, postcode: string): Promise<Place> {
@@ -664,12 +676,51 @@ export async function addPlace(label: string, postcode: string): Promise<Place> 
     .single();
   fail('adding place', error);
   if (!data) throw new Error('adding place: no row returned');
-  return { id: data.id, label: data.label, postcode: data.postcode, lat: data.lat, lon: data.lon };
+  return toPlace(data);
+}
+
+/** Change what a place is *for*: whether it is swept around, how far, and how often.
+ *
+ *  Deliberately not a general-purpose row patcher. The label and the postcode are what the place
+ *  *is* — changing either means resolving a coordinate again, which `addPlace` does on the way in —
+ *  and everything here is what the hunt *does with* it. */
+export async function updatePlace(
+  id: string,
+  patch: {
+    locationIdentifier?: string | null;
+    displayLocationIdentifier?: string | null;
+    sweepRadiusMiles?: number | null;
+    maxDaysSinceAdded?: number | null;
+  },
+): Promise<Place> {
+  const projectId = await activeProjectId();
+  const row: Record<string, unknown> = {};
+  if (patch.locationIdentifier !== undefined) row.rightmove_location_id = patch.locationIdentifier;
+  if (patch.displayLocationIdentifier !== undefined) {
+    row.display_location_id = patch.displayLocationIdentifier;
+  }
+  if (patch.sweepRadiusMiles !== undefined) row.sweep_radius_miles = patch.sweepRadiusMiles;
+  if (patch.maxDaysSinceAdded !== undefined) row.max_days_since_added = patch.maxDaysSinceAdded;
+  if (Object.keys(row).length === 0) throw new Error('nothing to change about this place');
+
+  const { data, error } = await db()
+    .from('place')
+    .update(row)
+    .eq('id', id)
+    .eq('project_id', projectId)
+    .select(PLACE_COLUMNS)
+    .single();
+  fail('changing a place', error);
+  if (!data) throw new Error('changing a place: no row returned');
+  return toPlace(data);
 }
 
 /** Fill in coordinates for places saved before we resolved them. */
 export async function backfillPlaceCoords(place: Place): Promise<Place> {
   if (place.lat !== null && place.lon !== null) return place;
+  // A place with no postcode arrived as a neighbourhood, resolved by name. There is nothing to
+  // look up, and inventing a coordinate is the one thing this must never do.
+  if (place.postcode === null) return place;
   const point = await locatePostcode(place.postcode);
   if (!point) return place;
   const projectId = await activeProjectId();
@@ -1195,113 +1246,16 @@ export async function recordSightings(hub: string, cards: SearchCard[]): Promise
 // ------------------------------------------------------------------------------------------------
 // Hubs, which are project data now rather than compile-time constants (design D11).
 // ------------------------------------------------------------------------------------------------
-
-// No `last_swept_at` here. It was on both `project_hub` and `hub_sweep`, and one fact in two
-// places is one fact that can disagree with itself — the dangerous direction being a hub that
-// reads swept more recently than it was, which narrows the next window past listings nobody
-// looked at. `hub_sweep` is where it lives, because that is the row that also knows which pages
-// were covered. The column is dropped; selecting it would error on every read.
-const HUB_COLUMNS =
-  'id, name, lat, lon, rightmove_location_id, display_location_id, max_days_since_added, sort_order';
-
-function toProjectHub(r: any): ProjectHub {
-  return {
-    id: r.id,
-    name: r.name,
-    lat: r.lat,
-    lon: r.lon,
-    locationIdentifier: r.rightmove_location_id ?? null,
-    displayLocationIdentifier: r.display_location_id ?? null,
-    maxDaysSinceAdded: r.max_days_since_added ?? null,
-    sortOrder: r.sort_order ?? 0,
-  };
-}
-
-export async function listHubs(): Promise<ProjectHub[]> {
-  const projectId = await activeProjectId();
-  const { data, error } = await db()
-    .from('project_hub')
-    .select(HUB_COLUMNS)
-    .eq('project_id', projectId)
-    .order('sort_order')
-    .order('name');
-  fail('reading this project\'s neighbourhoods', error);
-  return ((data ?? []) as any[]).map(toProjectHub);
-}
-
-export async function addHub(draft: HubDraft): Promise<ProjectHub> {
-  const projectId = await activeProjectId();
-  const name = draft.name.trim();
-  if (!name) throw new Error('a neighbourhood needs a name');
-
-  let lat = draft.lat ?? null;
-  let lon = draft.lon ?? null;
-  if ((lat === null || lon === null) && draft.postcode) {
-    // Same reasoning as `addPlace`: resolve while the person is looking at the field. A hub with
-    // no point silently rotates nothing — it simply cannot answer "what is this listing near" —
-    // but finding that out a week later is worse than finding it out now.
-    const point = await locatePostcode(draft.postcode);
-    if (!point) throw new Error(`"${draft.postcode}" is not a UK postcode we can find — check it?`);
-    lat = point.lat;
-    lon = point.lon;
-  }
-
-  const { data, error } = await db()
-    .from('project_hub')
-    .insert({
-      project_id: projectId,
-      name,
-      lat,
-      lon,
-      rightmove_location_id: draft.locationIdentifier ?? null,
-      display_location_id: draft.displayLocationIdentifier ?? null,
-      max_days_since_added: draft.maxDaysSinceAdded ?? null,
-    })
-    .select(HUB_COLUMNS)
-    .single();
-  fail('adding a neighbourhood', error);
-  if (!data) throw new Error('adding a neighbourhood: no row returned');
-  return toProjectHub(data);
-}
-
-export async function updateHub(id: string, patch: Partial<HubDraft>): Promise<ProjectHub> {
-  const projectId = await activeProjectId();
-  const row: Record<string, unknown> = {};
-  if (patch.name !== undefined) row.name = patch.name.trim();
-  if (patch.lat !== undefined) row.lat = patch.lat;
-  if (patch.lon !== undefined) row.lon = patch.lon;
-  if (patch.locationIdentifier !== undefined) row.rightmove_location_id = patch.locationIdentifier;
-  if (patch.displayLocationIdentifier !== undefined) row.display_location_id = patch.displayLocationIdentifier;
-  if (patch.maxDaysSinceAdded !== undefined) row.max_days_since_added = patch.maxDaysSinceAdded;
-  if (Object.keys(row).length === 0) throw new Error('nothing to change about this neighbourhood');
-
-  const { data, error } = await db()
-    .from('project_hub')
-    .update(row)
-    .eq('id', id)
-    .eq('project_id', projectId)
-    .select(HUB_COLUMNS)
-    .single();
-  fail('changing a neighbourhood', error);
-  if (!data) throw new Error('changing a neighbourhood: no row returned');
-  return toProjectHub(data);
-}
-
-export async function removeHub(id: string): Promise<void> {
-  const projectId = await activeProjectId();
-  const { error } = await db().from('project_hub').delete().eq('id', id).eq('project_id', projectId);
-  fail('removing a neighbourhood', error);
-}
-
-// ------------------------------------------------------------------------------------------------
 // Sweeps.
 // ------------------------------------------------------------------------------------------------
 
 export interface HubSweep {
-  /** The neighbourhood's name, which is how the sweep panel and `search_sighting` both refer to
-   *  it. `hubId` is the `project_hub` row it belongs to. */
+  /** The place's name, which is how the sweep panel and `search_sighting` both refer to it —
+   *  a record of what a search was filed under at the time, not a foreign key, so renaming a place
+   *  does not rewrite history. `placeId` is the `place` row it belongs to, and is null for a sweep
+   *  whose place has since been deleted. */
   hub: string;
-  hubId: string;
+  placeId: string | null;
   /** The last time this hub was swept *completely*, or null for one that has never been. A hub
    *  whose pages are only half recorded is null too: it has no complete sweep to date from, and
    *  `sweepWindow` already reads null as "use the widest window", which is the answer that cannot
@@ -1316,24 +1270,27 @@ export interface HubSweep {
   pagesSeen: number[];
 }
 
-// The embed names its foreign key, and has to. `hub_sweep` has TWO keys onto `project_hub`: the
-// plain `hub_id`, and the composite `(project_id, hub_id)` that stops a sweep pointing at a hub
-// belonging to somebody else's project. Both are wanted. `project_hub!inner(name)` leaves
-// PostgREST to choose between them and it refuses — 300 Multiple Choices, PGRST201 — so every read
-// through these columns failed, which meant the sweep panel recorded 0 of 25 cards and toasted an
-// error on load. Naming the constraint is the whole fix.
+// The embed names its foreign key, and has to. `hub_sweep` has TWO keys onto `place`: the plain
+// `place_id`, and the composite `(project_id, place_id)` that stops a sweep pointing at a place
+// belonging to somebody else's project. Both are wanted. `place!inner(label)` leaves PostgREST to
+// choose between them and it refuses — 300 Multiple Choices, PGRST201 — so every read through
+// these columns failed, which meant the sweep panel recorded 0 of 25 cards and toasted an error on
+// load. Naming the constraint is the whole fix.
 //
 // Nothing but a browser found this. It is invisible to `check:all` (no database) and to
 // `check:rls` (which asks about the boundary, not about embeds), and the failure arrives as a
 // toast rather than an exception, so the page looks like it is working.
 const SWEEP_COLUMNS =
-  'hub_id, last_swept_at, last_result_count, last_window_days, location_identifier, pages_total, pages_seen, project_hub!hub_sweep_hub_id_fkey(name)';
+  'hub, place_id, last_swept_at, last_result_count, last_window_days, location_identifier, pages_total, pages_seen, place!hub_sweep_place_id_fkey(label)';
 
 function toHubSweep(r: any): HubSweep {
-  const hub = Array.isArray(r.project_hub) ? r.project_hub[0] : r.project_hub;
+  const place = Array.isArray(r.place) ? r.place[0] : r.place;
   return {
-    hub: hub?.name ?? '',
-    hubId: r.hub_id,
+    // The place's current label leads, and the name the sweep was filed under is the fallback: a
+    // renamed place should read by its new name, and a deleted one still has to say which search
+    // its pages belong to.
+    hub: place?.label ?? r.hub ?? '',
+    placeId: r.place_id ?? null,
     lastSweptAt: r.last_swept_at,
     lastResultCount: r.last_result_count,
     lastWindowDays: r.last_window_days,
@@ -1353,19 +1310,19 @@ export async function listHubSweeps(): Promise<HubSweep[]> {
   return ((data ?? []) as any[]).map(toHubSweep);
 }
 
-/** The `project_hub` row a sweep is about. Named rather than created: a sweep for a neighbourhood
- *  this project does not have is a sweep against somebody else's search, and inventing the hub
- *  would record it under a name nothing else knows. */
-async function hubIdFor(projectId: string, hub: string, hubId?: string): Promise<string> {
-  if (hubId) return hubId;
+/** The `place` row a sweep is about. Named rather than created: a sweep for a place this project
+ *  does not have is a sweep against somebody else's search, and inventing the place would record it
+ *  under a name nothing else knows. */
+async function placeIdFor(projectId: string, hub: string, placeId?: string): Promise<string> {
+  if (placeId) return placeId;
   const { data, error } = await db()
-    .from('project_hub')
+    .from('place')
     .select('id')
     .eq('project_id', projectId)
-    .eq('name', hub)
+    .eq('label', hub)
     .maybeSingle();
-  fail('finding this neighbourhood', error);
-  if (!data) throw new Error(`"${hub}" is not one of this project's neighbourhoods — add it first`);
+  fail('finding this place', error);
+  if (!data) throw new Error(`"${hub}" is not one of this project's places — add it first`);
   return data.id as string;
 }
 
@@ -1387,15 +1344,15 @@ async function hubIdFor(projectId: string, hub: string, hubId?: string): Promise
 export async function recordSweepPage(
   hub: string,
   details: { page: number; totalPages: number; resultCount: number; windowDays: number; locationIdentifier: string },
-  hubId?: string,
+  placeId?: string,
 ): Promise<HubSweep | null> {
   const projectId = await activeProjectId();
-  const id = await hubIdFor(projectId, hub, hubId);
+  const id = await placeIdFor(projectId, hub, placeId);
 
   const { data: existing, error: readError } = await db()
     .from('hub_sweep')
     .select('pages_total, pages_seen, last_swept_at')
-    .eq('hub_id', id)
+    .eq('place_id', id)
     .maybeSingle();
   fail('reading this hub\'s sweep progress', readError);
 
@@ -1409,7 +1366,10 @@ export async function recordSweepPage(
 
   const sweptAt = complete ? new Date().toISOString() : (existing?.last_swept_at ?? null);
   const row = {
-    hub_id: id,
+    place_id: id,
+    // The name this search was filed under. Kept beside the id rather than derived from it, so a
+    // sweep survives its place being renamed or deleted with a record of what it actually covered.
+    hub,
     project_id: projectId,
     // Only a complete pass sets the mark. A partial one leaves whatever the last complete sweep
     // wrote — usually null — so the next window stays as wide as it needs to be.
@@ -1423,14 +1383,14 @@ export async function recordSweepPage(
 
   const { data, error } = await db()
     .from('hub_sweep')
-    .upsert(row, { onConflict: 'hub_id' })
+    .upsert(row, { onConflict: 'place_id' })
     .select(SWEEP_COLUMNS)
     .single();
   fail('recording sweep progress', error);
   if (!data) return null;
 
-  // The mirror write onto `project_hub.last_swept_at` used to live here. That column is gone: the
-  // sweep row above is the single record of when this neighbourhood was last worked to the end,
+  // The mirror write onto `project_hub.last_swept_at` used to live here. That table is gone: the
+  // sweep row above is the single record of when this place was last worked to the end,
   // and it is the only one that also knows which pages that claim rests on.
   return toHubSweep(data);
 }

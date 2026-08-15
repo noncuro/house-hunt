@@ -15,8 +15,7 @@ import type {
   Invite,
   InviteResult,
   LocationResult,
-  ProjectHub,
-  HubDraft,
+  PlacePatch,
   ProjectMember,
   ProjectSummary,
   RedeemResult,
@@ -50,11 +49,9 @@ export type {
   AnalysisRequest,
   AuthState,
   Headcount,
-  HubDraft,
   Invite,
   InviteResult,
   LocationResult,
-  ProjectHub,
   ProjectMember,
   ProjectSummary,
   RedeemResult,
@@ -117,6 +114,7 @@ export type Request =
   | { type: 'off-market:set'; rightmoveId: string; off: boolean; reason?: string }
   | { type: 'places:list' }
   | { type: 'places:add'; label: string; postcode: string }
+  | { type: 'places:update'; id: string; patch: PlacePatch }
   | { type: 'places:remove'; id: string }
   | { type: 'travel:get'; postcode: string; refresh?: boolean }
   | { type: 'travel:cached'; postcodes: string[] }
@@ -128,11 +126,7 @@ export type Request =
    *  panel; scoring itself is pure arithmetic, done in the content script against these weights. */
   | { type: 'model:get' }
   // --- hubs --------------------------------------------------------------------------------
-  | { type: 'hubs:list' }
-  | { type: 'hubs:add'; hub: HubDraft }
-  | { type: 'hubs:update'; id: string; patch: Partial<HubDraft> }
-  | { type: 'hubs:remove'; id: string }
-  | { type: 'hubs:resolve-location'; name: string }
+  | { type: 'places:resolve-location'; name: string }
   // --- spend -------------------------------------------------------------------------------
   | { type: 'spend:summary' }
   // --- admin -------------------------------------------------------------------------------
@@ -220,6 +214,7 @@ export interface ResponseMap {
   'off-market:set': null;
   'places:list': Place[];
   'places:add': Place;
+  'places:update': Place;
   'places:remove': null;
   'travel:get': TravelTime[];
   /** Postcode -> the times already in the cache. Never calls TfL, so a gap stays a gap. */
@@ -235,11 +230,7 @@ export interface ResponseMap {
   'analysis:request': AnalysisRequest;
   'model:get': StoredModel | null;
 
-  'hubs:list': ProjectHub[];
-  'hubs:add': ProjectHub;
-  'hubs:update': ProjectHub;
-  'hubs:remove': null;
-  'hubs:resolve-location': LocationResult;
+  'places:resolve-location': LocationResult;
 
   'spend:summary': SpendSummary;
 
