@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { EXPECTED_EXTENSION_VERSION } from '../apps/web/src/lib/extension-version';
-import { ROOT, STAMP, ZIP, stampNow, type Stamp } from './package-stamp';
+import { ROOT, STAMP, ZIP, hashOf, stampNow, type Stamp } from './package-stamp';
 
 let failures = 0;
 function check(what: string, got: unknown, want: unknown): void {
@@ -43,10 +43,26 @@ check('carries the version the website expects', manifest.version, EXPECTED_EXTE
 const pkg = JSON.parse(readFileSync(resolve(ROOT, 'apps/extension/package.json'), 'utf8'));
 check("and the extension's own package.json agrees", pkg.version, EXPECTED_EXTENSION_VERSION);
 
-console.log('\nand was built from the code in this commit');
-
 const stamped: Stamp = JSON.parse(readFileSync(STAMP, 'utf8'));
 check('the stamp is of the same version', stamped.version, EXPECTED_EXTENSION_VERSION);
+
+console.log('\nand the stamp is of this archive');
+
+// `unzip -Z1` lists the entries; directory entries end in a slash and hold nothing.
+const entries = execFileSync('unzip', ['-Z1', ZIP], { encoding: 'utf8' })
+  .split('\n')
+  .map((l) => l.trim())
+  .filter((l) => l && !l.endsWith('/'));
+const inZip = Object.fromEntries(
+  entries.map((name) => [name, hashOf(execFileSync('unzip', ['-p', ZIP, name], { maxBuffer: 64 << 20 }))]),
+);
+const wrong = Object.keys({ ...inZip, ...stamped.contents }).filter(
+  (name) => inZip[name] !== stamped.contents[name],
+);
+check('every file in it is the one that was stamped', wrong.length, 0);
+if (wrong.length > 0) for (const name of wrong.slice(0, 8)) console.log(`         ${name}`);
+
+console.log('\nand was built from the code in this commit');
 
 const now = stampNow();
 // Named individually, because "the zip is stale" and "the zip is stale *and here is what changed*"
