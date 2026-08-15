@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /** Pages, and how many rows go on one.
  *
@@ -60,6 +60,37 @@ export interface Paging {
   setPage: (page: number) => void;
 }
 
+/** A request to bring one item of a list into view: where it sits in that list, or -1 when it is
+ *  not in this list at all, and a token identifying the *asking*.
+ *
+ *  Two dependencies because there are two ways this has to retrigger and neither covers the other.
+ *  The index alone misses a second click on the same pin — the number is equal, so React sees
+ *  nothing to do, and following a link back to a flat you had paged away from does nothing at all.
+ *  The token alone misses the list moving underneath: a refetch that drops six earlier flats leaves
+ *  the same request pointing at an index six too high, so the pager turns to a page the flat is not
+ *  on and the scroll expires against a card that was never rendered.
+ *
+ *  So: the index is recomputed on every render and compared by value, which costs a `findIndex` on
+ *  a list already in memory and is silent when nothing moved; the token is a fresh object per ask
+ *  and compared by identity. */
+export interface Reveal {
+  index: number;
+  /** Whatever the caller uses to mean "this particular ask". Compared by identity, never read. */
+  token: unknown;
+  /** Withdraw the request, because the reader has taken the wheel.
+   *
+   *  A request stays live until then, and that is deliberate: the list moves underneath — a refetch
+   *  drops six earlier flats and the target is six rows up — and while the reader is still looking
+   *  at where they were sent, following that shift is the whole job. Once they have turned a page
+   *  themselves, the same shift would haul them back to a flat they had finished with.
+   *
+   *  Spending it belongs to whoever holds the request rather than to the list that answered it. The
+   *  ask is one flat against four piles, only one of which has it; a pile that recorded "spent" for
+   *  itself would leave the other three still willing to obey a request the reader had already
+   *  overridden, and the flat only has to change verdict for one of them to act on it. */
+  spend?: () => void;
+}
+
 /** One list's slice of its items, and the state the pager below needs to draw itself.
  *
  *  The page is clamped rather than reset. Filtering the shortlist down to "viewed" while sitting on
@@ -67,8 +98,8 @@ export interface Paging {
  *  filter matching nothing. */
 export function usePaging<T>(
   items: T[],
-  /** Bring one item onto the visible page, by its index in `items` — the answer to "jump to this
-   *  flat" from somewhere that is not this list.
+  /** Bring one item onto the visible page — the answer to "jump to this flat" from somewhere that
+   *  is not this list.
    *
    *  A list that pages is a list where most of its own contents are not in the document, and every
    *  jump into it was written before that was true. Clicking a map pin set the view to the list and
@@ -77,27 +108,62 @@ export function usePaging<T>(
    *  top of the shortlist looking like the click had done nothing but change tabs. Paging is state
    *  this hook owns, so reaching it has to be something the hook offers.
    *
-   *  Passed as an index rather than a predicate because the caller already knows where the item is
-   *  — it has just searched the list to decide whether to jump at all — and -1/undefined is the
-   *  natural "not in this list", which every pile but one will be answering. */
-  reveal?: number,
+   *  Carries an index rather than a predicate because the caller already knows where the item is —
+   *  it has just searched the list to decide whether to jump at all — and -1/null is the natural
+   *  "not in this list", which every pile but one will be answering. */
+  reveal?: Reveal | null,
 ): Paging & { shown: T[] } {
   const [size, setSize] = useState<PageSize>(() =>
     typeof window === 'undefined' ? DEFAULT_PAGE_SIZE : readStored(),
   );
   const [page, setPage] = useState(0);
 
+  /** Page to whatever has been asked for. A link into a list — a map pin, a compare row, a
+   *  `#card-…` address — used to scroll to nothing whenever the flat was past the first page,
+   *  because a card on page three is not in the document to scroll to. */
+  const index = reveal?.index ?? -1;
+  const token = reveal?.token;
+
+  // Two values the effects below need but must not depend on: the page size, because changing it
+  // would otherwise count as a fresh request to reveal something and undo the jump to page one, and
+  // the withdrawal, because it is a fresh closure on every render.
+  //
+  // Written in an effect rather than during the render that produced them. A render can be started
+  // and thrown away — React abandons one to serve something more urgent — and a ref assigned on the
+  // way past keeps the value from a render that never happened. Assigning at commit means these
+  // always hold what is actually on screen.
+  const latest = useRef({ size, spend: reveal?.spend });
   useEffect(() => {
-    if (reveal === undefined || reveal < 0) return;
-    setPage(Math.floor(reveal / size));
-  }, [reveal, size]);
+    latest.current = { size, spend: reveal?.spend };
+  });
+
+  /** The reader takes the wheel: turn to `next`, and withdraw whatever request is outstanding.
+   *  Reads the withdrawal from this render rather than the ref — it runs from an event handler on a
+   *  render that has certainly committed. */
+  const spend = reveal?.spend;
+  const steer = (next: number) => {
+    setPage(next);
+    spend?.();
+  };
+
+  useEffect(() => {
+    if (index < 0) return;
+    setPage(Math.floor(index / latest.current.size));
+    // `reveal` itself is deliberately not a dependency: the caller builds it fresh on every render,
+    // so depending on the object would page a reader back to the last flat anybody followed a link
+    // to every time anything on the page changed. Its two halves are what actually mean something.
+  }, [index, token]);
 
   useEffect(() => {
     const onChange = (next: PageSize) => {
       setSize(next);
       // Twenty-five to a hundred means page three no longer exists, and the row you were looking at
-      // is on page one now anyway.
+      // is on page one now anyway. That is the reader choosing a page, so it spends the request
+      // too: without that, a later shift of the list would move them off the page they had just
+      // asked to be on. Through the ref: this listener is registered once, so the withdrawal it
+      // closed over at mount is the one from before anything had been asked.
       setPage(0);
+      latest.current.spend?.();
     };
     listeners.add(onChange);
     return () => {
@@ -113,7 +179,9 @@ export function usePaging<T>(
     pages,
     size,
     total: items.length,
-    setPage,
+    // Wrapped, so that turning a page by hand withdraws whatever request is outstanding — see
+    // `Reveal.spend`. Everything that reaches this is the reader: the pager's own buttons.
+    setPage: steer,
   };
 }
 
