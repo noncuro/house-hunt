@@ -7,6 +7,7 @@
  *  show the most trustworthy one, mark it, and put the rest one hover away. */
 
 import type { Confidence, Laundry, LightLevel } from './types';
+import type { SweepCriteria } from './sweep';
 
 export interface Candidate {
   /** Where the number came from, in words — this is what the tooltip shows. */
@@ -280,6 +281,10 @@ export interface HuntPreferences {
   /** Per amenity, whether the hunt must have it or would merely like it. Absent means "don't mind",
    *  which is the default behaviour these flags already had. */
   amenities?: Partial<Record<AmenityKey, AmenityWant>>;
+  /** The Rightmove filters a sweep runs with — see `SweepCriteria`. Absent means the criteria this
+   *  project swept with before any of them were choosable, so nothing changes for a hunt that has
+   *  never set them. */
+  search?: SweepCriteria;
 }
 
 /** A station distance in the unit Rightmove actually supplied.
@@ -506,7 +511,30 @@ export function flagsFor({ analysis, floorplanUrl }: FlagSource, prefs?: HuntPre
   }
 
   applyAmenityWants(flags, analysis, prefs);
-  return flags;
+  return forgetAmenitiesNobodyMinds(flags, prefs);
+}
+
+/** Drop every flag about an amenity this hunt said it does not mind about.
+ *
+ *  The Your Hunt page offers three answers per amenity — don't mind, nice to have, must have — and
+ *  until now the first of them did nothing at all. A hunt that had explicitly said it did not care
+ *  about a bathtub still got "no bathtub" in amber on every panel, which is the settings screen and
+ *  the panel disagreeing in writing about what the hunt is looking for. Told twice a day, on a flat
+ *  you have no objection to, that it lacks a thing you said you did not want, the flags stop being
+ *  read at all — and the ones that matter go with them.
+ *
+ *  The consequence worth stating: a hunt that has never opened the preferences has every amenity at
+ *  "don't mind", so it gets no amenity flags. That is the same sentence as above and it is the
+ *  honest default — the screen says "don't mind" for all six before anyone touches it, and a panel
+ *  contradicting that was the bug. The flags this never touches are the ones that are not a matter
+ *  of preference: no floorplan, an unreadable floorplan, the size against the great-room bar.
+ */
+function forgetAmenitiesNobodyMinds(flags: Flag[], prefs: HuntPreferences | undefined): Flag[] {
+  const minded = new Set(
+    AMENITIES.filter((a) => prefs?.amenities?.[a.key]).map((a) => a.flagKey),
+  );
+  const optional = new Set(AMENITIES.map((a) => a.flagKey));
+  return flags.filter((f) => !optional.has(f.key) || minded.has(f.key));
 }
 
 /** How much each amenity the hunt named actually matters to it, layered on top of the default flags.

@@ -152,15 +152,22 @@ export type Request =
    *  has to have landed before the "safe to page on" tick can be honest. */
   | {
       type: 'sweep:record';
-      /** The hub's name, as the search page was opened under. Resolved to a `project_hub` row in
-       *  the active project; `hubId` short-circuits that when the caller already has it. */
+      /** What to file these sightings under. Normally a neighbourhood's name, resolved to a
+       *  `project_hub` row in the active project (`hubId` short-circuits that when the caller
+       *  already has it) — but for a search nobody has adopted it is simply the location Rightmove
+       *  named, and no row is looked up at all. See `progress`. */
       hub: string;
       hubId?: string;
       cards: SearchCard[];
       /** Where in the sweep this page is. Carried with the cards rather than sent separately: a
        *  panel that recorded the last page and then failed to say so would leave the hub forever
-       *  one page short of swept, with nothing on screen looking wrong. */
-      progress: {
+       *  one page short of swept, with nothing on screen looking wrong.
+       *
+       *  Null for a search that is not one of this project's neighbourhoods. Those are recorded —
+       *  the cards are the same cards, and the sightings are worth having — but there is nothing to
+       *  be part-way through: sweep progress is pages-seen against a hub, and a search somebody ran
+       *  once has no hub and no next time to compare against. */
+      progress: null | {
         page: number;
         totalPages: number;
         resultCount: number;

@@ -1,7 +1,8 @@
 /** Cases for the fact-resolution logic: which source wins, what counts as a conflict, and how
  *  a listing date reads back as elapsed time. These are pure functions, so they are cheap to
  *  pin down — and both are places where being quietly wrong looks exactly like being right. */
-import { claimLabel, relativeUpdate, resolveReading } from '../packages/core/src/facts';
+import { claimLabel, flagsFor, relativeUpdate, resolveReading } from '../packages/core/src/facts';
+import type { Analysis } from '../packages/core/src/types';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -81,6 +82,58 @@ check('a present bath hedges the same way', claimLabel('bathtub-present', 'low')
 check('rooms hedge too', claimLabel('rooms-small', 'medium'), 'rooms look small');
 // Analyses predating the confidence field return null, and those were mostly floorplan reads.
 check('no confidence reads as high', claimLabel('outdoor-absent', null), 'no outdoor space');
+
+// ------------------------------------------------------------------------------------------- //
+console.log('\namenity flags follow what the hunt actually said');
+
+/** An analysis with everything unknown but the one field a case is about. */
+function analysis(fields: Partial<Analysis>): Analysis {
+  return {
+    model: 'test', analysedAt: '', imageCount: 0,
+    hasFloorplan: true, floorplanLegible: null, floorplanSqft: null, floorplanSqftSource: null,
+    floorplanConfidence: null, bedrooms: null, bathrooms: null,
+    biggestRoomLabel: null, biggestRoomSqft: null, biggestRoomConfidence: null,
+    hasBathtub: null, bathtubConfidence: null,
+    hasOutdoorSpace: null, outdoorKind: null, outdoorSqft: null, outdoorIsEstimate: null,
+    outdoorConfidence: null, isHouseShare: null, houseShareConfidence: null,
+    laundry: null, laundryConfidence: null, hasDishwasher: null, dishwasherConfidence: null,
+    bedInKitchen: null, bedInKitchenConfidence: null, utilitiesIncluded: null, utilitiesConfidence: null,
+    naturalLight: null, naturalLightConfidence: null, summary: null,
+    ...fields,
+  };
+}
+
+const noBath = { analysis: analysis({ hasBathtub: false }), floorplanUrl: 'plan.png' };
+const keys = (prefs?: Parameters<typeof flagsFor>[1]) => flagsFor(noBath, prefs).map((f) => f.key);
+
+// The complaint this exists for: the Your Hunt page offers "Don't mind" and it used to do nothing,
+// so a hunt that had said it did not care still got "no bathtub" on every panel.
+check('an amenity nobody minds is not flagged', keys({ amenities: {} }).includes('bathtub'), false);
+check(
+  'and neither is one on a hunt that has set no preferences at all',
+  keys(undefined).includes('bathtub'),
+  false,
+);
+check('"nice to have" brings it back', keys({ amenities: { bathtub: 'nice' } }).includes('bathtub'), true);
+check('so does "must have"', keys({ amenities: { bathtub: 'must' } }).includes('bathtub'), true);
+check(
+  'and a must-have absence is red',
+  flagsFor(noBath, { amenities: { bathtub: 'must' } }).find((f) => f.key === 'bathtub')?.severity,
+  'red',
+);
+// Saying you want a bathtub must not silence everything else you did not mention.
+check(
+  'one preference does not turn the others on',
+  keys({ amenities: { bathtub: 'must' } }).includes('outdoor'),
+  false,
+);
+// The flags that are not a matter of taste stay regardless — a missing floorplan is missing
+// whatever anybody prefers.
+check(
+  'a missing floorplan is not a preference',
+  flagsFor({ analysis: analysis({ hasFloorplan: false }), floorplanUrl: null }, undefined).map((f) => f.key),
+  ['floorplan'],
+);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

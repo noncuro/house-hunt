@@ -69,19 +69,31 @@ export function Sweep() {
   // the cheap, safe half — it writes down what Rightmove already showed us — and making it a
   // button would mean the common case is a page that was looked at and never captured.
   useEffect(() => {
-    if (!page || !hub) return;
+    // `hubs === null` is still reading, not "no neighbourhoods". Recording before that answer lands
+    // would file the page under the search's own name and then, a moment later, file it again under
+    // the neighbourhood it turns out to be — two sightings rows for one page, differing only in a
+    // column nothing displays, and one of them permanently wrong.
+    if (!page || hubs === null) return;
     void (async () => {
       const reply = await send({
         type: 'sweep:record',
-        hub: hub.name,
+        // A search that is not one of this project's neighbourhoods is recorded under its own name.
+        // It used to be refused outright, which threw away the cards on the grounds that nobody had
+        // added the area first — but the cards are the same cards, the sightings are the same
+        // sightings, and "I found somewhere worth looking while browsing" is how a neighbourhood
+        // gets added in the first place. Requiring the setup before the thing it is for is exactly
+        // backwards. What an unadopted search does not get is sweep progress: see `progress` below.
+        hub: hub?.name ?? page.locationName,
         cards: page.cards,
-        progress: {
-          page: page.page,
-          totalPages: page.totalPages,
-          resultCount: page.resultCount,
-          windowDays: page.maxDaysSinceAdded ?? WIDEST_WINDOW,
-          locationIdentifier: page.locationIdentifier,
-        },
+        progress: hub
+          ? {
+              page: page.page,
+              totalPages: page.totalPages,
+              resultCount: page.resultCount,
+              windowDays: page.maxDaysSinceAdded ?? WIDEST_WINDOW,
+              locationIdentifier: page.locationIdentifier,
+            }
+          : null,
       });
       if (reply.ok) {
         setKnowledge(reply.data.knowledge);
@@ -89,7 +101,7 @@ export function Sweep() {
       } else push(`Couldn't record this page: ${reply.error}`);
     })();
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, hub]);
+  }, [page, hub, hubs]);
 
   // Rightmove pages between results without reloading the document, which leaves __NEXT_DATA__
   // describing the page you are no longer on. Watching for ids we have never heard of is how that
@@ -170,11 +182,13 @@ export function Sweep() {
         </p>
       )}
 
-      {hubs !== null && hubs.length > 0 && !hub && (
-        <p className="rm-sweep-warn">
-          This search is <strong>{page!.locationName}</strong> ({page!.locationIdentifier}), which is
-          not one of this project's neighbourhoods, so nothing here has been recorded. Open one of
-          the sweeps below.
+      {hubs !== null && !hub && page && (
+        <p className="rm-sweep-note">
+          Recorded under <strong>{page.locationName}</strong> ({page.locationIdentifier}), which is
+          not one of this project&rsquo;s neighbourhoods. Everything on this page has been written
+          down and will turn up in the fill-in run — what a one-off search does not get is a sweep
+          to be part-way through, so there is no &ldquo;safe to page on&rdquo; and no window since
+          last time. Add it as a neighbourhood if you mean to come back to it.
         </p>
       )}
 
