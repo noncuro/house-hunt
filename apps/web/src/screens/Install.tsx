@@ -126,7 +126,11 @@ function OneLiner() {
 
   useEffect(() => setOrigin(window.location.origin), []);
 
-  const command = origin ? `curl -fsSL ${origin}/install.sh | bash -s -- ${origin}` : '';
+  // Both interpolations are quoted for the shell that will run them. An ordinary DNS origin needs
+  // no quotes, and an IPv6 one — `http://[::1]:3100` — is a glob: bash expands the brackets against
+  // the caller's working directory, and a matching filename there silently rewrites both the URL
+  // curl fetches and the address the script is told to install from.
+  const command = origin ? `curl -fsSL "${origin}/install.sh" | bash -s -- "${origin}"` : '';
 
   return (
     <section className="setting">

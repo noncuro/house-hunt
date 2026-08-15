@@ -26,9 +26,9 @@
  *  leaves the counts `table` and `triage` assert unchanged — so no section is quietly reading state
  *  an earlier one left behind.
  */
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
 import {
   createInvite,
@@ -621,7 +621,10 @@ async function checkTabs({ page }: Stage): Promise<void> {
     // The one-liner is built from `window.location.origin` after mount, so a landmark that includes
     // this run's own origin says both that the section rendered and that it addressed the site the
     // reader is on rather than a baked-in one.
-    ['install', ['Install the browser extension', `curl -fsSL ${ORIGIN}/install.sh`]],
+    // The whole line, not its first half. What the reader copies is the argument as much as the
+    // URL — the script refuses to guess an origin — so an assertion that stopped at the curl would
+    // pass on a line that downloads the installer and then tells it nothing.
+    ['install', ['Install the browser extension', `curl -fsSL "${ORIGIN}/install.sh" | bash -s -- "${ORIGIN}"`]],
   ] as const) {
     await openView(page, view);
     // Case-insensitively, because `innerText` returns text as *rendered* and these headings are
@@ -634,14 +637,67 @@ async function checkTabs({ page }: Stage): Promise<void> {
     await page.screenshot({ path: resolve(SHOTS, `web-${view}.png`), fullPage: true });
   }
 
-  // Both files the install tab hands out, fetched rather than read off disk: they are committed
-  // static assets, and a command that 404s looks exactly like a working one until it is run. The
-  // landmark above only says the line was drawn.
-  for (const path of ['/install.sh', '/rightmove-house-hunt.zip']) {
-    const res = await page.request.get(`${ORIGIN}${path}`);
-    console.log(`${path}: ${res.ok() ? 'ok' : `${res.status()}`}`);
-    if (!res.ok()) note(`${path} is not served (${res.status()}) — the install tab points people at it`);
+  await checkInstallAssets(page);
+}
+
+/** The two files the install tab hands out, fetched rather than read off disk: they are committed
+ *  static assets, and a command that 404s looks exactly like a working one until it is run. The
+ *  landmark above only says the line was drawn.
+ *
+ *  A status code is not enough on its own, and both ways of being wrong are ones a static host
+ *  produces by itself. A rewrite rule that swallowed `/install.sh` answers the app's HTML with 200,
+ *  which pipes into bash and does nothing anybody asked for; a zip that lost its contents is still
+ *  a 200 of some length. So each is opened: the script has to be a script and has to end on the
+ *  line that makes a truncated download harmless, and the archive has to be an archive holding the
+ *  files its own manifest asks Chrome to load — which is the same question `install.sh` puts to it
+ *  before replacing anybody's copy, asked here of the copy actually being served. */
+async function checkInstallAssets(page: Page): Promise<void> {
+  const script = await page.request.get(`${ORIGIN}/install.sh`);
+  console.log(`/install.sh: ${script.ok() ? 'ok' : script.status()}`);
+  if (!script.ok()) {
+    note(`/install.sh is not served (${script.status()}) — the install tab points people at it`);
+  } else {
+    const body = await script.text();
+    if (!body.startsWith('#!')) note('/install.sh is served but is not a script — no shebang, so something else is answering that path');
+    else if (!body.includes('rightmove-house-hunt.zip')) note('/install.sh is served but never mentions the zip — that is not the installer');
+    // `curl | bash` runs what has arrived, so the installer does its work inside a function called
+    // on the last line. Lose that line and a half-downloaded script still runs half an install.
+    else if (!/\nmain "\$@"\n?$/.test(body)) note('/install.sh does not end on `main "$@"` — a truncated download would execute part of it');
   }
+
+  const archive = await page.request.get(`${ORIGIN}/rightmove-house-hunt.zip`);
+  console.log(`/rightmove-house-hunt.zip: ${archive.ok() ? 'ok' : archive.status()}`);
+  if (!archive.ok()) {
+    note(`/rightmove-house-hunt.zip is not served (${archive.status()}) — the install tab points people at it`);
+    return;
+  }
+  const bytes = await archive.body();
+  // The local-file-header signature rather than just `PK`: an archive with nothing in it starts
+  // PK\x05\x06, and an empty archive is one of the two things this is here to catch.
+  if (bytes.subarray(0, 4).toString('latin1') !== 'PK\x03\x04') {
+    note('/rightmove-house-hunt.zip does not begin with a zip entry — an error page, or an archive with nothing in it, looks like this');
+    return;
+  }
+
+  const saved = resolve(SHOTS, 'served-extension.zip');
+  writeFileSync(saved, bytes);
+  const names = new Set(
+    execFileSync('unzip', ['-Z1', saved], { encoding: 'utf8' }).split('\n').filter(Boolean),
+  );
+  if (!names.has('manifest.json')) {
+    note('the served zip has no manifest.json — Chrome would refuse to load it');
+    return;
+  }
+  // Chrome manifests spell asset paths as ordinary strings; a leading slash means the extension
+  // root. Same reading as `install.sh`'s, and deliberately so — if this is wrong, so is that.
+  const manifest = execFileSync('unzip', ['-p', saved, 'manifest.json'], { encoding: 'utf8' });
+  const refs = [
+    ...new Set((manifest.match(/"[^"]*\.(?:js|css|png|html)"/g) ?? []).map((s) => s.slice(1, -1).replace(/^\//, ''))),
+  ];
+  const missing = refs.filter((ref) => !names.has(ref));
+  console.log(`served zip: ${refs.length} files referenced, ${missing.length} missing`);
+  if (refs.length === 0) note('the served zip\'s manifest.json references no scripts or icons at all');
+  for (const ref of missing) note(`the served zip's manifest.json asks Chrome to load ${ref}, which is not in the zip`);
 }
 
 /** The two refusals a person actually meets, and which sentence each one gets.
