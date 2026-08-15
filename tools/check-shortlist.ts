@@ -41,12 +41,21 @@ check('and not knowing yet hides nothing', ids(withoutOffMarket(entries, null, f
 // The point of the whole design: hiding is a decision one view makes about what to draw, not a
 // write. A verdict that came back different from this would be the score model learning the
 // opposite of what happened.
+//
+// Asserted on the *hiding* path — `show: true` returns the input array untouched, so asserting
+// against that would pass whatever the branch that does the work did to the entries it kept.
 check(
-  'the verdict is untouched by hiding',
-  withoutOffMarket(entries, gone, true).map((e) => groupOf(e.verdicts)),
-  ['excited', 'excited', 'unrated'],
+  'the verdicts that survive hiding are unchanged',
+  withoutOffMarket(entries, gone, false).map((e) => groupOf(e.verdicts)),
+  ['excited', 'unrated'],
 );
-check('and the entries themselves are the same objects', withoutOffMarket(entries, gone, true)[1] === entries[1], true);
+check(
+  'and they are the same objects, not copies',
+  withoutOffMarket(entries, gone, false).every((e, i) => e === [entries[0], entries[2]][i]),
+  true,
+);
+// Nothing is lost by hiding: the flat is still there to be shown again, with everything it had.
+check('the hidden flat is intact when it comes back', withoutOffMarket(entries, gone, true)[1], entries[1]);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

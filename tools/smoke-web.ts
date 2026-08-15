@@ -411,6 +411,10 @@ async function checkFunnel({ page }: Stage): Promise<void> {
  *
  *  Ends by putting the flat back, because the sections after this one count what is on screen. */
 async function checkOffMarket({ page }: Stage): Promise<void> {
+  // Read before anything is hidden, so the table assertion below compares against this run's own
+  // number rather than a literal that a change to the fixture would quietly make meaningless.
+  await openView(page, 'table');
+  const tableRows = await page.locator('table tbody tr').count();
   await openView(page, 'list');
   const id = fixtureId(4);
   const card = page.locator(`#card-${id}`);
@@ -431,7 +435,23 @@ async function checkOffMarket({ page }: Stage): Promise<void> {
   await line
     .waitFor({ timeout: 10_000 })
     .catch(() => note('nothing on the shortlist said anything had been hidden'));
-  console.log(`off the market: ${(await line.innerText().catch(() => '')).trim()}`);
+  const said = (await line.innerText().catch(() => '')).trim();
+  console.log(`off the market: ${said}`);
+  // The number, not merely the sentence. It is counted over what this view would otherwise show,
+  // and a count taken over the whole hunt instead reads as a lie the moment the funnel is filtered.
+  if (!said.startsWith('1 off the market, hidden')) {
+    note(`the shortlist says "${said}"; one flat was marked off the market`);
+  }
+
+  // Every view here reads the same list, so a flat hidden from the cards has to be gone from the
+  // compare table too — one still offering it is the same bug in another tab.
+  await openView(page, 'table');
+  const rows = await page.locator('table tbody tr').count();
+  console.log(`table: ${tableRows} row(s) before, ${rows} while hidden`);
+  if (rows !== tableRows - 1) {
+    note(`the compare table drew ${rows} rows with one flat hidden; it drew ${tableRows} before`);
+  }
+  await openView(page, 'list');
 
   const reason = await settleOn(() => offMarketReason(id), (r) => r !== null);
   if (reason === null) note(`${id} is hidden on screen but has no training_exclusion row`);

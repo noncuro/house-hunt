@@ -271,21 +271,18 @@ function App({
   // under the tally says how many, and shows them again — see `withoutOffMarket`.
   const [showOffMarket, setShowOffMarket] = useState(false);
   const offMarket = offMarketQuery.data ?? null;
-  const entries = useMemo(
-    () =>
-      all === null
-        ? null
-        : withoutOffMarket(
-            all.filter((e) => matchesStage(e.stage, stageFilter)),
-            offMarket,
-            showOffMarket,
-          ),
-    [all, stageFilter, offMarket, showOffMarket],
+  const inFunnel = useMemo(
+    () => (all === null ? null : all.filter((e) => matchesStage(e.stage, stageFilter))),
+    [all, stageFilter],
   );
-  // Over the whole hunt, not over `entries`, and not over the piles: the sentence offering to show
-  // them has to be there whatever else is filtered, or the only way back to a flat you hid is to
-  // clear the funnel filter first and work out why it reappeared.
-  const hiddenOffMarket = offMarket === null ? 0 : (all ?? []).filter((e) => offMarket.has(e.rightmoveId)).length;
+  const entries = useMemo(
+    () => (inFunnel === null ? null : withoutOffMarket(inFunnel, offMarket, showOffMarket)),
+    [inFunnel, offMarket, showOffMarket],
+  );
+  // Counted over what this view would otherwise be showing, not over the whole hunt. The hunt-wide
+  // number is the one that reads as a lie: filter to "viewed" with one of two gone flats viewed and
+  // the sentence says two are hidden, then showing them produces one.
+  const offMarketHere = offMarket === null ? 0 : (inFunnel ?? []).filter((e) => offMarket.has(e.rightmoveId)).length;
   const places = placesQuery.data ?? [];
   // A stored filter can name a place somebody has since deleted, and a bar with no place is one the
   // panel cannot draw and nobody can clear. Pruned on the way in rather than on the way out of
@@ -351,8 +348,13 @@ function App({
     // funnel filter, which can exclude the flat outright, and paging, which renders twenty-five of
     // two hundred — so a map pin for anything below the first page scrolled to an element that was
     // never in the document.
+    //
+    // And the fourth: being off the market, which is a link to a flat somebody has since marked
+    // gone — the one link most likely to be followed, because "is this one still going?" is why you
+    // would open it again.
     const entry = byId.get(id);
     if (entry && !matchesStage(entry.stage, stageFilter)) setStageFilter('all');
+    if (offMarket?.has(id)) setShowOffMarket(true);
     // The ask carries its own withdrawal, so that the pile that answers it and the three that do
     // not all cancel the same request the moment the reader turns a page — see `Reveal.spend`.
     setReveal({ id, spend: () => setReveal(null) });
@@ -425,7 +427,10 @@ function App({
    *  scrolling away and toggling a pile does not yank you back. */
   const jumped = useRef<string | null>(null);
   useEffect(() => {
-    if (!all) return;
+    // Waits for the off-market read as well as the shortlist. A flat somebody has marked gone is
+    // not drawn, so jumping before that read lands either scrolls to a card that is about to be
+    // removed or, if it lands first, to one that was never there.
+    if (!all || offMarketQuery.isPending) return;
     const id = /^#card-(\d+)$/.exec(window.location.hash)?.[1];
     if (!id || jumped.current === id) return;
     const entry = all.find((e) => e.rightmoveId === id);
@@ -436,7 +441,7 @@ function App({
     if (!matchesStage(entry.stage, stageFilter)) setStageFilter('all');
     openCard(id, groupOf(entry.verdicts));
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [all]);
+  }, [all, offMarketQuery.isPending]);
   // Every entry's P(yes) under the current model, computed once and shared by the cards, the
   // triage sort and the mismatch marker. Null while there is no model (never trained, or too few
   // verdicts) — the UI then simply shows no scores rather than an error.
@@ -580,13 +585,22 @@ function App({
             {/* Hidden, and said so. A flat that vanishes with no account of where it went is the
                 shortlist looking broken, and the way back to one has to be on the screen it left
                 rather than in Settings. */}
-            {hiddenOffMarket > 0 && (
+            {offMarketHere > 0 && (
               <span data-testid="off-market-hidden">
                 {' '}
-                {hiddenOffMarket} off the market{showOffMarket ? ', shown' : ', hidden'}.{' '}
+                {offMarketHere} off the market{showOffMarket ? ', shown' : ', hidden'}.{' '}
                 <button className="linkish" onClick={() => setShowOffMarket(!showOffMarket)}>
                   {showOffMarket ? 'Hide them' : 'Show them'}
                 </button>
+              </span>
+            )}
+            {/* Failing open is right — hiding flats on a read that did not answer is the worse of
+                the two mistakes — but doing it silently puts the reported bug back and makes the
+                screen look authoritative about it. */}
+            {offMarketQuery.isError && (
+              <span className="error-inline" data-testid="off-market-unknown">
+                {' '}
+                Which places are off the market could not be read, so all of them are shown.
               </span>
             )}
             {shortlist.isFetching && <span className="working"> · refreshing</span>}
