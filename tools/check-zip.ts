@@ -56,9 +56,16 @@ const changed = Object.keys(now.files)
   .map((path) => (path in stamped.files ? path : `${path} (new)`))
   .concat(Object.keys(stamped.files).filter((path) => !(path in now.files)).map((p) => `${p} (deleted)`));
 
+// Advisory on a pull request, fatal everywhere else. On a branch the zip is legitimately behind —
+// `package.yml` rebuilds and commits it when the change reaches main, which is the whole point of
+// having a workflow do it — so failing here would block every extension PR on a step the robot is
+// about to take anyway. Locally and on main it is a real failure: there is nothing else coming.
+const advisory = process.env.GITHUB_EVENT_NAME === 'pull_request';
+
 if (changed.length > 0) {
-  failures++;
-  console.log(`  FAIL ${changed.length} source file(s) changed since it was packaged — run \`pnpm package\`:`);
+  if (!advisory) failures++;
+  const how = advisory ? 'note' : 'FAIL';
+  console.log(`  ${how} ${changed.length} source file(s) changed since it was packaged${advisory ? ' — main will rebuild it on merge' : ' — run `pnpm package`'}:`);
   for (const path of changed.slice(0, 12)) console.log(`         ${path}`);
   if (changed.length > 12) console.log(`         …and ${changed.length - 12} more`);
 } else {

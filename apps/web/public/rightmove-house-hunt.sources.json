@@ -33,7 +33,7 @@
     "packages/core/src/db/session.ts": "6f9f09a19fcdf9576d37b173c767b6faeccfd8b5e7c69118ed77e7a7171bcc81",
     "packages/core/src/db/supabase.ts": "a42090a50a8c38f60b4902c54a5419be69fd84419fc8ec34187bd909978f3d1c",
     "packages/core/src/db/travel.ts": "acbc1f066ad783477182a72e14b89e419b0a0182a0d5856227977d47b206774e",
-    "packages/core/src/facts.ts": "ee3540fcb5bc9e6a67b5cf3774e1b56f743bf8f564079b7a4a21c55a442d418b",
+    "packages/core/src/facts.ts": "e1e3a64b892e2a62ff34973e79421a9412b25a84e84ea4a4c693432ddb9aafc2",
     "packages/core/src/filter.ts": "879d8356b6e5db919f9a3b54e095952318f681d066f399a4580de26454e500bb",
     "packages/core/src/hubs.ts": "491f85f352eff3dcd5d436bf2c7ebc26790ec88c3919a6dce1f6db06c0cf86ee",
     "packages/core/src/index.ts": "6cec2a004e313c5e55867dc1229b74af51af509c4bc54cac9ae2cb1f51962432",
