@@ -49,9 +49,16 @@ loadRootEnv();
  */
 const SUPABASE_ORIGIN = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 
+/** React's development build calls `eval()` — for callstack reconstruction, nothing that ships —
+ *  and the production CSP has no `'unsafe-eval'`, so under `next dev` the console fills with a
+ *  refusal and the devtools overlay opens over the page. Granted here and only here: the header
+ *  a built app serves is the one above, unchanged, which is what `smoke:web` asserts against
+ *  because it serves a production build for exactly this reason. */
+const DEV_SCRIPT_SRC = process.env.NODE_ENV === 'production' ? '' : " 'unsafe-eval'";
+
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline'${DEV_SCRIPT_SRC}`,
   "style-src 'self' 'unsafe-inline'",
   // Rightmove's own photo URLs. We link to them and never re-host them (their terms, 13.4), which
   // means the images load from their origin and this has to say so.
