@@ -3,6 +3,15 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { keys as shellKeys, useAuth, useProjectSettings, useSetProjectSettings } from '@/lib/queries';
+import { Hint } from '@house-hunt/ui';
+import { attempt } from '@/lib/attempt';
+import {
+  addHub,
+  listHubs,
+  removeHub,
+  resolveLocation,
+  updateHub,
+} from '@house-hunt/core/db';
 import {
   authState,
   createInvite,
@@ -17,8 +26,10 @@ import {
 } from '@house-hunt/core/db';
 import {
   AMENITIES,
+  SWEEP_WINDOWS,
   criteriaFromUrl,
   describeCriteria,
+  distanceMiles,
 } from '@house-hunt/core';
 import type {
   AmenityKey,
@@ -28,6 +39,8 @@ import type {
   HuntPreferences,
   Invite,
   InviteResult,
+  LocationResult,
+  ProjectHub,
   ProjectSummary,
   SweepCriteria,
 } from '@house-hunt/core';
@@ -73,6 +86,11 @@ export function Project({ notify }: { notify: Notify }) {
       <ActiveProject project={activeProject} notify={notify} />
       <HuntSettings notify={notify} />
       <SearchCriteria notify={notify} />
+      {/* Where, straight after what. These two are one thought — a search is filters plus a place
+          to point them at — and they were a page apart, with the neighbourhoods filed under the
+          sweep that consumes them. Nothing on the sweep page changes them; this is where the hunt
+          is described. */}
+      <Neighbourhoods notify={notify} />
       <Members projectId={activeProject.id} />
       {/* Keyed on the project so switching hunts starts the invite form empty. Without it the
           sentence under the field — "they are already in this hunt" — would still be on screen,
@@ -98,6 +116,70 @@ export function Project({ notify }: { notify: Notify }) {
 const DEFAULT_GREAT_ROOM_SQFT = 450;
 const GREAT_ROOM_MIN_SQFT = 100;
 const GREAT_ROOM_MAX_SQFT = 2000;
+
+/** The whole-flat bar, same shape. Defaults to a comfortable one-bedroom and ranges from a studio
+ *  to a house — wider than the room bar because it is measuring a different thing. */
+const DEFAULT_MIN_SQFT = 600;
+const MIN_SQFT_FLOOR = 150;
+const MIN_SQFT_CEILING = 5000;
+
+/** A bar in square feet: off, or a number. Off is `null` rather than zero, because "no opinion" and
+ *  "zero square feet" are different sentences and only one of them is ever meant.
+ *
+ *  The number is typed into the parent's draft as you go and written once on blur — not one write
+ *  per keystroke, which would also fight the disabled-while-saving guard. Clamping happens on blur
+ *  too: `min`/`max` on the input do not stop a typed 1 or 30000 from reaching a write. */
+function SqftBar({
+  label,
+  suffix,
+  value,
+  fallback,
+  min,
+  max,
+  busy,
+  onDraft,
+  onCommit,
+}: {
+  label: string;
+  suffix: string;
+  value: number | null;
+  fallback: number;
+  min: number;
+  max: number;
+  busy: boolean;
+  onDraft: (value: number) => void;
+  onCommit: (value: number | null) => void;
+}) {
+  const on = value != null;
+  return (
+    <label className="hunt-pref-greatroom">
+      <input
+        type="checkbox"
+        checked={on}
+        disabled={busy}
+        onChange={(e) => onCommit(e.target.checked ? fallback : null)}
+      />
+      <span>{label}</span>
+      {on && (
+        <span className="hunt-pref-greatroom-size">
+          <input
+            type="number"
+            min={min}
+            max={max}
+            disabled={busy}
+            value={value ?? fallback}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n) && n > 0) onDraft(Math.round(n));
+            }}
+            onBlur={() => onCommit(Math.min(max, Math.max(min, value ?? fallback)))}
+          />
+          <span className="dim">{suffix}</span>
+        </span>
+      )}
+    </label>
+  );
+}
 
 const WANT_CHOICES: { value: AmenityWant | null; label: string }[] = [
   { value: null, label: "Don't mind" },
@@ -157,55 +239,42 @@ function HuntSettings({ notify }: { notify: Notify }) {
     commit({ ...draft, amenities });
   };
 
-  const greatRoomOn = draft.greatRoomMinSqft != null;
-
   return (
     <section className="setting">
       <h2>What you&rsquo;re looking for</h2>
       <p className="dim">
         Shared by the whole hunt. These change how flats are flagged on the shortlist and compare
-        table — a must-have you&rsquo;re missing shows red, a nice-to-have amber — and set the bar for
-        what counts as a great room. Nothing here hides a flat; it only changes the emphasis.
+        table — a must-have you&rsquo;re missing shows red, a nice-to-have amber — and set the bars for
+        how big a flat and how big its main room have to be. Nothing here hides a flat; it only
+        changes the emphasis. They reach the listing panel on Rightmove too.
       </p>
 
-      <label className="hunt-pref-greatroom">
-        <input
-          type="checkbox"
-          checked={greatRoomOn}
-          disabled={busy}
-          onChange={(e) =>
-            commit({ ...draft, greatRoomMinSqft: e.target.checked ? DEFAULT_GREAT_ROOM_SQFT : null })
-          }
-        />
-        <span>Has a great room</span>
-        {greatRoomOn && (
-          <span className="hunt-pref-greatroom-size">
-            <input
-              type="number"
-              min={GREAT_ROOM_MIN_SQFT}
-              max={GREAT_ROOM_MAX_SQFT}
-              disabled={busy}
-              // Typed into the local draft as you go, and saved once on blur — not one write per
-              // keystroke, which would also fight the disabled-while-saving guard. The value that
-              // reaches a write is clamped to the control's range on blur (`min`/`max` alone do not
-              // stop a typed 1 or 3000 from reaching `commit`).
-              value={draft.greatRoomMinSqft ?? DEFAULT_GREAT_ROOM_SQFT}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                if (Number.isFinite(n) && n > 0) setDraft({ ...draft, greatRoomMinSqft: Math.round(n) });
-              }}
-              onBlur={() => {
-                const clamped = Math.min(
-                  GREAT_ROOM_MAX_SQFT,
-                  Math.max(GREAT_ROOM_MIN_SQFT, draft.greatRoomMinSqft ?? DEFAULT_GREAT_ROOM_SQFT),
-                );
-                commit({ ...draft, greatRoomMinSqft: clamped });
-              }}
-            />
-            <span className="dim">sq ft or bigger</span>
-          </span>
-        )}
-      </label>
+      {/* Two bars, one control. They are the same interaction down to the clamp-on-blur — a
+          checkbox that turns a number on — and writing it twice is how the second one ends up
+          without the clamp. */}
+      <SqftBar
+        label="Has a great room"
+        suffix="sq ft or bigger"
+        value={draft.greatRoomMinSqft ?? null}
+        fallback={DEFAULT_GREAT_ROOM_SQFT}
+        min={GREAT_ROOM_MIN_SQFT}
+        max={GREAT_ROOM_MAX_SQFT}
+        busy={busy}
+        onDraft={(v) => setDraft({ ...draft, greatRoomMinSqft: v })}
+        onCommit={(v) => commit({ ...draft, greatRoomMinSqft: v })}
+      />
+
+      <SqftBar
+        label="Big enough overall"
+        suffix="sq ft or bigger"
+        value={draft.minSqft ?? null}
+        fallback={DEFAULT_MIN_SQFT}
+        min={MIN_SQFT_FLOOR}
+        max={MIN_SQFT_CEILING}
+        busy={busy}
+        onDraft={(v) => setDraft({ ...draft, minSqft: v })}
+        onCommit={(v) => commit({ ...draft, minSqft: v })}
+      />
 
       <div className="hunt-pref-amenities">
         {/* From `AMENITIES` in core rather than a list of its own: this page, the flags and
@@ -847,5 +916,214 @@ function SearchCriteria({ notify }: { notify: Notify }) {
         </>
       )}
     </section>
+  );
+}
+
+
+/** The neighbourhoods this project searches around.
+ *
+ *  They used to be five constants in `lib/hubs.ts`, which was right while the hubs *were* the
+ *  search. They are project rows now (design D11), so this section is the only way to change what
+ *  we are looking for, and it has to be honest about a row being able to answer one question and
+ *  not the other:
+ *
+ *    - A **point** (lat/lon) is what lets a listing read "0.4 mi NE of Angel". Without one the hub
+ *      names nothing, and we say so rather than placing it somewhere plausible — a hub in the wrong
+ *      place silently rotates every bearing computed from it.
+ *    - A **Rightmove location** is what lets a sweep open that neighbourhood's search. Without one
+ *      the hub is not searchable, and the sweep view says that instead of offering a dead link.
+ *
+ *  Both are resolved by a person pressing a button, never in the background. */
+function Neighbourhoods({ notify }: { notify: Notify }) {
+  const [hubs, setHubs] = useState<ProjectHub[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [name, setName] = useState('');
+  const [where, setWhere] = useState('');
+  const [busy, setBusy] = useState(false);
+  /** Hub id -> what the last resolve attempt said. Kept per hub rather than as one banner: two
+   *  hubs can be in different states at once and a shared line would attribute one's failure to
+   *  the other. */
+  const [located, setLocated] = useState<Record<string, LocationResult>>({});
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setHubs(await listHubs());
+      } catch {
+        setFailed(true);
+      }
+    })();
+  }, []);
+
+  async function add() {
+    setBusy(true);
+    // `postcode` also takes a pasted "lat,lon" — the same field `places:add` accepts, resolved by
+    // the same code. A hub added with neither is legitimate: it can be given a location identifier
+    // and swept without ever being placeable.
+    const hub = await attempt(() => addHub({ name, postcode: where.trim() || undefined }), notify);
+    setBusy(false);
+    if (!hub) return;
+    setHubs([...(hubs ?? []), hub]);
+    setName('');
+    setWhere('');
+  }
+
+  async function remove(hub: ProjectHub) {
+    // Removing a hub takes its sweep history with it — `hub_sweep` cascades on `project_hub`. That
+    // is the whole record of having worked that neighbourhood to the end, so it is worth a stop.
+    if (!confirm(`Remove ${hub.name}? Its sweep history goes with it.`)) return;
+    const gone = await attempt(async () => {
+      await removeHub(hub.id);
+      return true;
+    }, notify);
+    if (!gone) return;
+    setHubs((hubs ?? []).filter((h) => h.id !== hub.id));
+  }
+
+  /** Ask Rightmove what it calls this neighbourhood, once, because somebody pressed a button.
+   *
+   *  This is the standing no-crawl rule's one sanctioned fetch, and the reasoning is repeated here
+   *  rather than left in AGENTS.md because this is exactly the kind of call that gets cited as
+   *  precedent later: **one** request, for **one** hub, initiated by a person who is looking at the
+   *  screen. Nothing here loops, nothing here runs in the background, and nothing here enumerates.
+   *  It is `pnpm find:locations` with the terminal taken out. */
+  async function resolve(hub: ProjectHub) {
+    setBusy(true);
+    const result = await attempt(() => resolveLocation(hub.name), notify);
+    setBusy(false);
+    if (!result) return;
+    setLocated({ ...located, [hub.id]: result });
+    if (result.status !== 'resolved') return;
+
+    const saved = await attempt(
+      () =>
+        updateHub(hub.id, {
+          locationIdentifier: result.locationIdentifier,
+          displayLocationIdentifier: result.displayLocationIdentifier,
+        }),
+      notify,
+    );
+    if (!saved) return;
+    setHubs((hubs ?? []).map((h) => (h.id === hub.id ? saved : h)));
+  }
+
+  async function setWindow(hub: ProjectHub, days: number | null) {
+    const saved = await attempt(() => updateHub(hub.id, { maxDaysSinceAdded: days ?? undefined }), notify);
+    if (!saved) return;
+    setHubs((hubs ?? []).map((h) => (h.id === hub.id ? saved : h)));
+  }
+
+  return (
+    <section className="setting">
+      <h2>Neighbourhoods we search</h2>
+      <p className="dim">
+        Each one fixes a listing — "0.4 mi NE of Angel" — and, once Rightmove's own name for it is
+        resolved, gives the sweep a search to work through.
+      </p>
+
+      {hubs === null && !failed && <p className="working">Working…</p>}
+      {failed && <p className="error">Could not read this project's neighbourhoods.</p>}
+      {hubs !== null && hubs.length === 0 && (
+        <p className="dim">Nothing yet — add the neighbourhoods you are actually looking in.</p>
+      )}
+
+      {(hubs ?? []).map((hub) => (
+        <div className="place" key={hub.id}>
+          <span>
+            {hub.name}{' '}
+            <span className="dim">
+              {hub.lat === null || hub.lon === null
+                ? 'no coordinates — cannot place a listing against it'
+                : `${hub.lat.toFixed(4)}, ${hub.lon.toFixed(4)}`}
+              {' · '}
+              {/* `STATION^4187` is Rightmove's own name for the area, and it is shown rather than
+                  hidden because it is what a sweep searches and the thing to check when a sweep
+                  brings back the wrong neighbourhood. Unexplained it looks like a fault. */}
+              <Hint text="Rightmove's own id for this area, from Resolve. It is what a sweep searches — if the results look like the wrong neighbourhood, this is the thing to re-resolve.">
+                {hub.locationIdentifier ?? 'not searchable yet'}
+              </Hint>
+              {hub.maxDaysSinceAdded !== null && ` · always looks back ${hub.maxDaysSinceAdded} days`}
+            </span>
+            {located[hub.id] && <LocationNote result={located[hub.id]!} hub={hub} />}
+          </span>
+          <span className="fields">
+            <select
+              value={hub.maxDaysSinceAdded ?? ''}
+              title="A floor on how far back this hub's sweep looks. It can only widen the window — a setting that narrowed it would drop listings and still report the page fully recorded."
+              onChange={(e) => void setWindow(hub, e.target.value === '' ? null : Number(e.target.value))}
+            >
+              <option value="">window from the last sweep</option>
+              {SWEEP_WINDOWS.map((days) => (
+                <option key={days} value={days}>
+                  at least {days} {days === 1 ? 'day' : 'days'}
+                </option>
+              ))}
+            </select>
+            <button disabled={busy} onClick={() => void resolve(hub)}>
+              {hub.locationIdentifier ? 'Re-resolve' : 'Resolve'}
+            </button>
+            <button className="remove" title="Remove" onClick={() => void remove(hub)}>
+              ×
+            </button>
+          </span>
+        </div>
+      ))}
+
+      <div className="fields">
+        <input value={name} placeholder="Hampstead" onChange={(e) => setName(e.target.value)} />
+        <input
+          value={where}
+          placeholder="Postcode or lat,lon (optional)"
+          title="Where the neighbourhood is, for the compass on every listing. A UK postcode, or coordinates pasted from Google Maps. Leave it blank and the hub can still be swept — it just cannot say what a flat is near."
+          onChange={(e) => setWhere(e.target.value)}
+        />
+        <button className="primary" disabled={busy || !name.trim()} onClick={() => void add()}>
+          Add
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** What one resolve attempt said. All four states are rendered: a silent failure here is a hub
+ *  that looks added and never appears in the sweep. */
+function LocationNote({ result, hub }: { result: LocationResult; hub: ProjectHub }) {
+  if (result.status === 'not-found') {
+    return (
+      <div className="error">
+        Rightmove has no page at <code>{result.slug}</code>. Its own spelling is the one that works
+        — try "{hub.name} Station", or the area rather than the stop.
+      </div>
+    );
+  }
+  if (result.status === 'rate-limited') {
+    return (
+      <div className="error">
+        {result.used} of {result.limit} lookups used. This is capped on purpose — it is the one
+        place the extension asks Rightmove anything. Try again in{' '}
+        {Math.ceil(result.retryAfterSeconds / 60)} minutes.
+      </div>
+    );
+  }
+  if (result.status === 'failed') return <div className="error">{result.message}</div>;
+
+  // Resolved. The centroid is Rightmove's own centre for that search, and it is the *verification*
+  // rather than decoration: an identifier on its own is a number somebody wrote down, and one that
+  // points at the wrong neighbourhood returns a page full of plausible flats and reports nothing
+  // new. Two independent sources agreeing is what makes it trustworthy, so a disagreement is shown
+  // rather than assumed away — and Rightmove's centre is never written over the hub's own point.
+  const apart =
+    result.centroid !== null && hub.lat !== null && hub.lon !== null
+      ? distanceMiles({ lat: hub.lat, lon: hub.lon }, result.centroid)
+      : null;
+  return (
+    <div className="dim">
+      {result.displayName} ({result.locationIdentifier}), read out of {result.slug}.
+      {apart === null
+        ? ' No coordinate here to check it against — worth adding one before you trust the sweep.'
+        : apart > 1
+          ? ` Rightmove puts its centre ${apart.toFixed(1)} mi from where this hub is — check which of the two is wrong before sweeping it.`
+          : ` Rightmove's centre agrees to within ${apart.toFixed(1)} mi.`}
+    </div>
   );
 }

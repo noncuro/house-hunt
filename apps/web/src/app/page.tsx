@@ -127,7 +127,7 @@ export default function Page() {
 /** Everything the two of you have looked at, in the order you'd want to think about it: the
  *  places someone is excited about first, the maybes underneath and hideable, and the rejects
  *  as a number — the point of writing "not our place" down is never seeing it again. */
-const VIEWS = ['list', 'table', 'map', 'triage', 'sweep', 'project', 'install', 'admin', 'settings'] as const;
+const VIEWS = ['list', 'table', 'map', 'triage', 'project', 'install', 'admin', 'settings'] as const;
 type View = (typeof VIEWS)[number];
 
 /** The open tab lives in the URL (`?v=sweep`), so a reload, a bookmark, or a link sent to the
@@ -141,6 +141,10 @@ function useUrlView(): [View, (next: View) => void] {
   useEffect(() => {
     const read = () => {
       const v = new URLSearchParams(window.location.search).get('v');
+      // `sweep` was its own tab until sweeping moved under Triage. Links to it are in people's
+      // bookmarks and in the extension, so it lands where its contents went rather than silently
+      // on the list.
+      if (v === 'sweep') return setViewState('triage');
       setViewState((VIEWS as readonly string[]).includes(v ?? '') ? (v as View) : 'list');
     };
     read();
@@ -480,13 +484,6 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
             Triage{grouped.unrated.length > 0 && <span className="dim"> {grouped.unrated.length}</span>}
           </button>
           <button
-            className={view === 'sweep' ? 'view view-on' : 'view'}
-            title="Go looking for places we don't have yet"
-            onClick={() => setView('sweep')}
-          >
-            Sweep
-          </button>
-          <button
             className={view === 'project' ? 'view view-on' : 'view'}
             title="Who is in this house hunt, and who has been asked"
             onClick={() => setView('project')}
@@ -557,8 +554,6 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
 
       {view === 'admin' && <Admin />}
 
-      {view === 'sweep' && <Sweep notify={push} />}
-
       {view === 'triage' && (
         <Triage
           entries={grouped.unrated}
@@ -582,6 +577,12 @@ function App({ user, project }: { user: SessionUser; project: ProjectSummary }) 
           {...cardProps}
         />
       )}
+
+      {/* Sweeping under Triage rather than beside it. They were two tabs, and the split cut one
+          job in half: the pile you work through here *is* what a sweep produces, so "go and find
+          more" and "there is nothing left to rate" belong on the same screen. A separate tab meant
+          the empty triage list said nothing about how to refill it. */}
+      {view === 'triage' && <Sweep />}
 
       {view === 'table' && (
         <Compare
@@ -1174,7 +1175,7 @@ function Card({
 
       {/* Cards keep the good news — a bathtub IS the reason you'd look twice — but the rings
           go bare: four flags each shouting "HIGH" is four times the noise for one fact. */}
-      <Flags source={{ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }} prefs={prefs} />
+      <Flags source={{ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) }} prefs={prefs} />
 
       {entry.nearestStations.length > 0 && (
         <div className="stations dim">

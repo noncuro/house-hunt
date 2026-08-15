@@ -172,34 +172,11 @@ export function Sweep() {
   return (
     <div className="rm-sweep">
       <header className="rm-sweep-head">
-        <h2>{hub ? `Sweeping ${hub.name}` : 'Sweep'}</h2>
+        <h2>{hub ? `Sweeping ${hub.name}` : `Scanning ${page!.locationName}`}</h2>
         <button type="button" className="rm-sweep-hide" onClick={() => setCollapsed(true)} aria-label="Collapse">
           –
         </button>
       </header>
-
-      {/* Three different silences, said as three different sentences. Collapsed into one they
-          read as "not one of our hubs" — which is a claim, and two thirds of the time a false
-          one. */}
-      {hubs === null && <p className="rm-sweep-note rm-sweep-working">Reading this project's neighbourhoods…</p>}
-
-      {hubs?.length === 0 && (
-        <p className="rm-sweep-warn">
-          This house hunt has no searchable neighbourhoods yet, so nothing here has been recorded.
-          Add one in the extension's Settings — it needs a Rightmove location before it can be
-          swept.
-        </p>
-      )}
-
-      {hubs !== null && !hub && page && (
-        <p className="rm-sweep-note">
-          Recorded under <strong>{page.locationName}</strong> ({page.locationIdentifier}), which is
-          not one of this project&rsquo;s neighbourhoods. Everything on this page has been written
-          down and will turn up in the fill-in run — what a one-off search does not get is a sweep
-          to be part-way through, so there is no &ldquo;safe to page on&rdquo; and no window since
-          last time. Add it as a neighbourhood if you mean to come back to it.
-        </p>
-      )}
 
       {stale.length > 0 && (
         <p className="rm-sweep-warn">
@@ -212,56 +189,71 @@ export function Sweep() {
         </p>
       )}
 
-      {hub && (
-        <>
-          <Ready
-            recorded={recorded}
-            stale={stale.length > 0}
-            counted={counts.total}
-            page={page!}
-            lastPage={lastPage}
-          />
+      {/* Scanning, and everything that serves it, runs on any search page.
+       *
+       *  All of this used to be behind `hub &&`, so a search that was not one of the project's
+       *  neighbourhoods showed three apologies and no controls — while the cards were being
+       *  recorded the whole time, three sentences above. Paging through a search and writing down
+       *  what is on it needs a page, not a neighbourhood; only the sweep *window* underneath needs
+       *  one, and that is the single thing still gated below. */}
+      <Ready
+        recorded={recorded}
+        stale={stale.length > 0}
+        counted={counts.total}
+        page={page!}
+        lastPage={lastPage}
+      />
 
-          <NextPage page={page!} recorded={recorded && stale.length === 0} />
+      <NextPage page={page!} recorded={recorded && stale.length === 0} />
 
-          <ul className="rm-sweep-counts">
-            <li>
-              <Hint text="Never opened — we hold only this search card.">
-                <strong>{counts.new}</strong> new
-              </Hint>
-            </li>
-            <li>
-              <Hint text="Opened, but something is still missing — usually the tab was closed too early.">
-                <strong>{counts.partial}</strong> part-filled
-              </Hint>
-            </li>
-            <li>
-              <Hint text="Located and analysed — nothing left to fetch.">
-                <strong>{counts.complete}</strong> done
-              </Hint>
-            </li>
-          </ul>
+      <ul className="rm-sweep-counts">
+        <li>
+          <Hint text="Never opened — we hold only this search card.">
+            <strong>{counts.new}</strong> new
+          </Hint>
+        </li>
+        <li>
+          <Hint text="Opened, but something is still missing — usually the tab was closed too early.">
+            <strong>{counts.partial}</strong> part-filled
+          </Hint>
+        </li>
+        <li>
+          <Hint text="Located and analysed — nothing left to fetch.">
+            <strong>{counts.complete}</strong> done
+          </Hint>
+        </li>
+      </ul>
 
-          <label className="rm-sweep-toggle">
-            <input type="checkbox" checked={hiding} onChange={(e) => setHiding(e.target.checked)} />
-            Hide the {counts.complete} we already have
-          </label>
+      <label className="rm-sweep-toggle">
+        <input type="checkbox" checked={hiding} onChange={(e) => setHiding(e.target.checked)} />
+        Hide the {counts.complete} we already have
+      </label>
 
-          {/* No opener here any more. Filling in is one long run over everything scanned, and
-              bolted onto this page it could only ever see the cards in front of it and died the
-              moment you paged on — twenty separate unattended runs to sweep five hubs. It lives
-              on the website now (design D5); this page's job is to scan and to say when it is safe
-              to move on. */}
-          {incomplete > 0 && (
-            <p className="rm-sweep-note">
-              {incomplete} on this page {incomplete === 1 ? 'is' : 'are'} not filled in. Open them
-              from the Sweep tab on the website once you have finished scanning — click the
-              extension's icon to get there — it works through every hub at once.
-            </p>
-          )}
+      {/* No opener here any more. Filling in is one long run over everything scanned, and
+          bolted onto this page it could only ever see the cards in front of it and died the
+          moment you paged on — twenty separate unattended runs to sweep five hubs. It lives
+          on the website now (design D5); this page's job is to scan and to say when it is safe
+          to move on. */}
+      {incomplete > 0 && (
+        <p className="rm-sweep-note">
+          {incomplete} on this page {incomplete === 1 ? 'is' : 'are'} not filled in. Open them from
+          Triage on the website once you have finished scanning — click the extension's icon to get
+          there — it works through everything scanned at once.
+        </p>
+      )}
 
-          <Progress hub={hub} page={page!} choice={choice} sweep={progress} />
-        </>
+      {/* The one thing that genuinely needs a neighbourhood: a window is measured from the last
+          time this place was swept, and a one-off search has no last time. */}
+      {hub ? (
+        <Progress hub={hub} page={page!} choice={choice} sweep={progress} />
+      ) : hubs === null ? (
+        <p className="rm-sweep-note rm-sweep-working">Checking whether this is a saved neighbourhood…</p>
+      ) : (
+        <p className="rm-sweep-note">
+          Filed under <strong>{page!.locationName}</strong>, which isn't a saved neighbourhood — so
+          there's no sweep window here, just this search. Add it on Your Hunt if you mean to come
+          back to it.
+        </p>
       )}
 
       <HubList hubs={hubs} sweeps={sweeps} current={hub} criteria={criteria} />
@@ -392,7 +384,7 @@ function Progress({
 }
 
 /** The other hubs, so an unrecognised search has somewhere to go. Deliberately a shorter list
- *  than the website's Sweep view, which is the proper home for choosing what to sweep next —
+ *  than the website's Triage tab, which is the proper home for choosing what to sweep next —
  *  this one exists for the case where you have landed on a search that is not one of ours. */
 function HubList({
   hubs,

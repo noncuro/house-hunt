@@ -843,7 +843,9 @@ function forPlace(entry: ShortlistEntry, placeId: string, travel: Record<string,
 
 /** Only the problems, from the one definition in facts.ts. */
 function problems(entry: ShortlistEntry, prefs?: HuntPreferences): Flag[] {
-  return problemsOnly(flagsFor({ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl }, prefs));
+  return problemsOnly(
+    flagsFor({ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) }, prefs),
+  );
 }
 
 /** A blank cell should say "we don't know", not look like a zero. */

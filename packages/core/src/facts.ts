@@ -278,6 +278,13 @@ export interface HuntPreferences {
   /** A biggest-room bar in sq ft: a flat whose largest room clears it earns the great-room mark.
    *  Null/absent leaves the default `BIGGEST_ROOM_BIG_SQFT`. */
   greatRoomMinSqft?: number | null;
+  /** The whole flat's floor area, in sq ft, below which it is too small for this hunt.
+   *
+   *  The obvious preference, and the one that was missing: every surface already resolves and shows
+   *  a floor area, triage can filter on it, and nothing ever said whether a given number was *bad*.
+   *  A hunt looking for 900 sq ft and a hunt looking for 450 read the identical panel on a 600 sq ft
+   *  flat. Absent means no opinion, and no flag either way — a size bar is not something to guess. */
+  minSqft?: number | null;
   /** Per amenity, whether the hunt must have it or would merely like it. Absent means "don't mind",
    *  which is the default behaviour these flags already had. */
   amenities?: Partial<Record<AmenityKey, AmenityWant>>;
@@ -349,6 +356,10 @@ export interface FlagSource {
     naturalLightConfidence?: Confidence | null;
   } | null;
   floorplanUrl?: string | null;
+  /** Where the flat's floor area can be read from — the same `SizeSource` the size on screen beside
+   *  the flags is resolved from, so the two can't disagree about which figure wins. Callers already
+   *  hold one: `sizeOf(entry)`. */
+  size?: SizeSource | null;
 }
 
 /** One glyph per severity, and never the same glyph for two of them.
@@ -362,8 +373,29 @@ export const FLAG_ICON: Record<Severity, string> = { red: '⛔', yellow: '⚠️
 const RED = FLAG_ICON.red;
 const AMBER = FLAG_ICON.yellow;
 
-export function flagsFor({ analysis, floorplanUrl }: FlagSource, prefs?: HuntPreferences): Flag[] {
+export function flagsFor({ analysis, floorplanUrl, size }: FlagSource, prefs?: HuntPreferences): Flag[] {
   const flags: Flag[] = [];
+  const floorArea = size ? resolveSize(size) : null;
+
+  // The whole flat against the hunt's own bar, before anything the photos say. Only when both
+  // numbers exist: an unmeasured flat is not a small one (the same rule triage's filters follow),
+  // and a hunt that has set no bar has no opinion for this to report.
+  //
+  // Red rather than amber, and deliberately unlike the main-room flag above it. A main room a
+  // little under target is a reservation you settle by standing in it; a flat two hundred square
+  // feet under what you need is not a viewing you were going to enjoy. The bar is the hunt's own
+  // number, so being under it is their own judgement rather than ours.
+  if (prefs?.minSqft != null && floorArea && floorArea.value < prefs.minSqft) {
+    flags.push({
+      key: 'size',
+      severity: 'red',
+      icon: RED,
+      // The caveat rides along: a figure read out of the description may be measuring the garden,
+      // and being told a flat is too small on the strength of one is worth knowing about.
+      text: `${floorArea.value} sq ft — under your ${prefs.minSqft}${floorArea.approximate ? ', and approximate' : ''}`,
+      confidence: null,
+    });
+  }
 
   if (!analysis) {
     if (!floorplanUrl) {

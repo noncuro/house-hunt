@@ -135,5 +135,30 @@ check(
   ['floorplan'],
 );
 
+// The whole-flat bar. Absent means no opinion — the commonest state, and the one where a red flag
+// would be an invention rather than a judgement.
+const small = { analysis: null, floorplanUrl: null, size: { listedSqft: 400, listedSource: 'sizings' as const } };
+const sizeKeys = (source: Parameters<typeof flagsFor>[0], prefs?: Parameters<typeof flagsFor>[1]) =>
+  flagsFor(source, prefs)
+    .map((f) => f.key)
+    .filter((k) => k === 'size');
+check('no bar, no size flag', sizeKeys(small, {}), []);
+check(
+  'under the bar is red',
+  flagsFor(small, { minSqft: 600 }).find((f) => f.key === 'size')?.severity,
+  'red',
+);
+check(
+  'at the bar is not under it',
+  sizeKeys({ ...small, size: { listedSqft: 600, listedSource: 'sizings' } }, { minSqft: 600 }),
+  [],
+);
+// An unmeasured flat is not a small one — the same rule triage's filters follow.
+check(
+  'no measurement, no size flag',
+  sizeKeys({ analysis: null, floorplanUrl: null }, { minSqft: 600 }),
+  [],
+);
+
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

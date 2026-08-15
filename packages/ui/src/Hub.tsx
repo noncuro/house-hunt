@@ -89,7 +89,7 @@ export function HubFact({
     return (
       <Hint
         className="rm-hub-none rm-hub-failed"
-        text="This house hunt's neighbourhoods could not be read, so there is nothing to measure against. It is a failed read, not a flat in the middle of nowhere — reload, and check Settings → Neighbourhoods if it persists."
+        text="This house hunt's neighbourhoods could not be read, so there is nothing to measure against. It is a failed read, not a flat in the middle of nowhere — reload, and check Your Hunt → Neighbourhoods if it persists."
       >
         neighbourhoods unavailable
       </Hint>
@@ -104,7 +104,7 @@ export function HubFact({
     return (
       <Hint
         className="rm-hub-none"
-        text="This house hunt has no neighbourhoods, and no saved place with resolved coordinates, so there is nothing to fix this listing against. Add one in Settings → Neighbourhoods."
+        text="This house hunt has no neighbourhoods, and no saved place with resolved coordinates, so there is nothing to fix this listing against. Add one in Your Hunt → Neighbourhoods."
       >
         nothing to place this against
       </Hint>
