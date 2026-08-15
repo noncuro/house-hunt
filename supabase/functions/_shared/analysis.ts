@@ -9,6 +9,7 @@
  */
 
 import { flattenOntoWhite, looksTransparent } from './png.ts';
+import { SLEEPING_SEPARATIONS } from './types.ts';
 
 const MODEL = 'gpt-5.6-terra';
 const ENDPOINT = 'https://api.openai.com/v1/responses';
@@ -536,11 +537,10 @@ export function validateAnalysis(raw: unknown): ParsedAnalysis {
 
 const LAUNDRY = ['in-unit', 'in-building', 'none'];
 const LIGHT_LEVELS = ['low', 'medium', 'high'];
-const SEPARATIONS = ['separate-room', 'practically-separate', 'same-space'];
 
 /** Like `choice`, except an unrecognised value becomes null rather than a default. Use this
  *  wherever the default would itself be a claim about the property. */
-function oneOfOrNull(value: unknown, allowed: string[], label: string): string | null {
+function oneOfOrNull(value: unknown, allowed: readonly string[], label: string): string | null {
   if (typeof value === 'string' && allowed.includes(value)) return value;
   if (value !== null && value !== undefined) {
     warn(`${label} was ${JSON.stringify(value)}, not one of ${allowed.join('/')} — reading it as unknown`);
@@ -568,7 +568,7 @@ function amenities(raw: Record<string, unknown>): ParsedAnalysis['amenities'] {
     },
     dishwasher: yesNo(raw, 'dishwasher'),
     sleeping_area: {
-      separation: oneOfOrNull(sleepingIn.separation, SEPARATIONS, 'amenities.sleeping_area.separation'),
+      separation: oneOfOrNull(sleepingIn.separation, SLEEPING_SEPARATIONS, 'amenities.sleeping_area.separation'),
       confidence: choice(sleepingIn.confidence, CONFIDENCES, 'low', 'amenities.sleeping_area.confidence'),
     },
     utilities_included: yesNo(raw, 'utilities_included'),

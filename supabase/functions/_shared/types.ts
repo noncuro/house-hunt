@@ -133,7 +133,18 @@ export type LightLevel = 'low' | 'medium' | 'high';
  *  `practically-separate` is the answer it could not give: one room on the plan, two in use,
  *  because of a level change, a corner in the outline, or something full-height standing between
  *  them. */
-export type SleepingSeparation = 'separate-room' | 'practically-separate' | 'same-space';
+export type SleepingSeparation = (typeof SLEEPING_SEPARATIONS)[number];
+
+export const SLEEPING_SEPARATIONS = ['separate-room', 'practically-separate', 'same-space'] as const;
+
+/** Reads the column back. The database holds plain text, so what arrives here is not necessarily
+ *  one of the three — an older writer, a hand-edited row, a value a later version adds. Anything
+ *  unrecognised has to become `null`, because everything downstream treats "not `same-space`" as
+ *  the bed having its own room: a string nobody can interpret would read as a separate bedroom and
+ *  be counted among the flats we know about rather than the ones we do not. */
+export function toSleepingSeparation(value: unknown): SleepingSeparation | null {
+  return SLEEPING_SEPARATIONS.find((known) => known === value) ?? null;
+}
 
 /** Somewhere this hunt cares about: the office, the in-laws, Angel.
  *

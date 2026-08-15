@@ -23,7 +23,7 @@ import {
   type TravelIndex,
   type TriageFilter,
 } from '../packages/core/src/filter';
-import type { Analysis, TravelTime } from '../packages/core/src/types';
+import { toSleepingSeparation, type Analysis, type TravelTime } from '../packages/core/src/types';
 import type { ShortlistEntry } from '../packages/core/src/db/supabase';
 
 let failures = 0;
@@ -179,6 +179,17 @@ check(
   matchesFilter(flat({ analysis: analysis({}) }), only({ amenities: ['separateSleeping'] })),
   true,
 );
+// The column is plain text, so a string nobody recognises can come back out of the database. Taken
+// at face value it would be a finding rather than a gap — everything downstream reads anything but
+// 'same-space' as a bedroom of its own — and the flat would be kept as known to clear the bar
+// instead of counted among the shrugs, which is the one thing the tally is there to prevent.
+check('a stored separation nobody recognises reads as unknown', toSleepingSeparation('mezzanine-ish'), null);
+const unreadable = applyFilter(
+  [flat({ rightmoveId: 'unreadable', analysis: analysis({ sleepingSeparation: toSleepingSeparation('mezzanine-ish') }) })],
+  only({ amenities: ['separateSleeping'] }),
+);
+check('so its flat stays', unreadable.kept.map((e) => e.rightmoveId), ['unreadable']);
+check('and is counted among the unknowns rather than the separated', unreadable.unknowns, 1);
 
 // Every bar has to be cleared, not any of them.
 check(

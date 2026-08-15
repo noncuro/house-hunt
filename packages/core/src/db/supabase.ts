@@ -46,6 +46,7 @@ import type { SearchCard } from '../search-card';
 import { sweepProgress } from '../sweep';
 import { type StationInfo } from '../tfl';
 import type { ArchiveReason, PropertyStage, Stage } from '../stage';
+import { toSleepingSeparation } from '../types';
 import type {
   Analysis,
   Confidence,
@@ -931,7 +932,9 @@ function toAnalysis(data: Record<string, any>): Analysis {
     laundryConfidence: (data.laundry_confidence ?? null) as Confidence | null,
     hasDishwasher: data.has_dishwasher ?? null,
     dishwasherConfidence: (data.dishwasher_confidence ?? null) as Confidence | null,
-    sleepingSeparation: (data.sleeping_separation ?? null) as Analysis['sleepingSeparation'],
+    // Parsed rather than asserted: the column is plain text, and a value that is not one of the
+    // three must read as unknown rather than as a bed with its own room. See `toSleepingSeparation`.
+    sleepingSeparation: toSleepingSeparation(data.sleeping_separation),
     sleepingSeparationConfidence: (data.sleeping_separation_confidence ?? null) as Confidence | null,
     utilitiesIncluded: data.utilities_included ?? null,
     utilitiesConfidence: (data.utilities_confidence ?? null) as Confidence | null,
