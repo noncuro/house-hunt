@@ -225,7 +225,7 @@ function HuntName({
         title="Which house hunt"
         label={
           <>
-            {project.name}
+            <span className="hunt-name">{project.name}</span>
             <Icon name="chevron" size={11} />
           </>
         }

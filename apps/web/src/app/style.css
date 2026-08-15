@@ -415,13 +415,35 @@ code {
   z-index: 40;
 }
 
+/* No `overflow: hidden` here, however much a heading that truncates wants it.
+ *
+ *  This heading stopped being only a heading when the hunt switcher moved into it: it now contains
+ *  a menu whose panel is `position: absolute` and drops *below* the 31px line the heading occupies.
+ *  An overflow clip on an ancestor clips absolutely-positioned descendants too, so the ellipsis put
+ *  here for a long hunt name was quietly eating the whole popover — the button toggled, the panel
+ *  mounted, `aria-expanded` went true, and nothing appeared. Which reads, exactly, as "there is no
+ *  way to change hunts".
+ *
+ *  The truncation it was doing is real and is kept; it just belongs to the name, not to the box the
+ *  name and a popover share. See `.hunt-name`. */
 .shell-hunt {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* The part that may be long. Bounded rather than unbounded-with-a-clip so the chevron beside it
+   stays on screen and stays clickable — truncating the button itself would put the ellipsis over
+   the one thing that says the name is a control. */
+.hunt-name,
+.shell-hunt .inline-name-value {
+  display: inline-block;
+  max-width: 22ch;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .shell-rule {

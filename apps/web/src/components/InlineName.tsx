@@ -62,7 +62,9 @@ export function InlineName({
   if (!editing) {
     return (
       <span className={className}>
-        {value}
+        {/* The name in an element of its own, so a caller can bound and ellipsis it without the
+            pencil beside it being what gets cut off. */}
+        <span className="inline-name-value">{value}</span>
         <button
           type="button"
           className="inline-name-edit"

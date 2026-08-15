@@ -22,15 +22,20 @@ import { keys, useExtension } from '@/lib/queries';
  *
  *  - **Absent.** Not installed on this laptop at all. This used to be a sentence and nothing else,
  *    on the argument that a button which cannot install anything is worse than saying so — but the
- *    Install tab exists now and does hand you the zip and the steps, so "not installed" without the
- *    way to fix it is a dead end somebody has to guess their way out of. */
+ *    Install screen exists now and does hand you the zip and the steps, so "not installed" without
+ *    the way to fix it is a dead end somebody has to guess their way out of.
+ *
+ *  Every one of those that has a fix carries the button to it, and none of them name where it lives.
+ *  The stale banner used to say "the Install tab", which is not a tab — the screen is reached from
+ *  the account menu behind your initials — so the one instruction it gave was a place to look that
+ *  does not exist. Directions in prose go stale the moment the navigation moves; a button does not. */
 export function ExtensionNotice({
   email,
   onInstall,
 }: {
   email: string;
-  /** Opens the Install tab. Optional because the route lives on the page rather than here; without
-   *  it the notice is the sentence it used to be. */
+  /** Opens the Install screen. Optional because the route lives on the page rather than here;
+   *  without it the notices are the sentences they used to be. */
   onInstall?: () => void;
 }) {
   const client = useQueryClient();
@@ -63,8 +68,13 @@ export function ExtensionNotice({
     (state.status === 'signed-in' || state.status === 'signed-out') && extensionBehind(installedVersion) ? (
       <p className="notice notice-warn">
         Your browser extension is out of date{installedVersion ? ` (v${installedVersion})` : ''} — this
-        site ships v{EXPECTED_EXTENSION_VERSION}. Re-download it from the <strong>Install</strong> tab
-        and hit Reload on <code>chrome://extensions</code>; your session and settings survive it.
+        site ships v{EXPECTED_EXTENSION_VERSION}. Re-download it and hit Reload on{' '}
+        <code>chrome://extensions</code>; your session and settings survive it.{' '}
+        {onInstall && (
+          <button className="key" data-testid="notice-update" onClick={onInstall}>
+            Get the new one
+          </button>
+        )}
       </p>
     ) : null;
 

@@ -166,17 +166,38 @@ interface JourneyAnswer {
 // this is about call volume rather than money — a journey costs nothing but TfL's goodwill.
 // ------------------------------------------------------------------------------------------------
 
-/** Roughly forty listings an hour with five places and three modes each, which is more than anybody
- *  browsing does and far less than a loop would. */
-const CALLS_PER_HOUR = 600;
+/** Per minute rather than per hour, which is a change of shape and not only of number.
+ *
+ *  The old cap was 600 an hour, justified as "roughly forty listings an hour with five places and
+ *  three modes each, which is more than anybody browsing does". That stopped being true when Places
+ *  became one screen over the whole pile: opening the table asks for every flat at once, so fifty
+ *  flats with five places and three modes is 750 legs in one legitimate page load. The person who
+ *  did nothing wrong then spent the *rest of the hour* refused, which is the failure — an hour-long
+ *  window turns one honest burst into an hour of a broken-looking app.
+ *
+ *  What the cap is actually protecting is TfL, and TfL's own limit is per minute (500 keyed, 50
+ *  unkeyed — see `TFL_APP_KEY`), so a per-minute window is the one that measures the thing being
+ *  protected. 300 sits under the keyed allowance with room for the backfill alongside, absorbs any
+ *  single page load whole, and still stops a loop dead: a runaway caller is refused within seconds
+ *  and recovers a minute later rather than an hour later.
+ *
+ *  `MAX_TFL_CONCURRENCY` is what keeps a burst from arriving all at once; this is what bounds the
+ *  total. The two are not substitutes and neither implies the other. */
+const CALLS_PER_MINUTE = 300;
+
+const RATE_WINDOW_MS = 60 * 1000;
 
 async function checkRate(caller: Caller): Promise<void> {
-  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
   const used = await rpc<number>('travel_calls_since', { p_user_id: caller.userId, p_since: since });
-  if ((used ?? 0) >= CALLS_PER_HOUR) {
-    // A stated state, not a 500: the interface says "too many lookups in the last hour" and the
-    // person stops, rather than reloading into the same wall.
-    throw new HttpError(429, 'rate-limited', `${used} travel lookups in the last hour, limit ${CALLS_PER_HOUR}`);
+  if ((used ?? 0) >= CALLS_PER_MINUTE) {
+    // A stated state, not a 500: the interface says how many and over what, and — unlike the hourly
+    // version — waiting a moment is genuinely the fix, so saying so is not a brush-off.
+    throw new HttpError(
+      429,
+      'rate-limited',
+      `${used} travel lookups in the last minute, limit ${CALLS_PER_MINUTE} — try again in a minute`,
+    );
   }
 }
 
