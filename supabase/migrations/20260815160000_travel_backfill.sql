@@ -186,9 +186,22 @@ language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
+-- Keyed exactly as `cache_travel` keys the answer, because these two tables are looked up against
+-- each other and a backoff is only ever about a pair the cache might hold. Comparing raw arguments
+-- against trimmed cache rows would make ` N1 1AA ` miss the answer it has and insert a backoff row
+-- under a key nothing will ever match or clear — outstanding forever, invisible, and impossible to
+-- attribute a year later. Today's only caller passes trimmed postcodes (`travel_gaps` trims on the
+-- way out), so this is the RPC contract rather than a live path; it is written down here because
+-- the next caller will not know that.
+declare
+  v_origin text := nullif(trim(p_origin_postcode), '');
+  v_dest   text := nullif(trim(p_dest_postcode), '');
 begin
   if not public.is_service_role() then
     raise exception 'record_travel_failure: the travel function records these, not clients';
+  end if;
+  if v_origin is null or v_dest is null then
+    raise exception 'record_travel_failure: both postcodes are required';
   end if;
 
   -- A failure that arrives after the answer did is not a failure to back off on. Two runs can draw
@@ -200,14 +213,22 @@ begin
   --
   -- The existence test is part of the insert rather than an `if exists ... then return` above it,
   -- because a check and a write as two statements are two snapshots, which is the same shape of bug
-  -- one order down. As one statement it is as tight as read committed goes.
+  -- one order down. As one statement it is as tight as read committed goes, and not tighter: the
+  -- `not exists` cannot see a `cache_travel` insert that has not committed yet, so a loser whose
+  -- statement snapshot predates the winner's commit still records a backoff the winner's `clear`
+  -- has already been and gone for. Accepted, not overlooked (TODO.md). Shutting it would mean a
+  -- transaction-scoped advisory lock on the journey key in *both* functions, which puts a lock on
+  -- every cached journey — including the interactive path, which is most of them — to save an
+  -- `attempts` counter one higher than earned on a row that suppresses nothing while the answer it
+  -- sits beside exists. Nothing in the application deletes a `travel_time` row; only the fixture
+  -- and RLS harnesses do.
   insert into public.travel_backoff as tb (
     origin_postcode, dest_postcode, mode, attempts, last_error, next_attempt_at, updated_at)
-  select p_origin_postcode, p_dest_postcode, p_mode, 1, p_error, now() + interval '5 minutes', now()
+  select v_origin, v_dest, p_mode, 1, p_error, now() + interval '5 minutes', now()
    where not exists (
      select 1 from public.travel_time tt
-      where tt.origin_postcode = p_origin_postcode
-        and tt.dest_postcode   = p_dest_postcode
+      where tt.origin_postcode = v_origin
+        and tt.dest_postcode   = v_dest
         and tt.mode            = p_mode)
   on conflict (origin_postcode, dest_postcode, mode) do update set
     attempts        = tb.attempts + 1,
@@ -222,7 +243,7 @@ begin
   -- appears in the log.
   if not found then
     raise notice 'record_travel_failure: % -> % (%) is already answered; not backing off a failure the cache overtook',
-      p_origin_postcode, p_dest_postcode, p_mode;
+      v_origin, v_dest, p_mode;
   end if;
 end;
 $$;
@@ -232,7 +253,11 @@ grant execute on function public.record_travel_failure(text, text, text, text) t
 
 -- Called when a leg finally answers — including a settled no-route, which is an answer. Leaving the
 -- row instead would be harmless today, because a cached leg is no longer a gap, but it would quietly
--- delay the pair by hours the day a `travel_time` row is deleted or its basis moves on.
+-- delay the pair by hours the day a `travel_time` row is deleted.
+--
+-- Trimmed on the same argument as `record_travel_failure`: this deletes by the key that one wrote,
+-- and a clear that normalises differently from the insert is a row that cannot be cleared by the
+-- caller that made it.
 create or replace function public.clear_travel_failure(
   p_origin_postcode text,
   p_dest_postcode   text,
@@ -243,14 +268,20 @@ language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
+declare
+  v_origin text := nullif(trim(p_origin_postcode), '');
+  v_dest   text := nullif(trim(p_dest_postcode), '');
 begin
   if not public.is_service_role() then
     raise exception 'clear_travel_failure: the travel function clears these, not clients';
   end if;
+  if v_origin is null or v_dest is null then
+    raise exception 'clear_travel_failure: both postcodes are required';
+  end if;
 
   delete from public.travel_backoff
-   where origin_postcode = p_origin_postcode
-     and dest_postcode   = p_dest_postcode
+   where origin_postcode = v_origin
+     and dest_postcode   = v_dest
      and mode            = p_mode;
 end;
 $$;
