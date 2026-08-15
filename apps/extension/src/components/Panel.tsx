@@ -20,7 +20,7 @@ import {
 import { Flags } from '@house-hunt/ui';
 import { webAppUrl } from '@/lib/web-app';
 import { HubFact } from '@house-hunt/ui';
-import { galleryFor, hubsFromProject, type Hub } from '@house-hunt/core';
+import { galleryFor, hubsFromProject, travelDestinations, type Hub } from '@house-hunt/core';
 import { formatDuration, MapsButton, MODE_ICON, readTravel, Routes, TransitBasis } from '@house-hunt/ui';
 import { Stations, STATIONS_SHOWN } from '@house-hunt/ui';
 import { Gallery } from '@house-hunt/ui';
@@ -541,14 +541,14 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       </Section>
 
       <Section title="Travel times" note={<TransitBasis />}>
-        {places.length === 0 ? (
-          <div className="rm-empty">Add places in Settings, on the website</div>
+        {travelDestinations(places).length === 0 ? (
+          <div className="rm-empty">Nowhere to measure to — add somewhere with a postcode, on the website</div>
         ) : !listing.postcode ? (
           <div className="rm-empty">No postcode on this listing</div>
         ) : travel === null ? (
           <div className="rm-empty rm-working">Working…</div>
         ) : (
-          places.map((place) => {
+          travelDestinations(places).map((place) => {
             const forPlace = travel.filter((x) => x.placeId === place.id);
             const verdict = readTravel(forPlace);
             const shown = TRAVEL_MODES.map((mode) => {

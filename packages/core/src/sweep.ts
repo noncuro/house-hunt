@@ -303,7 +303,10 @@ export function sweepSearchUrl({ hub, days, page = 1, criteria }: SweepSearch): 
     // saved criteria. A pasted search URL carries the radius that was on screen when it was
     // copied, and one radius for every place is exactly what having a radius per place is for —
     // half a mile around the office is not half a mile around the whole search area.
-    radius: hub.radiusMiles.toFixed(1),
+    // The number as configured. `toFixed(1)` turned a quarter mile into 0.3, which is not one of
+    // the radii Rightmove accepts — so a place set to the smallest option searched a wider area
+    // than anybody chose, and the URL looked right.
+    radius: String(hub.radiusMiles),
     maxDaysSinceAdded: String(days),
     index: String(Math.max(0, page - 1) * RESULTS_PER_PAGE),
     sortType: SORT_NEWEST_FIRST,

@@ -103,6 +103,10 @@ export interface PriceChange {
 export interface PricePoint {
   price: string;
   seenAt: string;
+  /** `property_price.id`, monotonic, and the tie-break when two observations share a timestamp —
+   *  `clock_timestamp()` does not promise two distinct readings. Without it the order of the last
+   *  two decides "reduced" or "up" on a coin toss. */
+  id?: number;
 }
 
 /** The most recent move in a flat's price, or null if it has only ever had the one.
@@ -118,7 +122,12 @@ export interface PricePoint {
  *  moved, and saying so without an arrow is honest, where saying nothing is not. */
 export function latestChange(points: PricePoint[]): PriceChange | null {
   if (points.length < 2) return null;
-  const ordered = [...points].sort((a, b) => Date.parse(a.seenAt) - Date.parse(b.seenAt));
+  // Then by id, which is what breaks a tie between two observations that share a timestamp. Their
+  // order is the whole answer — it decides "reduced" from "up" — so leaving it to whatever the
+  // database happened to return would be a coin toss printed as a fact.
+  const ordered = [...points].sort(
+    (a, b) => Date.parse(a.seenAt) - Date.parse(b.seenAt) || (a.id ?? 0) - (b.id ?? 0),
+  );
   const to = ordered[ordered.length - 1]!;
   const from = ordered[ordered.length - 2]!;
   const before = parseMonthlyPrice(from.price);

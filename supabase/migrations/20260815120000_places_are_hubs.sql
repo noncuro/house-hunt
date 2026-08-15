@@ -34,7 +34,11 @@ alter table place add column if not exists display_location_id   text;
 -- has to be converted on the way out. Null means "not a sweep centre", which is the same sentence
 -- the identifier above tells; both are required before a search URL can be built, and the code
 -- refuses rather than picking a radius nobody chose.
-alter table place add column if not exists sweep_radius_miles numeric(3, 1);
+-- Two decimal places, not one. Rightmove's own radius control offers a quarter mile, and
+-- `numeric(3,1)` rounds 0.25 to 0.3 on the way in — which is not one of the values Rightmove
+-- accepts, so the select would have no matching option and the search URL would carry a radius
+-- nobody chose. Exactly the class of silent default this project keeps refusing.
+alter table place add column if not exists sweep_radius_miles numeric(4, 2);
 alter table place add column if not exists max_days_since_added int;
 
 -- A hub never had a postcode — it was a name resolved to a coordinate and an identifier — so the
@@ -47,12 +51,40 @@ comment on column place.sweep_radius_miles is
   'Miles to search around this place, or null for a place we only measure travel time to. Paired '
   'with rightmove_location_id: both are needed to build a search URL, and neither is defaulted.';
 
+-- One place per name per hunt. Case-insensitive, because "Work" and "work" are the same place to
+-- everybody except a database, and the sweep is recorded by name.
+--
+-- Existing duplicates are renamed rather than merged or deleted: two places with one name are two
+-- rows somebody made on purpose, and which is "the" Work is not ours to decide. The suffix makes
+-- them distinguishable and visible, which is what gets them fixed.
+do $$
+declare dup record;
+begin
+  for dup in
+    select id, label, row_number() over (partition by project_id, lower(label) order by created_at, id) as n
+      from place
+  loop
+    if dup.n > 1 then
+      update place set label = dup.label || ' (' || dup.n || ')' where id = dup.id;
+    end if;
+  end loop;
+end $$;
+
+create unique index if not exists place_project_label_key on place (project_id, lower(label));
+
 -- ---------------------------------------------------------------------------------------------
 -- Fold the neighbourhoods in.
 --
 -- Matched on (project_id, lower(name)) against existing places so a hunt that saved "Angel" as
 -- both a neighbourhood and a place ends up with one row carrying both jobs, rather than two rows
 -- with the same name and half the answer each.
+--
+-- Which is only well defined if the name picks out one row. Nothing enforced that before — `place`
+-- had no uniqueness at all, while `project_hub` had `unique (project_id, name)` — so two places
+-- called "Work" would both collect the hub's identifier and radius, show two identical sweep links,
+-- and record progress under neither: `placeIdFor` asks for one row by name and gets two. The
+-- constraint goes on below, after the fold, and the fold is written to leave nothing that violates
+-- it.
 -- ---------------------------------------------------------------------------------------------
 do $$
 begin
@@ -106,6 +138,20 @@ create unique index if not exists place_project_id_idx on place (project_id, id)
 
 alter table hub_sweep add column if not exists place_id uuid references place(id) on delete cascade;
 
+-- The name this search was filed under, back again. It was `hub_sweep`'s primary key originally and
+-- the multi-tenant migration dropped it in favour of `hub_id`, on the reasoning that the hub row
+-- carries the name. That reasoning holds right up until the row is deleted — and `place_id` is
+-- deliberately nullable here so a sweep outlives the place it was of, which is the whole point of
+-- keeping the history. Without a name such a row says which pages were recorded and refuses to say
+-- of what. `search_sighting.hub` has always been a text name for exactly this reason.
+alter table hub_sweep add column if not exists hub text;
+
+-- Only the backfill is guarded on `project_hub` still being here. The schema changes below it are
+-- not: they used to sit inside the same block, so a database where the table was already gone —
+-- one restored from a dump taken after this ran, a re-run against a partly-migrated copy — got the
+-- early return and kept `hub_sweep.hub_id` with no composite key onto `place`. The client stopped
+-- writing `hub_id` in the same commit, so a surviving `not null` on it fails every sweep write, and
+-- the header above would be claiming a foreign key that was never created.
 do $$
 begin
   if to_regclass('public.project_hub') is null then
@@ -113,22 +159,43 @@ begin
   end if;
 
   update hub_sweep s
-     set place_id = p.id
+     set place_id = p.id,
+         hub      = coalesce(s.hub, h.name)
     from project_hub h
     join place p on p.project_id = h.project_id and lower(p.label) = lower(h.name)
    where s.hub_id = h.id
      and s.place_id is null;
 
-  -- A sweep whose hub was dropped before this migration ran has no place to point at. It keeps its
-  -- name and its pages and loses only the link, which is the same state it was in when the hub was
-  -- deleted — the alternative is throwing away the history that dates the next window.
-  alter table hub_sweep drop constraint if exists hub_sweep_project_hub_fkey;
-  alter table hub_sweep drop column if exists hub_id;
-
-  alter table hub_sweep add constraint hub_sweep_place_fkey
-    foreign key (project_id, place_id) references place (project_id, id) on delete cascade;
+  -- A sweep whose hub row is still there but whose name never matched a place — a hub renamed after
+  -- its sweep was recorded. It keeps the name rather than being left anonymous.
+  update hub_sweep s
+     set hub = coalesce(s.hub, h.name)
+    from project_hub h
+   where s.hub_id = h.id
+     and s.hub is null;
 
   drop table project_hub;
+end $$;
+
+-- A sweep whose hub was dropped before this migration ran has no place to point at, which is why
+-- `place_id` is nullable. It keeps its name and its pages and loses only the link.
+--
+-- That is not the same as deleting a place from here on: both foreign keys cascade, so removing a
+-- sweep centre removes its sweep, and the button that does it says as much. Keeping a sweep against
+-- a place nobody has any more would date the next window of a search nobody is running — the one
+-- failure in the sweep that looks exactly like success.
+alter table hub_sweep drop constraint if exists hub_sweep_project_hub_fkey;
+alter table hub_sweep drop column if exists hub_id;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'hub_sweep'::regclass and conname = 'hub_sweep_place_fkey'
+  ) then
+    alter table hub_sweep add constraint hub_sweep_place_fkey
+      foreign key (project_id, place_id) references place (project_id, id) on delete cascade;
+  end if;
 end $$;
 
 -- `recordSweepPage` upserts on this, so it has to be unique — as `hub_id` was.

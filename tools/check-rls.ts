@@ -283,11 +283,22 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
     .insert({ project_id: PROJECT_B, rightmove_id: LISTING_B, rating: 'maybe', updated_at: new Date().toISOString() })).error);
   must("seeding B's sighting", (await admin.from('search_sighting')
     .insert({ project_id: PROJECT_B, rightmove_id: LISTING_B, hub: 'B hub', url: 'https://example.test/b' })).error);
-  const { data: hubB, error: hubError } = await admin.from('project_hub')
-    .insert({ project_id: PROJECT_B, name: 'B hub', lat: 51.5, lon: -0.1 }).select('id').single();
-  must("seeding B's hub", hubError);
+  // A place B searches around, rather than a `project_hub` row: the two tables are one now (see the
+  // `places_are_hubs` migration), and a sweep is keyed on the place it is a sweep of.
+  const { data: sweptB, error: sweptError } = await admin.from('place')
+    .insert({
+      project_id: PROJECT_B,
+      label: 'B hub',
+      lat: 51.5,
+      lon: -0.1,
+      rightmove_location_id: 'STATION^1',
+      display_location_id: 'B-Hub.html',
+      sweep_radius_miles: 1,
+    })
+    .select('id').single();
+  must("seeding B's swept place", sweptError);
   must("seeding B's sweep", (await admin.from('hub_sweep')
-    .insert({ hub_id: hubB!.id, project_id: PROJECT_B, last_result_count: 10 })).error);
+    .insert({ place_id: sweptB!.id, hub: 'B hub', project_id: PROJECT_B, last_result_count: 10 })).error);
   must("seeding B's invite", (await admin.from('invite')
     .insert({ email: 'someone-else@example.test', project_id: PROJECT_B, invited_by: userB })).error);
   must("seeding B's spend", (await admin.from('api_usage')
@@ -330,7 +341,7 @@ async function main() {
 
   const PROJECT_SCOPED = [
     'place', 'verdict', 'verdict_history', 'property_stage', 'search_sighting', 'hub_sweep',
-    'project_hub', 'project_property', 'invite', 'api_usage',
+    'project_property', 'invite', 'api_usage',
   ] as const;
 
   // ----------------------------------------------------------------------------------------- //
@@ -371,8 +382,10 @@ async function main() {
   refused("search_sighting: insert into B", await a.from('search_sighting').insert({ project_id: PROJECT_B, rightmove_id: 'x', hub: 'h', url: 'u' }).select());
   refused("search_sighting: delete B's rows", await a.from('search_sighting').delete().eq('project_id', PROJECT_B).select());
 
-  refused("project_hub: insert into B", await a.from('project_hub').insert({ project_id: PROJECT_B, name: 'stolen', lat: 1, lon: 1 }).select());
-  refused("project_hub: delete B's hubs", await a.from('project_hub').delete().eq('project_id', PROJECT_B).select());
+  // `place` carries the neighbourhoods now as well as the destinations, so this one assertion
+  // covers what two used to: stealing a search centre and stealing a commute is the same write.
+  refused("place: insert into B", await a.from('place').insert({ project_id: PROJECT_B, label: 'stolen', postcode: 'X' }).select());
+  refused("place: delete B's places", await a.from('place').delete().eq('project_id', PROJECT_B).select());
 
   refused("hub_sweep: delete B's sweeps", await a.from('hub_sweep').delete().eq('project_id', PROJECT_B).select());
   refused("project_property: link B's listing to B", await a.from('project_property').insert({ project_id: PROJECT_B, rightmove_id: LISTING_A }).select());
@@ -393,12 +406,13 @@ async function main() {
   refused('admin_set_user_cap: a non-admin raising a cap', await rpc(a, 'admin_set_user_cap', { p_user_id: userA, p_cap: 9999 }));
 
   console.log("\n  ...and project B's rows are all still there");
-  is("B's place survived", await count('place', 'project_id', PROJECT_B), 1);
+  // Two: the office B commutes to, and the place B searches around. One table does both jobs now,
+  // so one assertion covers what two used to.
+  is("B's places survived", await count('place', 'project_id', PROJECT_B), 2);
   is("B's verdict survived", await count('verdict', 'project_id', PROJECT_B), 1);
   is("B's verdict is unchanged", (await admin.from('verdict').select('note').eq('project_id', PROJECT_B).single()).data?.note, "B's opinion");
   is("B's funnel is untouched", (await admin.from('property_stage').select('stage').eq('project_id', PROJECT_B).single()).data?.stage, 'viewed');
   is("B's sighting survived", await count('search_sighting', 'project_id', PROJECT_B), 1);
-  is("B's hub survived", await count('project_hub', 'project_id', PROJECT_B), 1);
   is("B's sweep survived", await count('hub_sweep', 'project_id', PROJECT_B), 1);
   is("B's link survived", await count('project_property', 'project_id', PROJECT_B), 1);
   is("B's invite survived", await count('invite', 'project_id', PROJECT_B), 1);

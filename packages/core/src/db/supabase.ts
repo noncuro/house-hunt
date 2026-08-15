@@ -800,14 +800,18 @@ export async function getPriceHistoryFor(
 
   const { data, error } = await db()
     .from('property_price')
-    .select('rightmove_id, price, seen_at')
+    .select('id, rightmove_id, price, seen_at')
     .in('rightmove_id', [...new Set(rightmoveIds)])
-    .order('seen_at', { ascending: false });
+    .order('seen_at', { ascending: false })
+    // The tie-break, and the reason the surrogate key exists at all. `clock_timestamp()` does not
+    // promise two distinct readings, and two observations sharing one come back in whichever order
+    // Postgres feels like — which decides whether the card reads "reduced" or "up".
+    .order('id', { ascending: false });
   fail('reading price history', error);
 
   for (const r of (data ?? []) as any[]) {
     const list = by.get(r.rightmove_id) ?? [];
-    list.push({ price: r.price, seenAt: r.seen_at });
+    list.push({ price: r.price, seenAt: r.seen_at, id: r.id });
     by.set(r.rightmove_id, list);
   }
   return by;
@@ -1252,8 +1256,14 @@ export async function recordSightings(hub: string, cards: SearchCard[]): Promise
 export interface HubSweep {
   /** The place's name, which is how the sweep panel and `search_sighting` both refer to it —
    *  a record of what a search was filed under at the time, not a foreign key, so renaming a place
-   *  does not rewrite history. `placeId` is the `place` row it belongs to, and is null for a sweep
-   *  whose place has since been deleted. */
+   *  does not rewrite history.
+   *
+   *  `placeId` is the `place` row it belongs to. Null only for a sweep whose neighbourhood was
+   *  already gone when `places_are_hubs` ran, which is why the column is nullable — *not* for a
+   *  place deleted since. Deleting a place cascades its sweep away on purpose, and the button that
+   *  does it says so: the sweep history is the record of having worked that search to the end, and
+   *  keeping it against a place that no longer exists would date the next window of a search
+   *  nobody is running. */
   hub: string;
   placeId: string | null;
   /** The last time this hub was swept *completely*, or null for one that has never been. A hub
@@ -1319,7 +1329,11 @@ async function placeIdFor(projectId: string, hub: string, placeId?: string): Pro
     .from('place')
     .select('id')
     .eq('project_id', projectId)
-    .eq('label', hub)
+    // Case-insensitively, matching the unique index on `(project_id, lower(label))` and the way
+    // the migration folded hubs in. A sweep filed under "Angel" against a place saved as "angel"
+    // is the same search, and an exact match would refuse to record the page and say the place
+    // does not exist.
+    .ilike('label', hub)
     .maybeSingle();
   fail('finding this place', error);
   if (!data) throw new Error(`"${hub}" is not one of this project's places — add it first`);

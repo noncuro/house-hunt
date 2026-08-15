@@ -12,6 +12,7 @@ import { useTravel } from '@/lib/queries';
 import {
   TRAVEL_MODES,
   galleryFor,
+  travelDestinations,
   type ArchiveReason,
   type Place,
   type Rating,
@@ -121,8 +122,11 @@ export function Detail({
         </h3>
         {!entry.postcode ? (
           <p className="dim">No postcode on this listing.</p>
-        ) : places.length === 0 ? (
-          <p className="dim">Add places in Settings.</p>
+        ) : travelDestinations(places).length === 0 ? (
+          // Counted the same way the rows below are listed. A hunt whose only places are
+          // neighbourhoods it searches around has nowhere to time a journey to, and the honest
+          // answer is the same one as having no places at all — not an empty list under a heading.
+          <p className="dim">Nowhere to measure to yet — add somewhere with a postcode on Your Hunt.</p>
         ) : travelQuery.isError ? (
           // A refusal is not a wait. `travel` is `data ?? null`, and `data` stays undefined when the
           // query fails, so every failure used to render as "Working…" — a spinner that never
@@ -139,7 +143,7 @@ export function Detail({
         ) : travel === null ? (
           <p className="dim working">Working…</p>
         ) : (
-          places.map((place) => {
+          travelDestinations(places).map((place) => {
             const forPlace = travel.filter((t) => t.placeId === place.id);
             // Exactly what the panel shows, from the same components: the minutes stay plain
             // numbers, transit hovers to reveal which lines you'd ride, and one map button per

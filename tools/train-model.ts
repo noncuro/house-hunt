@@ -57,7 +57,7 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(proj
 // folds by position — an unordered `json_agg` would cross-validate a different partition each run.
 const sql = `
 select json_build_object(
-  'hubs', (select coalesce(json_agg(json_build_object('lat',lat,'lon',lon) order by sort_order),'[]') from project_hub where project_id=:'project_id'),
+  'hubs', (select coalesce(json_agg(json_build_object('lat',lat,'lon',lon) order by sort_order),'[]') from place where project_id=:'project_id'),
   'rows', (select coalesce(json_agg(row_to_json(t) order by t.rightmove_id),'[]') from (
     select v.rightmove_id, v.rating, p.price, p.bedrooms, p.bathrooms, p.floor_area_sqft, p.furnish_type,
            coalesce(p.postcode_lat, p.latitude) as lat, coalesce(p.postcode_lon, p.longitude) as lon,

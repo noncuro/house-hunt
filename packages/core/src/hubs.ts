@@ -216,10 +216,32 @@ export function isSwept(place: Place): boolean {
   );
 }
 
-/** The places a project goes looking through. A place that is only measured against is left out
- *  here rather than shown as a dead link; the sweep view still lists it, and says why. */
+/** The places a journey can actually be timed to: the ones with a postcode.
+ *
+ *  Routing is postcode to postcode (see `TRAVEL_BASIS` in tfl.ts), so a place without one has no
+ *  journey — which is the normal state for somewhere the hunt searches around rather than commutes
+ *  to, and for every neighbourhood the `places_are_hubs` migration folded in.
+ *
+ *  It matters that the travel views ask for this rather than iterating every place. They read an
+ *  absent row as "no route", which is TfL saying the journey is impossible — so listing a
+ *  postcode-less place would put a red "no route to Hampstead" on every listing in the hunt, a
+ *  confident claim about a journey nobody asked for. */
+export function travelDestinations<T extends { postcode: string | null }>(places: T[]): T[] {
+  return places.filter((p) => p.postcode !== null);
+}
+
+/** The places a project goes looking through — everywhere somebody has said to search around,
+ *  whether or not Rightmove's own name for it has been resolved yet.
+ *
+ *  A radius is the statement of intent, so a place with one belongs on the sweep list even with no
+ *  identifier: that is a place whose resolve has not been run or did not work, and it needs a row
+ *  saying so. Filtering on the identifier instead made it vanish between ticking the box and the
+ *  lookup coming back — no link, no error, no row, which reads as the tick having done nothing.
+ *
+ *  `sweepSearchUrl` still refuses to build a URL for it. The list is what to show; the URL is what
+ *  is safe to open, and they are different questions. */
 export function sweepableHubs(places: Place[]): Place[] {
-  return places.filter((p) => p.locationIdentifier !== null);
+  return places.filter((p) => p.sweepRadiusMiles !== null || p.locationIdentifier !== null);
 }
 
 /** The `SweepHub` a `place` row stands for. `rightmove` is null unless the place is fully

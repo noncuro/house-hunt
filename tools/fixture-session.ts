@@ -291,8 +291,9 @@ export interface FixtureData {
   projectId: string;
   userId: string;
   otherUserId: string;
-  /** How many hubs the fixture project has. The harnesses assert against `hubs:list` rather than
-   *  this, but it is here so a mismatch can be reported as a number rather than as a shrug. */
+  /** How many places the fixture project searches around. The harnesses assert against
+   *  `places:list` rather than this, but it is here so a mismatch reads as a number rather than as
+   *  a shrug. */
   hubCount: number;
   /** Every listing id the fixture owns, newest sighting first. */
   listingIds: string[];
@@ -324,25 +325,26 @@ async function seed(alsoCache: ExtraCache[]): Promise<FixtureData> {
   must('setting the active project', (await db.from('profile')
     .update({ active_project_id: FIXTURE_PROJECT }).in('id', [userId, otherUserId])).error);
 
-  // The neighbourhoods, from `SEED_HUBS` — the same five the migration seeds for a new project,
-  // and the same list `check:sweep` pins the search URLs against. A harness must still assert
-  // against what `hubs:list` returns rather than against this: hubs are project data now, and a
-  // check that reads the constant would pass for a project that has none.
-  must('seeding the hubs', (await db.from('project_hub').insert(
-    SEED_HUBS.map((hub, i) => ({
+  // Places, in one insert, because they are one table: the destinations this hunt commutes to and
+  // the neighbourhoods it searches around. The searched ones come from `SEED_HUBS` — the same five
+  // the migration seeds for a new project and the same list `check:sweep` pins the search URLs
+  // against. A harness must still assert against what `places:list` returns rather than against
+  // that constant: places are project data, and a check that reads the constant would pass for a
+  // project that has none.
+  must('seeding the places', (await db.from('place').insert([
+    ...PLACES.map((place, i) => ({ ...place, project_id: FIXTURE_PROJECT, sort_order: i })),
+    ...SEED_HUBS.map((hub, i) => ({
       project_id: FIXTURE_PROJECT,
-      name: hub.name,
+      label: hub.name,
+      postcode: null,
       lat: hub.lat,
       lon: hub.lon,
       rightmove_location_id: hub.rightmove?.locationIdentifier ?? null,
       display_location_id: hub.rightmove?.displayLocationIdentifier ?? null,
-      sort_order: i,
+      sweep_radius_miles: hub.radiusMiles,
+      sort_order: PLACES.length + i,
     })),
-  )).error);
-
-  must('seeding the places', (await db.from('place').insert(
-    PLACES.map((place, i) => ({ ...place, project_id: FIXTURE_PROJECT, sort_order: i })),
-  )).error);
+  ])).error);
 
   const now = Date.now();
   must('seeding the properties', (await db.from('property').insert(
@@ -634,12 +636,15 @@ export interface FixtureHub {
  *  is no extension to ask. */
 export async function fixtureHubs(): Promise<FixtureHub[]> {
   const { data, error } = await db
-    .from('project_hub')
-    .select('name, rightmove_location_id')
+    .from('place')
+    .select('label, rightmove_location_id')
     .eq('project_id', FIXTURE_PROJECT)
+    // The ones this hunt searches around, not every place it measures to. A harness asking for the
+    // sweepable list and getting the office back would assert against a search that cannot exist.
+    .not('rightmove_location_id', 'is', null)
     .order('sort_order');
-  if (error) throw new Error(`fixture: reading project_hub: ${error.message}`);
-  return (data ?? []).map((row) => ({ name: row.name, locationIdentifier: row.rightmove_location_id }));
+  if (error) throw new Error(`fixture: reading places: ${error.message}`);
+  return (data ?? []).map((row) => ({ name: row.label, locationIdentifier: row.rightmove_location_id }));
 }
 
 /** Did the fixture project end up linked to this listing?

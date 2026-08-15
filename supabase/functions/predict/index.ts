@@ -104,7 +104,11 @@ serve(async (request): Promise<Result> => {
       `verdict?project_id=eq.${eq(projectId)}&select=rightmove_id,rating,updated_at&order=updated_at.asc,rightmove_id.asc`,
     ),
     rest<Array<{ rightmove_id: string }>>(`training_exclusion?project_id=eq.${eq(projectId)}&select=rightmove_id`),
-    rest<HubPoint[]>(`project_hub?project_id=eq.${eq(projectId)}&select=lat,lon`),
+    // `place`, not `project_hub`: the two tables are one since the `places_are_hubs` migration.
+    // The model's distance feature reads every place with a coordinate, which is what the panel and
+    // the shortlist already fixed a listing against — so the feature the model is scored on is the
+    // one it was trained on.
+    rest<HubPoint[]>(`place?project_id=eq.${eq(projectId)}&select=lat,lon`),
   ]);
 
   const excluded = new Set(exclusions.map((e) => e.rightmove_id));

@@ -571,11 +571,16 @@ async function checkTriage({ page }: Stage): Promise<void> {
  *  members are the two accounts it created. */
 async function checkTabs({ page }: Stage): Promise<void> {
   for (const [view, landmarks] of [
+    // Settings is one person's own now — a display name and the diagnostics. The places moved to
+    // Your Hunt, where they belong: `place` is a project table.
+    ['settings', ['You appear as']],
     // `The in-laws` rather than `Work`: this is matched against the whole tab's text, and "Work" is
     // inside "Working…", so it would report a screen still loading as a screen that had rendered
-    // its places.
-    ['settings', ['Places we measure against', 'The in-laws', 'Neighbourhoods we search', 'Hampstead']],
-    ['project', ['Who is in it', OTHER_NAME, 'Invite someone']],
+    // its places. `Hampstead` is one of the places this hunt searches around, which is the same
+    // list now — a project with the neighbourhoods missing renders the destinations and looks fine.
+    ['project', ['Who is in it', OTHER_NAME, 'Invite someone', 'The in-laws', 'Hampstead']],
+    // Sweeping folded into Triage. `?v=sweep` still lands here — the redirect is deliberate, since
+    // the extension and people's bookmarks point at it — so this covers both.
     ['sweep', ['Scan']],
     ['install', ['Install the browser extension']],
   ] as const) {

@@ -58,7 +58,6 @@ import {
   keys,
   queryClient,
   useAuth,
-  useHubs,
   useLocateProperties,
   useModel,
   useOffMarket,
@@ -122,7 +121,20 @@ export default function Page() {
     );
   }
 
-  return <App user={state.user} project={state.activeProject} projects={state.projects} />;
+  // Keyed on the hunt, so switching remounts rather than re-renders. Everything held in React
+  // state here belongs to one project — which flats are ticked, what triage is filtered to, which
+  // card is revealed — and a re-render carries all of it across. The ticked set is the dangerous
+  // one: the same listing can be in two hunts, so a selection that survived the switch meant the
+  // next bulk-rating click wrote a verdict in a hunt where nobody had selected anything. The query
+  // caches were already reset on switch; this is the other half.
+  return (
+    <App
+      key={state.activeProject.id}
+      user={state.user}
+      project={state.activeProject}
+      projects={state.projects}
+    />
+  );
 }
 
 /** Everything the two of you have looked at, in the order you'd want to think about it: the
@@ -211,12 +223,17 @@ function App({
   // narrowing you set up to work through — and stored, so neither does closing the tab. Working a
   // pile of two hundred takes more than one sitting, and setting the same four bars up again each
   // time is the friction that stops the second sitting happening.
-  const [triageFilter, setTriageFilter] = useStoredState<TriageFilter>('triage:filter', parseFilter);
+  // Per hunt. A filter names this project's places and this project's budget; one shared key meant
+  // opening a second hunt with the first one's rent ceiling already applied, and the count on the
+  // bar explaining a number nobody had chosen.
+  const [triageFilter, setTriageFilter] = useStoredState<TriageFilter>(
+    `triage:filter:${project.id}`,
+    parseFilter,
+  );
 
   // The neighbourhoods every card places its flat against (design D11). Same hook the Sweep view
   // reads, so switching between them costs nothing and the two cannot disagree about which
   // neighbourhoods this house hunt has.
-  const hubsQuery = useHubs();
 
   // What the month's photo analysis has cost. The panel warns on the listing in front of you; the
   // shortlist warns here, once, at the top — the first sign of a budget should not be a listing
@@ -254,10 +271,15 @@ function App({
   );
   // Three states, and the difference matters: still reading, read and failed, read. `HubFact`
   // renders each as itself rather than letting a failure read as "nothing near this flat".
-  const hubs: Hub[] | null | undefined = hubsQuery.isError
+  // Every place, not just the swept ones. `useHubs()` filters to what can be searched, which is
+  // the right list for the sweep view and the wrong one here: the office is not somewhere we look
+  // for flats and is still one of the best landmarks to fix a flat against. Reading the filtered
+  // list made the website say "no hub within a mile" about a flat the extension panel — which
+  // reads every place — was happily placing next to work.
+  const hubs: Hub[] | null | undefined = placesQuery.isError
     ? null
-    : hubsQuery.data
-      ? hubsFromProject(hubsQuery.data)
+    : placesQuery.data
+      ? hubsFromProject(placesQuery.data)
       : undefined;
   // A verdict is attributed to whoever set it, and that is now the signed-in user rather than a
   // name typed into Settings. Kept as a plain string here because every view below it — the
@@ -382,10 +404,11 @@ function App({
   const model = modelQuery.data?.model ?? null;
   const scores = useMemo(
     () => (model && all && Array.isArray(hubs) ? scoreEntries(model, all, hubs) : null),
-    // hubsQuery.data rather than the derived `hubs` array, which is a fresh reference every render;
-    // isError alongside it so a failed refetch clears the scores instead of leaving stale ones up.
+    // placesQuery.data rather than the derived `hubs` array, which is a fresh reference every
+    // render; isError alongside it so a failed refetch clears the scores instead of leaving stale
+    // ones up.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-    [model, all, hubsQuery.data, hubsQuery.isError],
+    [model, all, placesQuery.data, placesQuery.isError],
   );
   const offMarket = offMarketQuery.data ?? new Set<string>();
   const setEntryOffMarket = (entry: ShortlistEntry, off: boolean) =>
