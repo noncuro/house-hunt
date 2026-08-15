@@ -8,7 +8,6 @@ import {
   hubsFromProject,
   parseFilter,
   withKnownPlaces,
-  withoutOffMarket,
   type ArchiveReason,
   type Hub,
   type Place,
@@ -35,7 +34,7 @@ import { Settings } from '@/screens/Settings';
 import { SignIn } from '@/screens/SignIn';
 import { Sweep } from '@/screens/Sweep';
 import { Triage } from '@/screens/Triage';
-import { EVERYTHING, lensMatches, type Lens } from '@/lib/lens';
+import { DEFAULT_LENS, forBoard, lensMatches, type Lens } from '@/lib/lens';
 import { scoreEntries, type SortMode } from '@/lib/score';
 import { useStoredState } from '@/lib/stored';
 import { useRoute } from '@/lib/view';
@@ -155,8 +154,7 @@ function App({
 
   // One narrowing over the whole hunt, shared by all four of Places' renderings — see `lib/lens.ts`
   // for why the funnel bar and the map's legend became one control.
-  const [lens, setLens] = useState<Lens>(EVERYTHING);
-  const [showOffMarket, setShowOffMarket] = useState(false);
+  const [lens, setLens] = useState<Lens>(DEFAULT_LENS);
   const [picked, setPicked] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [sortMode, setSortMode] = useState<SortMode>('default');
@@ -194,20 +192,16 @@ function App({
       : undefined;
 
   const offMarket = offMarketQuery.data ?? null;
-  const inLens = useMemo(
-    () => (all === null ? null : all.filter((e) => lensMatches(e, lens))),
-    [all, lens],
-  );
   const entries = useMemo(
-    () => (inLens === null ? null : withoutOffMarket(inLens, offMarket, showOffMarket)),
-    [inLens, offMarket, showOffMarket],
+    () => (all === null ? null : all.filter((e) => lensMatches(e, lens, offMarket))),
+    [all, lens, offMarket],
   );
-  // Counted over what this screen would otherwise be showing, not over the whole hunt. The hunt-wide
-  // number is the one that reads as a lie: filter to "viewed" with one of two gone flats viewed and
-  // the sentence says two are hidden, then showing them produces one.
-  const offMarketHere =
-    offMarket === null ? 0 : (inLens ?? []).filter((e) => offMarket.has(e.rightmoveId)).length;
-
+  // The board's own list: the same lens with its stage half dropped, since there the funnel is the
+  // layout rather than something to filter by. `forBoard` says why.
+  const boardEntries = useMemo(
+    () => (all === null ? null : all.filter((e) => lensMatches(e, forBoard(lens), offMarket))),
+    [all, lens, offMarket],
+  );
   // Every entry's P(yes) under the current model, computed once and shared by the cards, the triage
   // sort and the mismatch marker. Null while there is no model, and null until the hubs are actually
   // in hand: handing the scorer `[]` for a read still in flight is not a smaller input, it is a
@@ -334,7 +328,7 @@ function App({
       </div>
     );
   }
-  if (!all || !entries) {
+  if (!all || !entries || !boardEntries) {
     return (
       <div className="wrap">
         <p className="dim working">Loading…</p>
@@ -379,9 +373,8 @@ function App({
             scores={scores}
             picked={picked}
             setPicked={setPicked}
-            offMarketHere={offMarketHere}
-            showOffMarket={showOffMarket}
-            setShowOffMarket={setShowOffMarket}
+            boardEntries={boardEntries}
+            offMarket={offMarket}
             offMarketUnknown={
               offMarketQuery.isError ? (offMarket === null ? 'unread' : 'stale') : null
             }

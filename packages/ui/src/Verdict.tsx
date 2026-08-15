@@ -15,12 +15,17 @@ import type { Rating, Verdict } from '@house-hunt/core';
  *  `RATINGS[].emoji` survives in ratings.ts because the search-page badge is plain DOM injected
  *  into Rightmove's own card and has room for a character and not an SVG. */
 
-/** The card's pill: the verdict and whose it is, in one mark.
+/** The card's pill: the verdict, as one mark.
+ *
+ *  The author is on the hover and not on the pill. A card is scanned rather than read, and what is
+ *  being scanned for is loved-or-not; a name beside every one of them doubles the width of the mark
+ *  to answer a question nobody asked of a grid — and on a shared shortlist it is the same one or
+ *  two names over and over. It is still one keystroke away, and `VerdictLine` still says it in
+ *  words where the verdict is the subject rather than a mark in the corner of a card.
  *
  *  Null renders nothing at all, unlike `VerdictLine`. A card is a wall of small facts and "No
  *  verdict yet" on every unrated one is a column of noise saying what the absence of a stamp
- *  already says. Where the verdict is the subject of the row — the panel, the detail page — the
- *  line below is the right renderer, and it does say so in words. */
+ *  already says. */
 export function VerdictStamp({ verdict }: { verdict: Verdict | null }) {
   if (!verdict) return null;
   const meta = ratingOf(verdict.rating);
@@ -32,12 +37,6 @@ export function VerdictStamp({ verdict }: { verdict: Verdict | null }) {
     >
       <span className="rm-stamp-word" data-testid="verdict-rating">
         {capitalise(meta.word)}
-      </span>
-      <span className="rm-stamp-dot" aria-hidden="true">
-        ·
-      </span>
-      <span className="rm-stamp-by" data-testid="verdict-by">
-        {verdict.person}
       </span>
     </Hint>
   );
@@ -106,13 +105,10 @@ export function RatingButtons({
         <Hint
           key={r.value}
           underline={false}
-          text={
-            disabled
-              ? disabled
-              : pending === r.value
-                ? 'Saving…'
-                : `${r.label} — one shared rating for this project, replacing whatever is set now`
-          }
+          // Only when there is something to say. A hover that repeats the label and then explains
+          // how shared verdicts work is three buttons' worth of tooltip covering the flat you are
+          // deciding about.
+          text={disabled ? disabled : pending === r.value ? 'Saving…' : ''}
         >
           <button
             className={[

@@ -32,7 +32,39 @@ export type Lens =
 
 export const EVERYTHING: Lens = { kind: 'all' };
 
-export function lensMatches(entry: ShortlistEntry, lens: Lens): boolean {
+/** Where Places opens. The shortlist is the working set — the flats somebody liked enough to do
+ *  something about — and it was landing on the whole hunt instead, which on a swept project is
+ *  hundreds of listings nobody has looked at and the shortlisted handful somewhere inside them. */
+export const DEFAULT_LENS: Lens = { kind: 'stage', stage: 'shortlisted' };
+
+/** The board draws the funnel as columns, so a stage lens would leave it one populated column and
+ *  five empty ones — there the filter and the layout are the same fact. A verdict lens is a
+ *  different question and still applies. */
+export function forBoard(lens: Lens): Lens {
+  return lens.kind === 'stage' ? EVERYTHING : lens;
+}
+
+/** Whether a flat belongs on screen under this lens.
+ *
+ *  Off the market is folded in here rather than filtered separately. It is not a stage — nobody
+ *  writes it to mean progress — but it is the one thing people record to mean "this one is gone",
+ *  and gone is what Archived is for. So a flat that is off the market is drawn under Archived
+ *  whatever its stage says, and nowhere else. It still writes nothing: the verdict and the stage
+ *  are untouched, which is what keeps a flat you loved and lost readable as loved.
+ *
+ *  A null set has not loaded, which is not the same as empty. Hiding on a fact we do not have yet
+ *  would blank flats for the first frame of every load and, after a failed read, show a shortlist
+ *  quietly missing things — so not knowing draws them where they would otherwise be. */
+export function lensMatches(
+  entry: ShortlistEntry,
+  lens: Lens,
+  offMarket: ReadonlySet<string> | null,
+): boolean {
+  const gone = offMarket?.has(entry.rightmoveId) ?? false;
+  if (lens.kind === 'stage' && lens.stage === 'archived') {
+    return gone || matchesStage(entry.stage, 'archived');
+  }
+  if (gone) return false;
   if (lens.kind === 'all') return true;
   if (lens.kind === 'stage') return matchesStage(entry.stage, lens.stage);
   return groupOf(entry.verdicts) === lens.group;
@@ -59,22 +91,33 @@ export interface Chip {
 
 /** Which chips the toolbar draws, and in what order.
  *
- *  Everything first, then the funnel in funnel order, then the two verdicts worth jumping straight
- *  to. `archived` and "not in the funnel" are held back for the quiet row at the right: one is done
- *  with and the other is a negation, and a negation sitting in a line of positive stages is read as
- *  a stage. That was the audit's point about "Not in the funnel 441" — it is the biggest number on
- *  the row and the least interesting thing on the screen.
+ *  The funnel in funnel order, then the two verdicts worth jumping straight to. `archived` and "not
+ *  in the funnel" are held back for the quiet row at the right: one is done with and the other is a
+ *  negation, and a negation sitting in a line of positive stages is read as a stage. That was the
+ *  audit's point about "Not in the funnel 441" — it is the biggest number on the row and the least
+ *  interesting thing on the screen.
+ *
+ *  There is no "Everything" chip. The screen always shows one slice, because a hunt's whole list is
+ *  every listing anybody has ever opened and that is not a view of anything.
  *
  *  Every chip is drawn even at zero. A funnel that hides its empty steps reads as a hunt with no
  *  "viewed" step rather than one with nothing viewed yet, and the shape of what is left to do is the
- *  reason to look at it at all. The count dims; the chip does not. */
-export function chipsFor(entries: ShortlistEntry[]): { main: Chip[]; aside: Chip[] } {
-  const funnel: FunnelCounts = funnelCounts(entries);
+ *  reason to look at it at all. The count dims; the chip does not.
+ *
+ *  The counts agree with what clicking the chip produces, which means the off-the-market ones are
+ *  counted under Archived and nowhere else. A count taken over the raw list would have every other
+ *  chip promising flats it will not then draw. */
+export function chipsFor(
+  entries: ShortlistEntry[],
+  offMarket: ReadonlySet<string> | null,
+): { main: Chip[]; aside: Chip[] } {
+  const gone = entries.filter((e) => offMarket?.has(e.rightmoveId) ?? false);
+  const live = entries.filter((e) => !(offMarket?.has(e.rightmoveId) ?? false));
+  const funnel: FunnelCounts = funnelCounts(live);
   const groups: Record<Group, number> = { excited: 0, maybe: 0, rejected: 0, unrated: 0 };
-  for (const entry of entries) groups[groupOf(entry.verdicts)] += 1;
+  for (const entry of live) groups[groupOf(entry.verdicts)] += 1;
 
   const main: Chip[] = [
-    { lens: EVERYTHING, label: FILTER_LABEL.all, count: entries.length },
     ...STAGES.filter((s) => s.value !== 'archived').map((s) => ({
       lens: { kind: 'stage', stage: s.value } as Lens,
       label: s.label,
@@ -85,7 +128,11 @@ export function chipsFor(entries: ShortlistEntry[]): { main: Chip[]; aside: Chip
   ];
 
   const aside: Chip[] = [
-    { lens: { kind: 'stage', stage: 'archived' }, label: FILTER_LABEL.archived, count: funnel.archived },
+    {
+      lens: { kind: 'stage', stage: 'archived' },
+      label: FILTER_LABEL.archived,
+      count: funnel.archived + gone.length,
+    },
     { lens: { kind: 'stage', stage: 'none' }, label: FILTER_LABEL.none, count: funnel.none },
   ];
 

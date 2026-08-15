@@ -19,7 +19,7 @@ import { Compare } from '@/screens/Compare';
 import { HeadToHead } from '@/screens/HeadToHead';
 import { ShortlistMap } from '@/screens/Map';
 import type { SetStage } from '@/lib/actions';
-import { chipsFor, lensLabel, sameLens, EVERYTHING, type Lens } from '@/lib/lens';
+import { chipsFor, lensLabel, sameLens, DEFAULT_LENS, type Lens } from '@/lib/lens';
 import type { PlacesView } from '@/lib/view';
 
 /** Every flat this hunt has looked at, narrowed once and drawn four ways.
@@ -57,9 +57,8 @@ export function Places({
   scores,
   picked,
   setPicked,
-  offMarketHere,
-  showOffMarket,
-  setShowOffMarket,
+  boardEntries,
+  offMarket,
   offMarketUnknown,
   onOpen,
   onSetStage,
@@ -69,7 +68,7 @@ export function Places({
    *  left would say "Loved 0" the moment you filtered to the archived ones, and the row would stop
    *  being a way back out of the filter you are in. */
   all: ShortlistEntry[];
-  /** What this lens leaves, off the market already removed. */
+  /** What this lens leaves. */
   entries: ShortlistEntry[];
   view: PlacesView;
   setView: (next: PlacesView) => void;
@@ -83,15 +82,15 @@ export function Places({
    *  to the map and back does not throw the shortlist of four you had just assembled. */
   picked: string[];
   setPicked: (next: string[]) => void;
-  offMarketHere: number;
-  showOffMarket: boolean;
-  setShowOffMarket: (next: boolean) => void;
+  /** The same lens with its stage half dropped — see `forBoard`. */
+  boardEntries: ShortlistEntry[];
+  offMarket: ReadonlySet<string> | null;
   offMarketUnknown: 'unread' | 'stale' | null;
   onOpen: (rightmoveId: string) => void;
   onSetStage: SetStage;
   refreshing: boolean;
 }) {
-  const { main, aside } = useMemo(() => chipsFor(all), [all]);
+  const { main, aside } = useMemo(() => chipsFor(all, offMarket), [all, offMarket]);
   // Not a route of its own. The side-by-side is a moment in the middle of working the table — you
   // tick four, look, and go back to the same sort and the same page — and making it a screen would
   // put a back button where a close is, and lose all three when you used it.
@@ -150,23 +149,14 @@ export function Places({
 
       {/* Under the toolbar rather than inside it: these are notes about what the screen is not
           showing, and a note that looks like a control is the mistake the old counts line made. */}
-      {(offMarketHere > 0 || offMarketUnknown || refreshing) && (
+      {(offMarketUnknown || refreshing) && (
         <p className="places-note dim">
-          {offMarketHere > 0 && (
-            <span data-testid="off-market-hidden">
-              {offMarketHere} off the market{showOffMarket ? ', shown' : ', hidden'}.{' '}
-              <button type="button" className="linkish" onClick={() => setShowOffMarket(!showOffMarket)}>
-                {showOffMarket ? 'Hide them' : 'Show them'}
-              </button>
-            </span>
-          )}
           {/* Failing open is right — hiding flats on a read that did not answer is the worse of the
               two mistakes — but doing it silently makes the screen look authoritative about it. */}
           {offMarketUnknown && (
             <span className="error-inline" data-testid="off-market-unknown">
-              {' '}
               {offMarketUnknown === 'unread'
-                ? 'Which places are off the market could not be read, so all of them are shown.'
+                ? 'Which places are off the market could not be read, so they are drawn where their stage puts them.'
                 : 'Which places are off the market could not be refreshed, so this may be out of date.'}
             </span>
           )}
@@ -198,7 +188,7 @@ export function Places({
           onSetStage={onSetStage}
         />
       ) : view === 'board' ? (
-        <Board entries={entries} onOpen={onOpen} onSetStage={onSetStage} />
+        <Board entries={boardEntries} onOpen={onOpen} onSetStage={onSetStage} />
       ) : (
         <ShortlistMap
           entries={entries}
@@ -231,9 +221,9 @@ function Chip({
       className={`chip${on ? ' chip-on' : ''}${quiet ? ' chip-quiet' : ''}`}
       aria-pressed={on}
       data-testid={`lens-${chip.lens.kind === 'stage' ? chip.lens.stage : chip.lens.kind === 'group' ? chip.lens.group : 'all'}`}
-      // Clicking the chip you are already on goes back to everything, so the filter can always be
-      // undone with the control that set it.
-      onClick={() => setLens(on ? EVERYTHING : chip.lens)}
+      // Clicking the chip you are on does nothing. There is no "everything" to fall back to, and a
+      // control that empties the screen when pressed twice is worse than one that ignores you.
+      onClick={() => (on ? undefined : setLens(chip.lens))}
     >
       {chip.label}
       {/* The chip keeps its weight and only the number dims. Greying the whole chip to near
@@ -249,20 +239,24 @@ function Chip({
  *  actions — one is "go and open a listing", the other is "clear the filter" — so they get different
  *  sentences and the second gets the button. */
 function Empty({ lens, setLens, total }: { lens: Lens; setLens: (next: Lens) => void; total: number }) {
-  if (lens.kind !== 'all') {
+  if (total === 0) {
     return (
       <p className="dim empty" data-testid="places-empty">
-        Nothing at “{lensLabel(lens).toLowerCase()}”, of {total}.{' '}
-        <button type="button" className="linkish" onClick={() => setLens(EVERYTHING)}>
-          Show everything
-        </button>
+        Nothing here yet — open a Rightmove listing with the extension running and it lands here on
+        its own.
       </p>
     );
   }
+  // The way out names where it goes. "Show everything" used to be the way out and there is no
+  // everything now; the shortlist is where the screen opens, so that is what it offers back.
   return (
     <p className="dim empty" data-testid="places-empty">
-      Nothing here yet — open a Rightmove listing with the extension running and it lands here on its
-      own.
+      Nothing at “{lensLabel(lens).toLowerCase()}”, of {total} in the hunt.{' '}
+      {!sameLens(lens, DEFAULT_LENS) && (
+        <button type="button" className="linkish" onClick={() => setLens(DEFAULT_LENS)}>
+          Back to {lensLabel(DEFAULT_LENS).toLowerCase()}
+        </button>
+      )}
     </p>
   );
 }

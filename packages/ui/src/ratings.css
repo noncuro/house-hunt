@@ -23,15 +23,6 @@
   font-weight: 650;
 }
 
-.rm-stamp-dot,
-.rm-stamp-by {
-  /* Who set it, in the stamp's own ink at reduced weight rather than in grey: the attribution is
-     the whole mitigation for one shared verdict, and greying it out of a coloured pill is how it
-     stops being read. */
-  font-weight: 400;
-  opacity: 0.75;
-}
-
 .rm-stamp-love {
   background: var(--good-bg);
   border-color: var(--good-line);

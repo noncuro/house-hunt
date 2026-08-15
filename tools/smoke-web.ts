@@ -263,16 +263,36 @@ async function checkSession({ page }: Stage): Promise<void> {
  *  the screen drew a different set. One lens over all four renderings now, and it starts at
  *  Everything — which is a number the fixture decides. */
 async function checkList({ page }: Stage): Promise<void> {
+  // Places opens on the shortlist, not on the whole hunt. The two flats the fixture rates are the
+  // two the `enter_funnel` trigger puts there, so this asserts the default lens and that trigger at
+  // once — and it is the assertion that fails if the screen ever goes back to opening on everything,
+  // which on a swept project is hundreds of listings nobody has looked at.
   const cards = await page.locator('[data-testid="flat-card"]').count();
-  console.log(`places: ${cards} card(s) shown by default`);
-  if (cards !== fixture.listingIds.length) {
-    note(`places shows ${cards} cards; the fixture has ${fixture.listingIds.length} listings`);
+  const shortlisted = await openLens(page, 'shortlisted');
+  console.log(`places: ${cards} card(s) by default, at "shortlisted"`);
+  if ((await page.locator('[data-testid="lens-shortlisted"]').getAttribute('aria-pressed')) !== 'true') {
+    note('Places did not open on the shortlist');
   }
-  // By id, so a wrong join that returned the right *count* still fails — one from each pile, since
-  // the cards are grouped and a grouping that dropped a heading would drop its flats with it.
-  for (const id of [fixtureId(1), fixtureId(2), fixtureId(4), fixtureId(5)]) {
-    if (!(await page.locator(`#card-${id}`).count())) note(`${id} is in the hunt but is not on Places`);
+  if (cards !== shortlisted) {
+    note(`the shortlisted chip says ${shortlisted} and the screen drew ${cards}`);
   }
+  if (await page.locator('[data-testid="lens-all"]').count()) {
+    note('the toolbar still offers an "everything" chip');
+  }
+  for (const id of [fixtureId(1), fixtureId(4)]) {
+    if (!(await page.locator(`#card-${id}`).count())) note(`${id} is rated, so it should be shortlisted`);
+  }
+
+  // And the flats outside the funnel, which is where the unrated ones sit and is the other half of
+  // the hunt. Reached only by its chip now, so a chip that counted one thing and drew another would
+  // leave those flats unreachable rather than merely miscounted.
+  const outside = await openLens(page, 'none');
+  const drawn = await page.locator('[data-testid="flat-card"]').count();
+  if (drawn !== outside) note(`the not-in-the-funnel chip says ${outside} and the screen drew ${drawn}`);
+  for (const id of [fixtureId(2), fixtureId(5)]) {
+    if (!(await page.locator(`#card-${id}`).count())) note(`${id} is in no funnel step but is not drawn there`);
+  }
+  await openLens(page, 'shortlisted');
 
   // The shortlist read is the whole point: a card that rendered with no price or no address is a
   // join that half-worked, which looks like a design choice rather than a bug.
@@ -282,24 +302,24 @@ async function checkList({ page }: Stage): Promise<void> {
     if (!firstText.includes(expected)) note(`the card for ${fixtureId(1)} is missing "${expected}"`);
   }
 
-  // The lens. Clicking "Loved" has to narrow the screen to the loved ones and clicking it again has
-  // to undo it — a filter you cannot reverse with the control that set it is the one this replaced.
-  const loved = page.locator('[data-testid="lens-excited"]');
-  if (!(await loved.count())) note('the toolbar has no chip for the loved pile');
-  else {
-    await loved.click();
-    await settle(page);
-    const narrowed = await page.locator('[data-testid="flat-card"]').count();
-    console.log(`places: ${narrowed} card(s) at "Loved"`);
-    if (narrowed !== 1) note(`filtering to Loved drew ${narrowed} cards; the fixture loves exactly 1`);
-    if (await page.locator(`#card-${fixtureId(2)}`).count()) {
-      note(`${fixtureId(2)} is not loved but survived the Loved chip`);
-    }
-    await loved.click();
-    await settle(page);
-    const back = await page.locator('[data-testid="flat-card"]').count();
-    if (back !== cards) note(`clicking the Loved chip again left ${back} cards, not the ${cards} it started with`);
+  // The verdict chips are the other kind of lens, and they cut across the funnel rather than along
+  // it: "the ones we loved" is a complete answer to what you want on screen and is not a step.
+  const lovedSays = await openLens(page, 'excited');
+  const narrowed = await page.locator('[data-testid="flat-card"]').count();
+  console.log(`places: ${narrowed} card(s) at "Loved"`);
+  if (narrowed !== 1) note(`filtering to Loved drew ${narrowed} cards; the fixture loves exactly 1`);
+  if (lovedSays !== narrowed) note(`the Loved chip says ${lovedSays} over ${narrowed} cards`);
+  if (await page.locator(`#card-${fixtureId(2)}`).count()) {
+    note(`${fixtureId(2)} is not loved but survived the Loved chip`);
   }
+  // Pressing the chip you are on does nothing, deliberately: there is no everything to fall back to
+  // and a control that empties the screen when pressed twice is worse than one that ignores you.
+  await page.locator('[data-testid="lens-excited"]').click();
+  await settle(page);
+  if ((await page.locator('[data-testid="flat-card"]').count()) !== narrowed) {
+    note('clicking the chip that is already on changed what the screen shows');
+  }
+  await openLens(page, 'shortlisted');
 
   await page.screenshot({ path: resolve(SHOTS, 'web-list.png'), fullPage: true });
 
@@ -470,7 +490,7 @@ async function checkFunnel({ page }: Stage): Promise<void> {
   await openView(page, 'list');
 }
 
-/** Off the market: the flat leaves the shortlist, and nothing else about it moves.
+/** Off the market: the flat moves to Archived, and nothing else about it moves.
  *
  *  Both halves are the point. A hunt's own shortlist going on offering places that are gone is what
  *  this was reported as; and the mark is written into the table the verdict-score model reads, so a
@@ -478,20 +498,26 @@ async function checkFunnel({ page }: Stage): Promise<void> {
  *  you loved and lost was one you never liked. Nothing on screen would say so, which is why the
  *  verdict and the stage are read from Postgres either side of the click.
  *
- *  Ends by putting the flat back, because the sections after this one count what is on screen. */
+ *  It used to vanish from every view behind a "1 off the market, hidden" note with a button to show
+ *  them again — a third place to look, for the one fact that already has a name people use for it.
+ *  It is drawn under Archived now, so what is asserted is a move: gone from the shortlist, present
+ *  under the chip, and the two facts underneath it unchanged.
+ *
+ *  Runs against the first flat, which the fixture loves and which the funnel trigger therefore
+ *  shortlists — so there is a lens for it to leave. Ends by putting it back, because the sections
+ *  after this one count what is on screen. */
 async function checkOffMarket({ page }: Stage): Promise<void> {
-  // Read before anything is hidden, so the table assertion below compares against this run's own
-  // number rather than a literal that a change to the fixture would quietly make meaningless.
-  await openView(page, 'table');
-  const tableRows = await page.locator('table.compare tbody tr').count();
   await openView(page, 'list');
-  const id = fixtureId(4);
+  const id = fixtureId(1);
   const card = page.locator(`#card-${id}`);
   const before = { verdict: await verdictOf(id), stage: await stageOf(id) };
   if (!before.verdict) {
     note(`${id} has no verdict, so it cannot be marked off the market`);
     return;
   }
+  const archivedBefore = Number(
+    (await page.locator('[data-testid="lens-archived"] .chip-count').innerText()).trim(),
+  );
 
   const panel = await openFlat(page, id);
   if (!panel) return;
@@ -500,36 +526,31 @@ async function checkOffMarket({ page }: Stage): Promise<void> {
 
   await card
     .waitFor({ state: 'detached', timeout: 10_000 })
-    .catch(() => note('the card was still on Places after being marked off the market'));
+    .catch(() => note('the card was still on the shortlist after being marked off the market'));
 
-  // Hidden, and accounted for. A flat that disappears with nothing on screen saying where it went
-  // is indistinguishable from the shortlist having lost it.
-  const line = page.locator('[data-testid="off-market-hidden"]');
-  await line
-    .waitFor({ timeout: 10_000 })
-    .catch(() => note('nothing on Places said anything had been hidden'));
-  const said = (await line.innerText().catch(() => '')).trim();
-  console.log(`off the market: ${said}`);
-  // The number, not merely the sentence. It is counted over what this view would otherwise show,
-  // and a count taken over the whole hunt instead reads as a lie the moment the lens is narrowed.
-  if (!said.startsWith('1 off the market, hidden')) {
-    note(`Places says "${said}"; one flat was marked off the market`);
+  // Under Archived, and counted there. A flat that leaves one lens without arriving in another is
+  // indistinguishable from the shortlist having lost it, which is the failure the old note existed
+  // to paper over.
+  const archivedNow = await openLens(page, 'archived');
+  if (archivedNow !== archivedBefore + 1) {
+    note(`the archived chip went from ${archivedBefore} to ${archivedNow} for one flat marked gone`);
   }
+  if (!(await card.count())) note(`${id} is off the market but is not drawn under Archived`);
 
-  // All four renderings read the same list, so a flat hidden from the cards has to be gone from the
-  // table too — one still offering it is the same bug in another rendering.
+  // All four renderings read the same list, so the table under this chip has to hold it too — one
+  // rendering still filing it elsewhere is the same bug in another view.
   await openView(page, 'table');
+  await openLens(page, 'archived');
   const rows = await page.locator('table.compare tbody tr').count();
-  console.log(`table: ${tableRows} row(s) before, ${rows} while hidden`);
-  if (rows !== tableRows - 1) {
-    note(`the table drew ${rows} rows with one flat hidden; it drew ${tableRows} before`);
-  }
+  if (rows !== archivedNow) note(`the table drew ${rows} rows under an Archived chip saying ${archivedNow}`);
   await openView(page, 'list');
 
   const reason = await settleOn(() => offMarketReason(id), (r) => r !== null);
-  if (reason === null) note(`${id} is hidden on screen but has no training_exclusion row`);
+  if (reason === null) note(`${id} is drawn as gone but has no training_exclusion row`);
 
-  // The two facts that must not have moved.
+  // The two facts that must not have moved. The stage especially: it is still shortlisted, and the
+  // flat is being drawn under Archived anyway — that gap is the whole design, and a version that
+  // closed it by writing the stage would be overwriting somebody's account of what happened.
   const after = { verdict: await verdictOf(id), stage: await stageOf(id) };
   if (after.verdict?.rating !== before.verdict.rating) {
     note(
@@ -541,10 +562,14 @@ async function checkOffMarket({ page }: Stage): Promise<void> {
       `marking off the market changed the stage from "${before.stage?.stage ?? 'none'}" to "${after.stage?.stage ?? 'none'}"`,
     );
   }
+  console.log(
+    `off the market: drawn under Archived, still ${after.verdict?.rating} and still ${after.stage?.stage ?? 'unstaged'}`,
+  );
 
-  // And back: the way to a flat you hid has to be on the screen it left.
-  await line.getByRole('button', { name: 'Show them' }).click();
-  await card.waitFor({ timeout: 10_000 }).catch(() => note('“Show them” did not bring the hidden flat back'));
+  // And back where it was, by its own stage rather than to wherever it was last seen. Reached
+  // under Archived, because that is where it is until it comes back — `openView` above navigated,
+  // which puts the lens back to the default the way a reload does.
+  await openLens(page, 'archived');
   const back = await openFlat(page, id);
   if (back) {
     await back.getByRole('button', { name: 'Back on the market' }).click();
@@ -552,16 +577,20 @@ async function checkOffMarket({ page }: Stage): Promise<void> {
   }
   const cleared = await settleOn(() => offMarketReason(id), (r) => r === null);
   if (cleared !== null) note(`${id} is still excluded after being put back on the market`);
+  await openLens(page, 'shortlisted');
+  if (!(await card.count())) note(`${id} did not come back to the shortlist it left`);
 }
 
 /** The compare table, which is its own read path and has failed as a blank screen before. */
 async function checkTable({ page }: Stage): Promise<void> {
   await openView(page, 'table');
+  // Under the chip holding the flats outside the funnel, which is the fixture's largest slice and
+  // the only one with enough in it to set two against each other. The table draws whatever the lens
+  // leaves, like the other three renderings, so what is checked is that it draws exactly that.
+  const said = await openLens(page, 'none');
   const rows = await page.locator('table.compare tbody tr').count();
-  console.log(`table: ${rows} row(s)`);
-  if (rows !== fixture.listingIds.length) {
-    note(`the table drew ${rows} rows; the fixture has ${fixture.listingIds.length} listings`);
-  }
+  console.log(`table: ${rows} row(s) at "not in the funnel"`);
+  if (rows !== said) note(`the table drew ${rows} rows under a chip saying ${said}`);
 
   // The head-to-head, which is what the tick boxes are for and the only place two flats are set
   // against each other. It offers nothing until two are ticked — a button that is live with one
@@ -580,6 +609,10 @@ async function checkTable({ page }: Stage): Promise<void> {
     // One column per flat, plus the spine of row labels down the left.
     const columns = await duel.locator('thead th').count();
     if (columns !== 3) note(`the side-by-side drew ${columns} header cells for two flats and a spine`);
+    // Every row says something. A fact nobody has for a flat is "not rated" or a dash, never the
+    // empty cell a component that renders null for absence leaves behind.
+    const blank = await duel.locator('tbody td:not(:has(*)):text-is("")').count();
+    if (blank > 0) note(`${blank} cell(s) in the side-by-side are blank rather than saying so`);
     await page.screenshot({ path: resolve(SHOTS, 'web-head-to-head.png'), fullPage: true });
     await duel.locator('[data-testid="duel-close"]').click();
     await settle(page);
@@ -590,15 +623,26 @@ async function checkTable({ page }: Stage): Promise<void> {
   await ticks.nth(1).click();
 
   await page.screenshot({ path: resolve(SHOTS, 'web-table.png'), fullPage: true });
+  await openLens(page, 'shortlisted');
 }
 
 async function checkMap({ page }: Stage): Promise<void> {
   await openView(page, 'map');
+  // The same slice the table used, for the same reason: walking the pins with the arrow keys needs
+  // more than one pin to walk to.
+  await openLens(page, 'none');
   // The tile layer, not merely the container: an empty map div is what a broken map looks like.
   await page
     .locator('.leaflet-container')
     .waitFor({ timeout: 20_000 })
     .catch(() => note('the map view never rendered a leaflet container'));
+  // After the lens, which re-fits the map: tiles for the new viewport arrive over the network and
+  // counting them the moment the click returns counts the old ones on their way out.
+  await page
+    .locator('.leaflet-tile-loaded')
+    .first()
+    .waitFor({ timeout: 20_000 })
+    .catch(() => note('no map tile ever finished loading'));
   const tiles = await page.locator('.leaflet-tile').count();
   console.log(`map: ${tiles} tile(s) loaded`);
   if (tiles === 0) note('the map drew no tiles');
@@ -1015,6 +1059,27 @@ async function openView(page: Page, view: string): Promise<void> {
   await page.goto(`${ORIGIN}/?v=${view}`, { waitUntil: 'domcontentloaded' });
   await waitForApp(page);
   await settle(page);
+}
+
+/** Narrow Places to one chip, and hand back the number that chip claims.
+ *
+ *  Sections below need a lens holding the flat they are about, because Places no longer has an
+ *  "everything" to fall back on — it opens on the shortlist and every other slice is a chip. The
+ *  count comes back so the caller can check the chip against what the screen then draws, which is
+ *  the pair that can disagree: a chip counting the whole hunt over a view that has hidden some of
+ *  it reads as flats that failed to render. */
+async function openLens(page: Page, name: string): Promise<number> {
+  const chip = page.locator(`[data-testid="lens-${name}"]`);
+  if ((await chip.count()) === 0) {
+    note(`Places has no "${name}" chip`);
+    return -1;
+  }
+  const said = Number((await chip.locator('.chip-count').innerText()).trim());
+  if ((await chip.getAttribute('aria-pressed')) !== 'true') {
+    await chip.click();
+    await settle(page);
+  }
+  return said;
 }
 
 /** Wait for the page to stop saying it is working.
