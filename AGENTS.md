@@ -111,6 +111,14 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   liking a place enters it at `shortlisted`, un-liking removes it only while it is still there, and
   a stage further along survives any change of mind. `packages/core/src/stage.ts` owns the funnel;
   `20260813000000_property_stage.sql` owns the coupling.
+- **Off the market is a third fact, and it hides rather than writes.** The mark lives in
+  `training_exclusion` — it is what withholds a flat from the verdict-score model — and it is also
+  the only thing anybody records to mean "this one is gone". So the shortlist stops drawing them
+  (`withoutOffMarket`, with a line under the tally saying how many and offering them back), and
+  that is all it does: the verdict and the stage are untouched, which is what makes a flat you
+  loved and lost still readable as loved. Making the toggle archive would have it write over
+  somebody's account of what happened, which is the same objection `background.ts` makes to a
+  background tab doing it.
 - **Driving times deliberately throw** (TfL can't do them) rather than mislabel a transit number.
 - **The travel backlog is derived, not enqueued.** Nothing inserts a job when a place is added:
   `travel_gaps` computes what is missing from a project's properties, its places and the modes we
@@ -142,7 +150,7 @@ pnpm check          # oxlint + tsc — run on every change
 pnpm check:all      # + every pure-function check (seconds)
 ```
 
-Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `hubs`, `stage`, `sweep`, `travel`,
+Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `hubs`, `stage`, `shortlist`, `sweep`, `travel`,
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint),
 `one-client`, `bridge`, `withdrawn`. Each pins reasoning invisible when wrong — a bad bearing still
 looks like a bearing.
@@ -175,7 +183,7 @@ problem is collected and reported together.
 
 `smoke:web` takes names too, one level down: `pnpm smoke:web list rating` runs those sections and
 `pnpm smoke:web joining` runs that one, in the order the file declares them (`session`, `list`,
-`rating`, `funnel`, `table`, `map`, `triage`, `tabs`, `refusals`, `joining`). The setup is not optional — the
+`rating`, `funnel`, `offmarket`, `table`, `map`, `triage`, `tabs`, `refusals`, `joining`). The setup is not optional — the
 fixture, the Edge Functions and a production build of the website happen either way — so a subset
 saves the browser work and a few seconds of a forty-second run, which is the difference worth having
 while you iterate on one assertion. A name that matches no section stops the run and prints the

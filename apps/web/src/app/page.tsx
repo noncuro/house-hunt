@@ -15,6 +15,7 @@ import {
   addressBesidePostcode,
   enthusiasm,
   groupOf,
+  withoutOffMarket,
   parseFilter,
   withKnownPlaces,
   sizeOf,
@@ -75,6 +76,25 @@ import {
   useCachedTravel,
   usePrices,
 } from '@/lib/queries';
+
+/** Nobody is off the market, for the frames before the set has been read. One shared value so that
+ *  a card's props do not change identity every render. */
+const EMPTY: ReadonlySet<string> = new Set();
+
+/** Scroll to a card once it exists. Waits for it rather than for one frame: revealing the unrated
+ *  pile renders two hundred cards, which does not fit in the frame after the state change, so a
+ *  single rAF scrolled to nothing at all and left you at the top of a page with the flat you asked
+ *  for thirteen thousand pixels below. Gives up after a second — by then the id is not on screen
+ *  for a reason this cannot undo. */
+function scrollToCard(id: string): void {
+  const deadline = performance.now() + 1000;
+  const tryScroll = () => {
+    const card = document.getElementById(`card-${id}`);
+    if (card) card.scrollIntoView({ block: 'center' });
+    else if (performance.now() < deadline) requestAnimationFrame(tryScroll);
+  };
+  requestAnimationFrame(tryScroll);
+}
 
 /** What the page is at all is decided here, and by one question: who is signed in.
  *
@@ -260,10 +280,24 @@ function App({
   // everything not in the funnel.
   const [stageFilter, setStageFilter] = useState<StageFilter>('all');
   const funnel = useMemo(() => funnelCounts(all ?? []), [all]);
-  const entries = useMemo(
+  // Flats somebody has marked gone. Hidden from every view here rather than only dimmed: the mark
+  // was built for the model and reused as the record of "this one is gone", and a shortlist that
+  // goes on listing gone flats among the live ones is wrong about the one thing it says. One line
+  // under the tally says how many, and shows them again — see `withoutOffMarket`.
+  const [showOffMarket, setShowOffMarket] = useState(false);
+  const offMarket = offMarketQuery.data ?? null;
+  const inFunnel = useMemo(
     () => (all === null ? null : all.filter((e) => matchesStage(e.stage, stageFilter))),
     [all, stageFilter],
   );
+  const entries = useMemo(
+    () => (inFunnel === null ? null : withoutOffMarket(inFunnel, offMarket, showOffMarket)),
+    [inFunnel, offMarket, showOffMarket],
+  );
+  // Counted over what this view would otherwise be showing, not over the whole hunt. The hunt-wide
+  // number is the one that reads as a lie: filter to "viewed" with one of two gone flats viewed and
+  // the sentence says two are hidden, then showing them produces one.
+  const offMarketHere = offMarket === null ? 0 : (inFunnel ?? []).filter((e) => offMarket.has(e.rightmoveId)).length;
   const places = placesQuery.data ?? [];
   // A stored filter can name a place somebody has since deleted, and a bar with no place is one the
   // panel cannot draw and nobody can clear. Pruned on the way in rather than on the way out of
@@ -317,7 +351,14 @@ function App({
    *  itself. Nothing to open now that every card shows everything; it is purely a scroll, plus
    *  whichever pile the flat is in, since three of the four start collapsed and scrolling to a card
    *  that is not rendered lands on nothing. */
+  /** What a deep link still owes: the id it jumped to before we knew which flats are off the
+   *  market. Declared here because `openCard` clears it. */
+  const owed = useRef<string | null>(null);
+
   function openCard(id: string, group?: Group) {
+    // Whatever a link was still owed, it is not owed now: the reader has gone somewhere of their
+    // own accord, and paying it later would take them back to the flat they left.
+    owed.current = null;
     setView('list');
     if (group === 'maybe') setShowMaybes(true);
     if (group === 'unrated') setShowUnrated(true);
@@ -329,22 +370,17 @@ function App({
     // funnel filter, which can exclude the flat outright, and paging, which renders twenty-five of
     // two hundred — so a map pin for anything below the first page scrolled to an element that was
     // never in the document.
+    //
+    // And the fourth: being off the market, which is a link to a flat somebody has since marked
+    // gone — the one link most likely to be followed, because "is this one still going?" is why you
+    // would open it again.
     const entry = byId.get(id);
     if (entry && !matchesStage(entry.stage, stageFilter)) setStageFilter('all');
+    if (offMarket?.has(id)) setShowOffMarket(true);
     // The ask carries its own withdrawal, so that the pile that answers it and the three that do
     // not all cancel the same request the moment the reader turns a page — see `Reveal.spend`.
     setReveal({ id, spend: () => setReveal(null) });
-    // Wait for the card, rather than for one frame. Revealing the unrated pile renders two hundred
-    // cards, which does not fit in the frame after the state change — so the single rAF scrolled
-    // to nothing at all and left you at the top of a page with the flat you asked for thirteen
-    // thousand pixels below. Give up after a second: by then the id is not in this shortlist.
-    const deadline = performance.now() + 1000;
-    const tryScroll = () => {
-      const card = document.getElementById(`card-${id}`);
-      if (card) card.scrollIntoView({ block: 'center' });
-      else if (performance.now() < deadline) requestAnimationFrame(tryScroll);
-    };
-    requestAnimationFrame(tryScroll);
+    scrollToCard(id);
   }
 
   // An updater rather than a value. Two place writes that complete out of order both derived their
@@ -413,8 +449,30 @@ function App({
     // then opened a link to a flat that is not would otherwise be scrolled to nothing at all.
     if (!matchesStage(entry.stage, stageFilter)) setStageFilter('all');
     openCard(id, groupOf(entry.verdicts));
+    // After the open, which clears any debt of its own. Jumping on what we have: if the exclusions
+    // have not landed, this jump may be to a flat that is about to be hidden, and the effect below
+    // finishes the job when they do.
+    owed.current = offMarket === null ? id : null;
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [all]);
+
+  /** The rest of that jump, for the one case the jump could not finish: it landed before we knew
+   *  which flats are off the market, and the flat it landed on turns out to be one of them — so the
+   *  card is about to be taken away from whoever followed the link.
+   *
+   *  Owed to a particular jump rather than watched for on the hash, and cleared the first time it is
+   *  paid. Keyed on the hash it would reconcile whatever the exclusions happen to say next: marking
+   *  a flat off the market refreshes them, and this would then haul the reader back to the flat they
+   *  had just put away — from another tab, minutes later, on somebody else's write. */
+  useEffect(() => {
+    if (!offMarket) return;
+    const id = owed.current;
+    if (id === null) return;
+    owed.current = null;
+    if (!offMarket.has(id)) return;
+    setShowOffMarket(true);
+    scrollToCard(id);
+  }, [offMarket]);
   // Every entry's P(yes) under the current model, computed once and shared by the cards, the
   // triage sort and the mismatch marker. Null while there is no model (never trained, or too few
   // verdicts) — the UI then simply shows no scores rather than an error.
@@ -432,7 +490,6 @@ function App({
     // oxlint-disable-next-line react-hooks/exhaustive-deps
     [model, all, placesQuery.data, placesQuery.isError],
   );
-  const offMarket = offMarketQuery.data ?? new Set<string>();
   const setEntryOffMarket = (entry: ShortlistEntry, off: boolean) =>
     offMarketMutation.mutate(
       { rightmoveId: entry.rightmoveId, off },
@@ -455,7 +512,10 @@ function App({
     twins,
     rate,
     scores,
-    offMarket,
+    // The cards only ask whether one flat is off, and not knowing yet answers that as "no" — the
+    // pill appears when the set arrives. Which flats are *hidden* is the question that must not be
+    // answered from an empty set, and that is `entries`, above.
+    offMarket: offMarket ?? EMPTY,
     prices: pricesQuery.data,
     setOffMarket: setEntryOffMarket,
     setStage: setEntryStage,
@@ -552,6 +612,29 @@ function App({
                 screen — otherwise a shortlist showing two flats claims to be showing forty. */}
             {stageFilter !== 'all' && (
               <span> Showing the {entries.length} at “{FILTER_LABEL[stageFilter].toLowerCase()}”.</span>
+            )}
+            {/* Hidden, and said so. A flat that vanishes with no account of where it went is the
+                shortlist looking broken, and the way back to one has to be on the screen it left
+                rather than in Settings. */}
+            {offMarketHere > 0 && (
+              <span data-testid="off-market-hidden">
+                {' '}
+                {offMarketHere} off the market{showOffMarket ? ', shown' : ', hidden'}.{' '}
+                <button className="linkish" onClick={() => setShowOffMarket(!showOffMarket)}>
+                  {showOffMarket ? 'Hide them' : 'Show them'}
+                </button>
+              </span>
+            )}
+            {/* Failing open is right — hiding flats on a read that did not answer is the worse of
+                the two mistakes — but doing it silently puts the reported bug back and makes the
+                screen look authoritative about it. */}
+            {offMarketQuery.isError && (
+              <span className="error-inline" data-testid="off-market-unknown">
+                {' '}
+                {offMarket === null
+                  ? 'Which places are off the market could not be read, so all of them are shown.'
+                  : 'Which places are off the market could not be refreshed, so this may be out of date.'}
+              </span>
             )}
             {shortlist.isFetching && <span className="working"> · refreshing</span>}
           </p>
@@ -1103,7 +1186,7 @@ interface CardProps {
   prefs: HuntPreferences;
   /** Flats withheld from training (off the market). A love you can no longer act on is still a
    *  love — this only keeps the model from learning it. */
-  offMarket: Set<string>;
+  offMarket: ReadonlySet<string>;
   setOffMarket: (entry: ShortlistEntry, off: boolean) => void;
   /** What each flat has cost over time, keyed by listing. Undefined while the read is outstanding,
    *  which renders as no note rather than as "no change" — see `PriceMove`. */

@@ -561,8 +561,9 @@ export async function retrainModel(labelMode?: LabelMode): Promise<RetrainResult
   return data as RetrainResult;
 }
 
-/** The flats this project has withheld from training — off the market, usually. Returned as a set
- *  of rightmove ids so the shortlist can mark them and the triage list can drop them. */
+/** The flats this project has withheld from training — off the market, usually. Returned as a list
+ *  of rightmove ids: the model reads it to leave them out, and the shortlist reads it to stop
+ *  drawing them among the places you can still act on (`withoutOffMarket`). */
 export async function listOffMarket(): Promise<string[]> {
   const projectId = await activeProjectId();
   const { data, error } = await db()

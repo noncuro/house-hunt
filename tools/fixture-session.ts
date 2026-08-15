@@ -724,6 +724,20 @@ export async function stageOf(rightmoveId: string): Promise<StoredStage | null> 
   return data ? { stage: data.stage, archiveReason: data.archive_reason, setBy: data.set_by } : null;
 }
 
+/** Whether a flat is marked off the market — a row in `training_exclusion`, which is one table for
+ *  two jobs: the model leaves these out, and the shortlist stops drawing them. Read here because
+ *  the hiding is the visible half and the row is the half that outlives the page. */
+export async function offMarketReason(rightmoveId: string): Promise<string | null> {
+  const { data, error } = await db
+    .from('training_exclusion')
+    .select('reason')
+    .eq('project_id', FIXTURE_PROJECT)
+    .eq('rightmove_id', rightmoveId)
+    .maybeSingle();
+  if (error) throw new Error(`fixture: reading training_exclusion: ${error.message}`);
+  return data ? (data.reason as string) : null;
+}
+
 /** What the previous ratings were, newest first. Empty is the honest answer for a flat rated once —
  *  the seed writes `verdict` directly, so anything here was archived by `set_verdict`. */
 export async function verdictHistoryOf(rightmoveId: string): Promise<StoredVerdict[]> {

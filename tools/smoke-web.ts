@@ -32,6 +32,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
 import {
   createInvite,
+  offMarketReason,
   FIXTURE_EMAIL,
   FIXTURE_NAME,
   fixtureId,
@@ -93,6 +94,7 @@ const SECTIONS = [
   { name: 'list', run: checkList },
   { name: 'rating', run: checkRating },
   { name: 'funnel', run: checkFunnel },
+  { name: 'offmarket', run: checkOffMarket },
   { name: 'table', run: checkTable },
   { name: 'map', run: checkMap },
   { name: 'triage', run: checkTriage },
@@ -397,6 +399,80 @@ async function checkFunnel({ page }: Stage): Promise<void> {
   if (after?.rating !== before.rating) {
     note(`archiving changed the rating from "${before.rating}" to "${after?.rating ?? 'nothing'}" — the two must move apart`);
   }
+}
+
+/** Off the market: the flat leaves the shortlist, and nothing else about it moves.
+ *
+ *  Both halves are the point. A hunt's own shortlist going on offering places that are gone is what
+ *  this was reported as; and the mark is written into the table the verdict-score model reads, so a
+ *  version of it that also touched the verdict or the stage would be teaching the model that a flat
+ *  you loved and lost was one you never liked. Nothing on screen would say so, which is why the
+ *  verdict and the stage are read from Postgres either side of the click.
+ *
+ *  Ends by putting the flat back, because the sections after this one count what is on screen. */
+async function checkOffMarket({ page }: Stage): Promise<void> {
+  // Read before anything is hidden, so the table assertion below compares against this run's own
+  // number rather than a literal that a change to the fixture would quietly make meaningless.
+  await openView(page, 'table');
+  const tableRows = await page.locator('table tbody tr').count();
+  await openView(page, 'list');
+  const id = fixtureId(4);
+  const card = page.locator(`#card-${id}`);
+  const before = { verdict: await verdictOf(id), stage: await stageOf(id) };
+  if (!before.verdict) {
+    note(`${id} has no verdict, so it cannot be marked off the market`);
+    return;
+  }
+
+  await card.getByRole('button', { name: 'Mark off the market' }).click();
+  await card
+    .waitFor({ state: 'detached', timeout: 10_000 })
+    .catch(() => note('the card was still on the shortlist after being marked off the market'));
+
+  // Hidden, and accounted for. A flat that disappears with nothing on screen saying where it went
+  // is indistinguishable from the shortlist having lost it.
+  const line = page.locator('[data-testid="off-market-hidden"]');
+  await line
+    .waitFor({ timeout: 10_000 })
+    .catch(() => note('nothing on the shortlist said anything had been hidden'));
+  const said = (await line.innerText().catch(() => '')).trim();
+  console.log(`off the market: ${said}`);
+  // The number, not merely the sentence. It is counted over what this view would otherwise show,
+  // and a count taken over the whole hunt instead reads as a lie the moment the funnel is filtered.
+  if (!said.startsWith('1 off the market, hidden')) {
+    note(`the shortlist says "${said}"; one flat was marked off the market`);
+  }
+
+  // Every view here reads the same list, so a flat hidden from the cards has to be gone from the
+  // compare table too — one still offering it is the same bug in another tab.
+  await openView(page, 'table');
+  const rows = await page.locator('table tbody tr').count();
+  console.log(`table: ${tableRows} row(s) before, ${rows} while hidden`);
+  if (rows !== tableRows - 1) {
+    note(`the compare table drew ${rows} rows with one flat hidden; it drew ${tableRows} before`);
+  }
+  await openView(page, 'list');
+
+  const reason = await settleOn(() => offMarketReason(id), (r) => r !== null);
+  if (reason === null) note(`${id} is hidden on screen but has no training_exclusion row`);
+
+  // The two facts that must not have moved.
+  const after = { verdict: await verdictOf(id), stage: await stageOf(id) };
+  if (after.verdict?.rating !== before.verdict.rating) {
+    note(`marking off the market changed the rating from "${before.verdict.rating}" to "${after.verdict?.rating ?? 'nothing'}"`);
+  }
+  if ((after.stage?.stage ?? null) !== (before.stage?.stage ?? null)) {
+    note(`marking off the market changed the stage from "${before.stage?.stage ?? 'none'}" to "${after.stage?.stage ?? 'none'}"`);
+  }
+
+  // And back: the way to a flat you hid has to be on the screen it left.
+  await line.getByRole('button', { name: 'Show them' }).click();
+  await card
+    .waitFor({ timeout: 10_000 })
+    .catch(() => note('“Show them” did not bring the hidden flat back'));
+  await card.getByRole('button', { name: 'Back on the market' }).click();
+  const cleared = await settleOn(() => offMarketReason(id), (r) => r === null);
+  if (cleared !== null) note(`${id} is still excluded after being put back on the market`);
 }
 
 /** The compare table, which is its own read path and has failed as a blank screen before. */

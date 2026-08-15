@@ -303,6 +303,12 @@ h2 {
   color: #7b8a99;
 }
 
+/* A failed read reported in the middle of a sentence — the same red, without the box, because it
+   sits inline in a line of prose rather than replacing a screen. */
+.error-inline {
+  color: #b23a48;
+}
+
 .error {
   background: #fdf0f1;
   border: 1px solid #f0c8cc;

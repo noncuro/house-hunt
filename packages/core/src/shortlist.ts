@@ -35,6 +35,27 @@ export const DEFAULT_SHOWING: Record<Group, boolean> = {
   rejected: false,
 };
 
+/** Drop the flats that are off the market, unless they have been asked for.
+ *
+ *  Off the market is written for the model — the verdict-score model must not learn from a place
+ *  nobody can rent, and deleting the verdict would lose that you ever liked it. But it is also the
+ *  only thing anybody records to mean "this one is gone", and a hunt's own shortlist going on
+ *  listing gone flats among the live ones is the shortlist being wrong about the only question it
+ *  answers. So the views hide them, and hiding is all this does: no verdict is changed, no stage is
+ *  written, and turning them back on brings the flat back exactly where it was.
+ *
+ *  `null` means the set has not loaded, which is not the same as it being empty: hiding on a fact
+ *  we do not have yet would blank flats for the first frame of every page load and, after a failed
+ *  read, show a shortlist that is quietly missing things. Not knowing is a reason to draw them. */
+export function withoutOffMarket<T extends { rightmoveId: string }>(
+  entries: T[],
+  offMarket: ReadonlySet<string> | null,
+  show: boolean,
+): T[] {
+  if (show || offMarket === null || offMarket.size === 0) return entries;
+  return entries.filter((entry) => !offMarket.has(entry.rightmoveId));
+}
+
 // The pile names follow the rating words in `packages/ui/src/ratings.ts`: a card that says "Love
 // it" under a heading that says "Excited about" is two names for one judgement.
 export const GROUP_LABEL: Record<Group, string> = {
