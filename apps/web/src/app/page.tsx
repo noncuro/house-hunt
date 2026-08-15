@@ -1393,7 +1393,15 @@ function Card({
 
       {/* Cards keep the good news — a bathtub IS the reason you'd look twice — but the rings
           go bare: four flags each shouting "HIGH" is four times the noise for one fact. */}
-      <Flags source={{ analysis: entry.analysis, floorplanUrl: entry.floorplanUrl, size: sizeOf(entry) }} prefs={prefs} />
+      <Flags
+        source={{
+          analysis: entry.analysis,
+          bedrooms: entry.bedrooms,
+          floorplanUrl: entry.floorplanUrl,
+          size: sizeOf(entry),
+        }}
+        prefs={prefs}
+      />
 
       {entry.nearestStations.length > 0 && (
         <div className="stations dim">

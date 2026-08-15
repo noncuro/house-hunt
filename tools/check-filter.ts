@@ -24,7 +24,7 @@ import {
   type TriageFilter,
 } from '../packages/core/src/filter';
 import type { Analysis, TravelTime } from '../packages/core/src/types';
-import type { ShortlistEntry } from '../packages/core/src/db/supabase';
+import { toAnalysis, type ShortlistEntry } from '../packages/core/src/db/supabase';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -58,7 +58,7 @@ function analysis(fields: Partial<Analysis>): Analysis {
     hasOutdoorSpace: null, outdoorKind: null, outdoorSqft: null, outdoorIsEstimate: null,
     outdoorConfidence: null, isHouseShare: null, houseShareConfidence: null,
     laundry: null, laundryConfidence: null, hasDishwasher: null, dishwasherConfidence: null,
-    bedInKitchen: null, bedInKitchenConfidence: null, utilitiesIncluded: null, utilitiesConfidence: null,
+    sleepingSeparation: null, sleepingSeparationConfidence: null, utilitiesIncluded: null, utilitiesConfidence: null,
     naturalLight: null, naturalLightConfidence: null, summary: null,
     ...fields,
   };
@@ -134,9 +134,76 @@ check(
   false,
 );
 check(
+  'but it does clear "a machine somewhere in the building"',
+  matchesFilter(flat({ analysis: analysis({ laundry: 'in-building' }) }), only({ amenities: ['anyLaundry'] })),
+  true,
+);
+check(
+  'and nowhere to wash clothes clears neither',
+  matchesFilter(flat({ analysis: analysis({ laundry: 'none' }) }), only({ amenities: ['anyLaundry'] })),
+  false,
+);
+check(
   'medium light does not clear a bright-light filter',
   matchesFilter(flat({ analysis: analysis({ naturalLight: 'medium' }) }), only({ amenities: ['brightLight'] })),
   false,
+);
+
+// The two facts most likely to kill a listing, and until now the two you could not clear out of the
+// pile after a sweep: they were left out of the amenity list on the grounds that they were already
+// red for everybody, and triage builds its filter from that same list.
+check(
+  'a known house share can be dropped from the pile',
+  matchesFilter(flat({ analysis: analysis({ isHouseShare: true }) }), only({ amenities: ['wholeProperty'] })),
+  false,
+);
+check(
+  'so can one open room where the kitchen and the bed share a view',
+  matchesFilter(
+    flat({ analysis: analysis({ sleepingSeparation: 'same-space' }) }),
+    only({ amenities: ['separateSleeping'] }),
+  ),
+  false,
+);
+// The distinction the field exists for. Both of these are studios.
+check(
+  'a mezzanine studio stays — one room on the plan, two in use',
+  matchesFilter(
+    flat({ analysis: analysis({ sleepingSeparation: 'practically-separate' }) }),
+    only({ amenities: ['separateSleeping'] }),
+  ),
+  true,
+);
+check(
+  'and a studio nobody has assessed stays, like every other unknown',
+  matchesFilter(flat({ analysis: analysis({}) }), only({ amenities: ['separateSleeping'] })),
+  true,
+);
+// `sleeping_separation` is plain text in the database, so a string nobody recognises can come back
+// out of it — an older writer, a hand-edited row, a value some later version adds. Taken at face
+// value it is a finding rather than a gap, because everything below reads anything but 'same-space'
+// as a bedroom of its own: the flat would clear the bar as *known* to qualify and go uncounted,
+// which is the one thing the tally exists to prevent.
+//
+// The row goes through `toAnalysis`, the function every property_analysis row actually travels
+// through on its way out of Postgres. Writing `sleepingSeparation` into the fixture by hand would
+// assert the parser and leave the hydration free to cast, which is where the bug was.
+const hydrated = toAnalysis({ sleeping_separation: 'mezzanine-ish', sleeping_separation_confidence: 'high' });
+check('a stored separation nobody recognises hydrates to unknown', hydrated.sleepingSeparation, null);
+const unreadable = applyFilter(
+  [flat({ rightmoveId: 'unreadable', analysis: hydrated })],
+  only({ amenities: ['separateSleeping'] }),
+);
+check('so its flat stays', unreadable.kept.map((e) => e.rightmoveId), ['unreadable']);
+check('and is counted among the unknowns rather than the separated', unreadable.unknowns, 1);
+// The three real values still survive the same trip — a parser that dropped everything would pass
+// the case above and quietly turn every assessed studio into an unknown.
+check(
+  'and the values we do recognise come through it unchanged',
+  ['separate-room', 'practically-separate', 'same-space'].map(
+    (v) => toAnalysis({ sleeping_separation: v }).sleepingSeparation,
+  ),
+  ['separate-room', 'practically-separate', 'same-space'],
 );
 
 // Every bar has to be cleared, not any of them.

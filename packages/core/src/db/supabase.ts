@@ -46,6 +46,7 @@ import type { SearchCard } from '../search-card';
 import { sweepProgress } from '../sweep';
 import { type StationInfo } from '../tfl';
 import type { ArchiveReason, PropertyStage, Stage } from '../stage';
+import { toSleepingSeparation } from '../types';
 import type {
   Analysis,
   Confidence,
@@ -903,7 +904,12 @@ export async function getAnalysis(rightmoveId: string): Promise<Analysis | null>
   return data ? toAnalysis(data) : null;
 }
 
-function toAnalysis(data: Record<string, any>): Analysis {
+/** Every `property_analysis` row reaching either application comes through here — the panel's
+ *  single read and the shortlist's join both call it — which makes it the one place a stored value
+ *  becomes a fact. Exported so `check:filter` can put a row through it rather than assemble an
+ *  `Analysis` by hand: a check that builds the object itself agrees with whatever this function
+ *  does, including the wrong thing. */
+export function toAnalysis(data: Record<string, any>): Analysis {
   return {
     model: data.model,
     analysedAt: data.analysed_at,
@@ -931,8 +937,10 @@ function toAnalysis(data: Record<string, any>): Analysis {
     laundryConfidence: (data.laundry_confidence ?? null) as Confidence | null,
     hasDishwasher: data.has_dishwasher ?? null,
     dishwasherConfidence: (data.dishwasher_confidence ?? null) as Confidence | null,
-    bedInKitchen: data.bed_in_kitchen ?? null,
-    bedInKitchenConfidence: (data.bed_in_kitchen_confidence ?? null) as Confidence | null,
+    // Parsed rather than asserted: the column is plain text, and a value that is not one of the
+    // three must read as unknown rather than as a bed with its own room. See `toSleepingSeparation`.
+    sleepingSeparation: toSleepingSeparation(data.sleeping_separation),
+    sleepingSeparationConfidence: (data.sleeping_separation_confidence ?? null) as Confidence | null,
     utilitiesIncluded: data.utilities_included ?? null,
     utilitiesConfidence: (data.utilities_confidence ?? null) as Confidence | null,
     naturalLight: (data.natural_light ?? null) as Analysis['naturalLight'],

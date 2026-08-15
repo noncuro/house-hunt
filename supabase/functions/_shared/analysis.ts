@@ -9,6 +9,7 @@
  */
 
 import { flattenOntoWhite, looksTransparent } from './png.ts';
+import { SLEEPING_SEPARATIONS } from './types.ts';
 
 const MODEL = 'gpt-5.6-terra';
 const ENDPOINT = 'https://api.openai.com/v1/responses';
@@ -58,9 +59,19 @@ Rules:
   is a better answer than a guess.
 - DISHWASHER: an integrated or freestanding dishwasher visible in a kitchen photo, drawn on the
   floorplan, or named in the description.
-- BED IN THE KITCHEN means the only bed is in the kitchen or the main living space — a studio
-  described as a one-bedroom. Report it true only when the floorplan or the photos actually show
-  that, not merely because the flat is small.
+- SLEEPING AREA: how separate the place to sleep is from the kitchen, in three answers.
+  "separate-room" — the bed is in a room of its own, behind a door.
+  "practically-separate" — one room on the plan, but you would not lie in bed looking at the hob:
+  the sleeping area is on its own level (a mezzanine, loft or gallery — its own labelled area on
+  the floorplan, or a platform reached by a ladder or stair in a photograph); or the room's outline
+  turns a corner and the kitchen is round it; or something full-height and fixed stands between the
+  two — a wall return, a partition, a floor-to-ceiling run of wardrobes.
+  "same-space" — one open room where the kitchen and the place to sleep are in a single view.
+  Judge the sleeping AREA, not the bed: an unfurnished studio has no bed in any photograph and its
+  floorplan still answers this. A long room is not a divided one — a corner in the outline divides
+  a room, a shallow recess or a chimney breast does not. A photograph holding both a bed and the
+  kitchen is good evidence of "same-space"; no such photograph is weak evidence of the opposite,
+  since it may only mean nobody stood there. Null when neither a plan nor a photo settles it.
 - UTILITIES INCLUDED means the rent covers bills (gas, electricity, water, sometimes council tax
   or broadband). Only the description says this. False and null are treated the same downstream,
   so do not strain to prove a negative.
@@ -157,7 +168,7 @@ const SCHEMA = {
     amenities: {
       type: 'object',
       additionalProperties: false,
-      required: ['house_share', 'laundry', 'dishwasher', 'bed_in_kitchen', 'utilities_included'],
+      required: ['house_share', 'laundry', 'dishwasher', 'sleeping_area', 'utilities_included'],
       properties: {
         house_share: {
           type: 'object',
@@ -186,12 +197,15 @@ const SCHEMA = {
             confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
           },
         },
-        bed_in_kitchen: {
+        sleeping_area: {
           type: 'object',
           additionalProperties: false,
-          required: ['present', 'confidence'],
+          required: ['separation', 'confidence'],
           properties: {
-            present: { type: ['boolean', 'null'] },
+            separation: {
+              type: ['string', 'null'],
+              enum: ['separate-room', 'practically-separate', 'same-space', null],
+            },
             confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
           },
         },
@@ -262,7 +276,7 @@ export interface ParsedAnalysis {
     house_share: { present: boolean | null; confidence: string };
     laundry: { where: string | null; confidence: string };
     dishwasher: { present: boolean | null; confidence: string };
-    bed_in_kitchen: { present: boolean | null; confidence: string };
+    sleeping_area: { separation: string | null; confidence: string };
     utilities_included: { present: boolean | null; confidence: string };
   };
   outdoor: {
@@ -526,7 +540,7 @@ const LIGHT_LEVELS = ['low', 'medium', 'high'];
 
 /** Like `choice`, except an unrecognised value becomes null rather than a default. Use this
  *  wherever the default would itself be a claim about the property. */
-function oneOfOrNull(value: unknown, allowed: string[], label: string): string | null {
+function oneOfOrNull(value: unknown, allowed: readonly string[], label: string): string | null {
   if (typeof value === 'string' && allowed.includes(value)) return value;
   if (value !== null && value !== undefined) {
     warn(`${label} was ${JSON.stringify(value)}, not one of ${allowed.join('/')} — reading it as unknown`);
@@ -534,11 +548,13 @@ function oneOfOrNull(value: unknown, allowed: string[], label: string): string |
   return null;
 }
 
-/** The five amenities, each a yes/no/unknown with its own confidence. They share a shape, so they
- *  share a reader — five near-identical blocks inline is five chances to paste the wrong key in
- *  and report the dishwasher's confidence against the house share. */
+/** The five amenities. Three are a yes/no/unknown with a confidence and share a reader — three
+ *  near-identical blocks inline is three chances to paste the wrong key in and report the
+ *  dishwasher's confidence against the house share. Laundry and the sleeping area are graded
+ *  rather than present, and are read out longhand below. */
 function amenities(raw: Record<string, unknown>): ParsedAnalysis['amenities'] {
   const laundryIn = section(raw, 'laundry');
+  const sleepingIn = section(raw, 'sleeping_area');
   // `where` is the one field here that is not a boolean, and an unrecognised string has to become
   // null rather than a default: "in-building" invented out of nothing is a claim about the
   // building, and "none" invented out of nothing says the flat cannot wash clothes.
@@ -551,7 +567,10 @@ function amenities(raw: Record<string, unknown>): ParsedAnalysis['amenities'] {
       confidence: choice(laundryIn.confidence, CONFIDENCES, 'low', 'amenities.laundry.confidence'),
     },
     dishwasher: yesNo(raw, 'dishwasher'),
-    bed_in_kitchen: yesNo(raw, 'bed_in_kitchen'),
+    sleeping_area: {
+      separation: oneOfOrNull(sleepingIn.separation, SLEEPING_SEPARATIONS, 'amenities.sleeping_area.separation'),
+      confidence: choice(sleepingIn.confidence, CONFIDENCES, 'low', 'amenities.sleeping_area.confidence'),
+    },
     utilities_included: yesNo(raw, 'utilities_included'),
   };
 }

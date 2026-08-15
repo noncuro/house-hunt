@@ -48,7 +48,7 @@ function good(overrides: Record<string, unknown> = {}): Record<string, unknown> 
       house_share: { present: false, confidence: 'high' },
       laundry: { where: 'in-unit', confidence: 'medium' },
       dishwasher: { present: true, confidence: 'high' },
-      bed_in_kitchen: { present: false, confidence: 'high' },
+      sleeping_area: { separation: 'separate-room', confidence: 'high' },
       utilities_included: { present: null, confidence: 'low' },
     },
     light: { level: 'high', confidence: 'medium' },
@@ -80,7 +80,7 @@ check('every field survives', run(good()), {
     house_share: { present: false, confidence: 'high' },
     laundry: { where: 'in-unit', confidence: 'medium' },
     dishwasher: { present: true, confidence: 'high' },
-    bed_in_kitchen: { present: false, confidence: 'high' },
+    sleeping_area: { separation: 'separate-room', confidence: 'high' },
     utilities_included: { present: null, confidence: 'low' },
   },
   light: { level: 'high', confidence: 'medium' },
@@ -240,7 +240,34 @@ check(
   run(good({ light: { level: 'high', confidence: 'certain' } })).light.confidence,
   'low',
 );
+// The same rule as light, and for the same reason: a defaulted value here would itself be a claim.
+// Defaulting to "same-space" calls every studio nobody could read a bedsit; defaulting to
+// "separate-room" says the hob is not at the foot of the bed when nobody has looked.
+check(
+  'an unrecognised separation becomes unknown rather than a guess',
+  run(amend(good(), 'amenities', { sleeping_area: { separation: 'sort of', confidence: 'high' } })).amenities
+    .sleeping_area.separation,
+  null,
+);
+check(
+  'a null separation passes quietly',
+  run(amend(good(), 'amenities', { sleeping_area: { separation: null, confidence: 'low' } })).amenities.sleeping_area
+    .separation,
+  null,
+);
+check('and said nothing about it', warnings.length, 0);
+check(
+  'an unrecognised separation confidence falls back to low',
+  run(amend(good(), 'amenities', { sleeping_area: { separation: 'same-space', confidence: 'certain' } })).amenities
+    .sleeping_area.confidence,
+  'low',
+);
 throws('a missing amenities object throws', () => validateAnalysis(good({ amenities: null })), /amenities/);
+throws(
+  'a missing sleeping_area throws — it is the studio question and a blank is not an answer',
+  () => validateAnalysis(amend(good(), 'amenities', { sleeping_area: null })),
+  /sleeping_area/,
+);
 throws('a missing light object throws', () => validateAnalysis(good({ light: null })), /light/);
 throws(
   'a missing amenity inside it throws too — half a row is worse than none',

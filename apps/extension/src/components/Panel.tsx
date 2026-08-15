@@ -479,11 +479,12 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
                 the website twice over: a 600 sq ft room was a great room on one and not the other
                 (`>` here against `>=` in `flagsFor`), and "don't mind a bathtub" silenced the
                 shortlist while the panel went on flagging it red. It also showed only these three,
-                so a house share or a bed in the kitchen — the two facts most likely to end the
+                so a house share or a kitchen you sleep in — the two facts most likely to end the
                 conversation — appeared on every screen except the one you read on Rightmove. */}
             <Flags
               source={{
                 analysis,
+                bedrooms: listing.bedrooms ?? null,
                 floorplanUrl: plan ?? null,
                 size: {
                   floorplanSqft: analysis?.floorplanSqft,
