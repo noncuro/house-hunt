@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { Icon } from '@house-hunt/ui';
+import { Icon, useOverlayKeys } from '@house-hunt/ui';
 import {
   addressBesidePostcode,
   type ArchiveReason,
@@ -35,6 +35,7 @@ export function FlatPanel({
   score,
   offMarket,
   onClose,
+  onStep,
   onRate,
   onSetStage,
   onSetOffMarket,
@@ -48,6 +49,9 @@ export function FlatPanel({
   score?: number;
   offMarket: ReadonlySet<string>;
   onClose: () => void;
+  /** Move to the next (+1) or previous (-1) flat in the order the screen behind is showing them.
+   *  Absent where there is no such order. */
+  onStep?: (delta: number) => void;
   onRate: (rating: Rating, note: string) => void;
   onSetStage: (stage: Stage, archiveReason: ArchiveReason | null) => void;
   onSetOffMarket: (off: boolean) => void;
@@ -55,16 +59,22 @@ export function FlatPanel({
 }) {
   const panel = useRef<HTMLDivElement>(null);
 
+  // Through the stack, so a gallery open over this one takes these first: closing a photo used to
+  // close the flat behind it as well, and j/k while a photo is up must not move the flat under it.
+  //
+  // j and k rather than the arrows, which the map already spends on walking its pins, and which on
+  // a long panel are how you scroll what you are reading.
+  useOverlayKeys({
+    Escape: onClose,
+    j: () => onStep?.(1),
+    k: () => onStep?.(-1),
+  });
+
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
     // Focus moves into the panel, so the screen reader starts reading the flat rather than the page
-    // it opened over, and so Escape reaches this rather than the screen behind.
+    // it opened over.
     panel.current?.focus();
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="sheet" data-testid="flat-panel">

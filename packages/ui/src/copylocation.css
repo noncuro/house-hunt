@@ -1,0 +1,33 @@
+/* Its own rule rather than the panel's `.rm-chip`, which lives in the extension's stylesheet and so
+   exists on only one of the two surfaces that draw this. Same tokens, so it is the same chip. */
+.rm-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  background: var(--white);
+  padding: 4px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.rm-copy:hover {
+  border-color: var(--fainter);
+  background: var(--paper);
+}
+
+/* Monospace on the value alone: a postcode is a thing you check character by character before
+   pasting it, and the address beside it is prose. */
+.rm-copy-value {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.rm-copy-failed {
+  color: var(--warn-ink);
+  font-weight: 650;
+}

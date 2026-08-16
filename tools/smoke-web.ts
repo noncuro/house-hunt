@@ -326,6 +326,47 @@ async function checkList({ page }: Stage): Promise<void> {
 
   await page.screenshot({ path: resolve(SHOTS, 'web-list.png'), fullPage: true });
 
+  // The card opens from anywhere on it, the keyboard walks the list, and Escape leaves one layer at
+  // a time. Three gestures with nothing behind them but a key press, which is exactly the kind that
+  // breaks silently: nothing throws, the panel simply does the wrong thing.
+  await page.locator(`#card-${fixtureId(1)} .flat-meta`).click();
+  const opened = page.locator('[data-testid="flat-panel"]');
+  if (!(await opened.count())) {
+    note('clicking the middle of a card did not open it');
+  } else {
+    const firstFlat = await panelAddress(page);
+    await page.keyboard.press('j');
+    await settle(page);
+    const nextFlat = await panelAddress(page);
+    if (nextFlat === firstFlat) note('j did not move the panel to the next flat');
+    await page.keyboard.press('k');
+    await settle(page);
+    if ((await panelAddress(page)) !== firstFlat) note('k did not come back to the flat j left');
+
+    // Escape with a photo open closes the photo and nothing else. It used to close both, so leaving
+    // a photograph threw away the flat you were reading it about.
+    const shot = opened.locator('.shots .shot').first();
+    if (await shot.count()) {
+      await shot.click();
+      await settle(page);
+      if (!(await page.locator('.lightbox').count())) note('clicking a photo in the panel opened no gallery');
+      await page.keyboard.press('Escape');
+      await settle(page);
+      if (await page.locator('.lightbox').count()) note('Escape did not close the gallery');
+      if (!(await page.locator('[data-testid="flat-panel"]').count())) {
+        note('Escape closed the flat panel as well as the gallery');
+      }
+    }
+
+    // The location, as something you can paste into a map. Its text rather than its presence: a
+    // chip that renders the empty string is the failure worth catching.
+    const location = (await opened.locator('.rm-copy-value').first().innerText().catch(() => '')).trim();
+    if (!/^[A-Z]{1,2}\d/.test(location) && !/^-?\d+\.\d+,-?\d+\.\d+$/.test(location)) {
+      note(`the panel's copyable location reads "${location}", which is neither a postcode nor a point`);
+    }
+    await closeFlat(page);
+  }
+
   // And the same screen on a phone, which is where a shortlist is actually read — standing outside
   // the building, deciding whether to bother. Nothing else here narrows the window, so the whole
   // mobile layout rested on a media query no check ever evaluated. What is asserted is the one
@@ -877,6 +918,11 @@ async function paneAddress(page: Page): Promise<string> {
       .innerText()
       .catch(() => '')) ?? ''
   ).trim();
+}
+
+/** The address the open flat panel is showing, or '' when none is open. */
+async function panelAddress(page: Page): Promise<string> {
+  return ((await page.locator('.panel-where').first().innerText().catch(() => '')) ?? '').trim();
 }
 
 /** Open one flat's panel from wherever the page is, and hand back a locator scoped to it.

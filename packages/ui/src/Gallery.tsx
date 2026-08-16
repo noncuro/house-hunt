@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useOverlayKeys } from './overlay-keys';
 import './gallery.css';
 
 /** How far a finger has to travel before it counts as a swipe rather than a tap that wandered.
@@ -94,22 +95,23 @@ export function Gallery({
     setDrag(null);
   }
 
+  // Arrow keys are how anyone actually flicks through photos; Escape is how they leave. Claimed as
+  // the overlay on top, so leaving a photo no longer also closes the flat panel underneath it, and
+  // the panel's own j/k stay the panel's while a photo is up.
+  useOverlayKeys({
+    Escape: onClose,
+    ArrowRight: () => step(1),
+    ArrowLeft: () => step(-1),
+  });
+
   useEffect(() => {
-    // Arrow keys are how anyone actually flicks through photos; Escape is how they leave.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'ArrowRight') setAt((i) => (i + 1) % images.length);
-      if (e.key === 'ArrowLeft') setAt((i) => (i - 1 + images.length) % images.length);
-    };
-    window.addEventListener('keydown', onKey);
     // The page behind must not scroll while the overlay is up.
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      window.removeEventListener('keydown', onKey);
       document.body.style.overflow = previous;
     };
-  }, [images.length, onClose]);
+  }, []);
 
   if (images.length === 0) return null;
 

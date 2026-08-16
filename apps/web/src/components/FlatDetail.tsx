@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import {
+  CopyLocation,
   Flags,
   Gallery,
   HubFact,
@@ -193,6 +194,10 @@ export function FlatDetail({
         <h2 className="detail-address">{addressBesidePostcode(entry.displayAddress, entry.postcode)}</h2>
         {score !== undefined && <ScoreGauge score={score} surprise={isSurprise(entry, score)} />}
       </div>
+
+      {/* The address as text you can take somewhere else — every other thing on this screen answers
+          "how far", and this is the one that answers "show me". */}
+      <CopyLocation postcode={entry.postcode} point={point} />
 
       {verdictFirst && decide}
 
