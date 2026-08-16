@@ -830,7 +830,9 @@ function travelColumn(place: Place, mode: TravelMode | null): Column {
         // Three different absences, and calling them all "not worked out" would be a lie in two
         // of the three cases.
         if (mode && verdict.usable.length > 0) return dash(`No ${mode} time — open this place to fetch it.`);
-        if (verdict.noRoute) return dash('No journey between these two points.');
+        // The reason where the row has one: not every settled negative is TfL's, and "too far to
+        // walk" is a different fact from "TfL could not route it" to whoever is reading the column.
+        if (verdict.noRoute) return dash(verdict.noRouteReason ?? 'No journey between these two points.');
         if (verdict.transient) return dash('TfL did not answer — open this place to retry.');
         return dash('Not worked out yet — open this place to fetch it.');
       }

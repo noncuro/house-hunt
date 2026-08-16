@@ -273,7 +273,10 @@ export async function cachedTravelTimes(postcodes: string[]): Promise<Record<str
               mode: r.mode,
               seconds: 0,
               changes: null,
-              error: 'TfL found no journey for this mode',
+              // The row's own words where it has them. Not every no-route row is TfL's verdict:
+              // a walk further off than an hour on foot can cover is settled here without asking,
+              // and crediting TfL for it is a confident wrong answer in a tooltip.
+              error: r.reason ?? 'TfL found no journey for this mode',
               transient: false,
               stale,
             }

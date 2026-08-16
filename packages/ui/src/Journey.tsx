@@ -28,8 +28,11 @@ export interface TravelVerdict {
   best: TravelTime | null;
   /** A mode we asked about and never got an answer for — worth a retry. */
   transient: TravelTime | null;
-  /** TfL was asked and said there is no such journey. Settled, not missing. */
+  /** Asked and settled: there is no such journey. Settled, not missing. */
   noRoute: boolean;
+  /** What settled it, in the words of whoever settled it. Null when the row does not say — which
+   *  is every row written before the reason was stored. */
+  noRouteReason: string | null;
   /** Nothing has been computed for this pairing at all. */
   unknown: boolean;
 }
@@ -92,11 +95,13 @@ export function readTravel(rows: TravelTime[] | undefined): TravelVerdict {
   );
   const best = usable.length === 0 ? null : usable.reduce((a, b) => (b.seconds < a.seconds ? b : a));
   const transient = all.find((t) => t.error && t.transient) ?? null;
+  const settled = usable.length === 0 ? (all.find((t) => t.error && !t.transient) ?? null) : null;
   return {
     usable,
     best,
     transient,
-    noRoute: usable.length === 0 && all.some((t) => t.error && !t.transient),
+    noRoute: settled !== null,
+    noRouteReason: settled?.error ?? null,
     unknown: all.length === 0,
   };
 }
@@ -335,7 +340,11 @@ function TravelCell({
         why={
           row.transient
             ? `TfL did not answer when we asked for the ${MODE_LABEL[mode]} time: ${row.error}`
-            : `TfL says there is no ${MODE_LABEL[mode]} journey between these two points: ${row.error}`
+            : // Not "TfL says": the row carries who settled it and why, and TfL is no longer always
+              // the answer. A walk further off than an hour on foot could cover is refused before
+              // any call is made, and putting TfL's name on that verdict is a tooltip lying with
+              // confidence about a thing that never happened.
+              `No ${MODE_LABEL[mode]} time for this trip — ${row.error}`
         }
       />
     );
