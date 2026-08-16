@@ -36,13 +36,22 @@ export function CopyLocation({
         // where one of those goes missing. A button that silently does nothing is worse than one
         // that admits it, because what you paste afterwards is whatever was in the clipboard
         // before — the last thing copied, pasted into a message as if it were an address.
-        navigator.clipboard.writeText(value).then(
-          () => {
-            setState('copied');
-            setTimeout(() => setState('idle'), 1600);
-          },
-          () => setState('failed'),
-        );
+        //
+        // All three ways it can go wrong say the same thing: no clipboard object at all (an
+        // insecure context does not get one), a synchronous throw out of `writeText`, and the
+        // rejected promise. The first two would otherwise be an exception nobody catches and a
+        // button that appears to have done nothing.
+        try {
+          void navigator.clipboard.writeText(value).then(
+            () => {
+              setState('copied');
+              setTimeout(() => setState('idle'), 1600);
+            },
+            () => setState('failed'),
+          );
+        } catch {
+          setState('failed');
+        }
       }}
     >
       <Icon name="pin" size={12} /> <span className="rm-copy-value">{value}</span>{' '}
