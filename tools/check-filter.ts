@@ -488,6 +488,9 @@ console.log("\nand the hunt's own must-haves, which are a filter nobody set toda
 // them in here would empty the pile of flats the hunt said it would look at.
 check('a hunt with no preferences is no filter at all', filterIsOn(huntFloor({})), false);
 check('nor is one that only aims high', filterIsOn(huntFloor({ targetSqft: 900, greatRoomMinSqft: 450 })), false);
+// `greatRoomFloorSqft` *is* a floor and is still not one of these: a main-room size is read off a
+// photograph, so excluding on it would drop flats on a guess. It goes red on the card instead.
+check('nor a main-room floor', filterIsOn(huntFloor({ greatRoomFloorSqft: 450 })), false);
 check('nor a nice-to-have', filterIsOn(huntFloor({ amenities: { bathtub: 'nice' } })), false);
 check('a must-have is one', huntFloor({ amenities: { bathtub: 'must', outdoor: 'nice' } }).amenities, ['bathtub']);
 check('and so are the two floors', huntFloor({ minBedrooms: 2, minSqft: 600 }), {

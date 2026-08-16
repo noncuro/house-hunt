@@ -860,6 +860,7 @@ function PreferencesNote({ prefs }: { prefs: HuntPreferences | undefined }) {
   if (
     anyAmenity ||
     prefs.greatRoomMinSqft != null ||
+    prefs.greatRoomFloorSqft != null ||
     prefs.minSqft != null ||
     prefs.targetSqft != null
   ) {

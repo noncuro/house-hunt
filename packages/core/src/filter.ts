@@ -378,9 +378,15 @@ function unknownTo(
  *  `flagsFor` flags being under either in red, in the hunt's own words ("you asked for 2+") — and an
  *  amenity marked `must` is the word "must" as somebody typed it. What is left out is everything the
  *  hunt stated as an aspiration rather than a bar: `targetSqft` is amber by design (a flat over the
- *  floor and under the target is one to go and look at), `greatRoomMinSqft` moves where a *good*
- *  mark is earned and flags no absence at all, and a `nice` amenity is the setting that exists
- *  precisely to not exclude anything.
+ *  floor and under the target is one to go and look at), `greatRoomMinSqft` is the room size the
+ *  hunt is aiming for rather than a bar, and a `nice` amenity is the setting that exists precisely
+ *  to not exclude anything.
+ *
+ *  `greatRoomFloorSqft` is a floor and is still left out, which is the one exception here and is
+ *  deliberate: a main-room size comes out of the vision pass on a photograph, so it is missing far
+ *  more often than a bedroom count and wrong more often than a floor area. Excluding on it would
+ *  drop flats on a guess. It goes red on the card, which says the same thing where the number it
+ *  was judged on is visible beside it.
  *
  *  The rent ceiling is not here either, and that is the one worth saying out loud: it lives in
  *  `prefs.search` as Rightmove's own query parameters, which is what the sweep is run with — so a

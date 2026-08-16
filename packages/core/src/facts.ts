@@ -295,9 +295,21 @@ export type AmenityKey =
   | 'separateSleeping'
   | 'wholeProperty';
 export interface HuntPreferences {
-  /** A biggest-room bar in sq ft: a flat whose largest room clears it earns the great-room mark.
-   *  Null/absent leaves the default `BIGGEST_ROOM_BIG_SQFT`. */
+  /** The biggest room this hunt is aiming for, in sq ft: a flat whose largest room clears it earns
+   *  the great-room mark, and one under it is amber. Null/absent leaves the default
+   *  `BIGGEST_ROOM_BIG_SQFT` as the mark and says nothing about a room beneath it.
+   *
+   *  The name is the one already in the database, from when this was the only room bar and missing
+   *  it flagged nothing. It is the *nice* of the pair — `greatRoomFloorSqft` below is the must. */
   greatRoomMinSqft?: number | null;
+  /** The biggest room this hunt will not go below, in sq ft: under it is red.
+   *
+   *  The same two answers `minSqft`/`targetSqft` are for the whole flat, for the same reason — the
+   *  room you would take and the room you want are rarely one figure — and stated in the same
+   *  words on the settings screen, so "must" means the same thing in both rows. It colours a flag
+   *  and nothing more: unlike `minSqft` it is not a triage floor, because a main-room size is read
+   *  off a photograph and hiding flats on it would hide the ones we know least about. */
+  greatRoomFloorSqft?: number | null;
   /** The whole flat's floor area, in sq ft, below which it is too small for this hunt.
    *
    *  The obvious preference, and the one that was missing: every surface already resolves and shows
@@ -620,9 +632,30 @@ export function flagsFor({ analysis, bedrooms, floorplanUrl, size }: FlagSource,
 
   const room = analysis.biggestRoomSqft ?? null;
   const rooms = analysis.biggestRoomConfidence ?? null;
-  // A hunt can set its own bar for what counts as a great room; without one, the default stands.
-  const bigThreshold = prefs?.greatRoomMinSqft ?? BIGGEST_ROOM_BIG_SQFT;
-  if (room !== null && room < BIGGEST_ROOM_SMALL_SQFT) {
+  // A hunt can set its own bars for the main room — a floor it will not go below and a size it is
+  // aiming for — and they read exactly like the whole-flat pair above: under the floor is red,
+  // between the two amber, at or above the aim it is a great room. Without either, the default
+  // stands and a room beneath it is only ever the small-room amber.
+  const roomFloor = prefs?.greatRoomFloorSqft ?? null;
+  const roomAim = prefs?.greatRoomMinSqft ?? null;
+  const bigThreshold = roomAim ?? roomFloor ?? BIGGEST_ROOM_BIG_SQFT;
+  if (room !== null && roomFloor !== null && room < roomFloor) {
+    flags.push({
+      key: 'rooms',
+      severity: 'red',
+      text: `main room ${room} sq ft — under your ${roomFloor}`,
+      confidence: rooms,
+    });
+  } else if (room !== null && roomAim !== null && room < roomAim) {
+    // The hunt's own number before the constant below it: both are amber, and the one somebody set
+    // is the one they will recognise.
+    flags.push({
+      key: 'rooms',
+      severity: 'yellow',
+      text: `main room ${room} sq ft — under the ${roomAim} you are aiming for`,
+      confidence: rooms,
+    });
+  } else if (room !== null && room < BIGGEST_ROOM_SMALL_SQFT) {
     // Yellow: a small main room is a real objection, but one you can settle by standing in it —
     // and the number is what tells you whether it is worth the trip. "Small" spans a bedsit and a
     // 440 sq ft reception, which are not the same objection.
@@ -636,7 +669,7 @@ export function flagsFor({ analysis, bedrooms, floorplanUrl, size }: FlagSource,
     // At or above the bar counts — "450 sq ft or bigger" includes exactly 450.
     // When the bar is the hunt's own, name it a great room and say the size — that is the number
     // the preference was set against, so it is the one worth showing.
-    const named = prefs?.greatRoomMinSqft != null;
+    const named = roomAim !== null || roomFloor !== null;
     flags.push({
       key: 'rooms',
       severity: 'good',

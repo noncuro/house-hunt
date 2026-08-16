@@ -264,6 +264,44 @@ check(
   [],
 );
 
+// The main room asks the same question of a smaller number, and answers it in the same two
+// severities — which it did not before: a bar was a mark, and a room under it was told nothing.
+const roomFlag = (sqft: number, prefs?: Parameters<typeof flagsFor>[1]) =>
+  flagsFor({ analysis: analysis({ biggestRoomSqft: sqft }), floorplanUrl: 'p.png' }, prefs).find(
+    (f) => f.key === 'rooms',
+  );
+check('under the main-room floor is red', roomFlag(400, { greatRoomFloorSqft: 450 })?.severity, 'red');
+check(
+  'under the main-room aim is amber',
+  roomFlag(400, { greatRoomMinSqft: 450 })?.severity,
+  'yellow',
+);
+check(
+  'the hunt says it in its own numbers',
+  roomFlag(400, { greatRoomMinSqft: 450 })?.text,
+  'main room 400 sq ft — under the 450 you are aiming for',
+);
+// The band between the two, said once and in the gentler of the two colours.
+check(
+  'between the floor and the aim is amber, once',
+  flagsFor({ analysis: analysis({ biggestRoomSqft: 400 }), floorplanUrl: 'p.png' }, { greatRoomFloorSqft: 300, greatRoomMinSqft: 450 })
+    .filter((f) => f.key === 'rooms')
+    .map((f) => f.severity),
+  ['yellow'],
+);
+check('at the aim it is a great room', roomFlag(450, { greatRoomMinSqft: 450 })?.text, 'great room · 450 sq ft');
+// A floor on its own still moves the mark: without it the default 450 would call a 500 sq ft room
+// great in a hunt that said 600 was its floor.
+check('a floor alone is the mark too', roomFlag(500, { greatRoomFloorSqft: 600 })?.severity, 'red');
+// An unmeasured room is not a small one, the same rule the whole-flat bar follows.
+check(
+  'no measurement, no main-room flag',
+  flagsFor({ analysis: analysis({ biggestRoomSqft: null }), floorplanUrl: 'p.png' }, { greatRoomFloorSqft: 450 }).find(
+    (f) => f.key === 'rooms',
+  ),
+  undefined,
+);
+
 console.log('galleryFor');
 // The floorplan leads and is not repeated further down the set.
 check(
