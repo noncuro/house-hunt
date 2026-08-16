@@ -117,7 +117,14 @@ export function Triage({
 
   // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave the
   // ranking meaning something about flats no longer on screen.
-  const { kept, unknowns } = applyFilter(pile, filter, travel.data, points);
+  // Memoised because the map reads it: a fresh `kept` on every render is a fresh `shown`, and the
+  // map refits its viewport whenever the flats it is drawing change identity. Selecting a pin
+  // rerenders this screen, so without this, clicking a flat threw away the pan and zoom you had
+  // just used to find it.
+  const { kept, unknowns } = useMemo(
+    () => applyFilter(pile, filter, travel.data, points),
+    [pile, filter, travel.data, points],
+  );
   // Per row rather than per pile: the same question `unknowns` counts, asked of one flat.
   const unknownFor = (entry: ShortlistEntry) => unknownBars(entry, filter, travel.data, points);
   const shown = useMemo(() => sortForTriage(kept, scores, sortMode), [kept, scores, sortMode]);

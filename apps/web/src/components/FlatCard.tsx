@@ -87,8 +87,10 @@ export function FlatCard({
       // stay: they are what the keyboard reaches, and this is only the mouse's version of them.
       onClick={(event) => {
         // Anything that is already a control keeps its own meaning — including the buttons above,
-        // which would otherwise fire twice.
-        if (event.target instanceof HTMLElement && event.target.closest('button, a, input, select, textarea, label')) return;
+        // which would otherwise fire twice. `Element`, not `HTMLElement`: the arrow is an SVG, so
+        // the narrower test let the one click that lands on an icon through as if it were dead
+        // space.
+        if (event.target instanceof Element && event.target.closest('button, a, input, select, textarea, label')) return;
         onOpen(entry.rightmoveId);
       }}
     >

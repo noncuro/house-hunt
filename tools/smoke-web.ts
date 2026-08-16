@@ -759,6 +759,12 @@ async function checkTriage({ page }: Stage): Promise<void> {
     const before = await paneAddress(page);
     await triagePins.last().click();
     await settle(page);
+    // The pane opens on the first flat in the pile, which the map is free to have drawn as the last
+    // pin — clicking it then changes nothing, correctly. Try the other end before believing it.
+    if (await paneAddress(page) === before) {
+      await triagePins.first().click();
+      await settle(page);
+    }
     if (before !== '' && (await paneAddress(page)) === before) {
       note('clicking a pin in triage did not change the flat in the pane');
     }
