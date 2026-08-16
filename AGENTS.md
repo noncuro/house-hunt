@@ -168,7 +168,9 @@ pnpm check:all      # + every pure-function check (seconds)
 ```
 
 Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `hubs`, `stage`, `shortlist`, `sweep`, `travel`,
-`png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint),
+`png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint), `sync` (the
+`_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a
+shared fix could sit unshipped with every check green),
 `one-client`, `bridge`, `withdrawn`. Each pins reasoning invisible when wrong — a bad bearing still
 looks like a bearing.
 
