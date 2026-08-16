@@ -825,6 +825,10 @@ export interface CachedTravel {
   options: JourneyOption[] | null;
   /** TfL answered, and the answer was "there is no such journey". A cached fact, not a failure. */
   noRoute: boolean;
+  /** Why there is no number, where the row knows — TfL's own message, or our own refusal to ask
+   *  about a walk nobody could make inside the hour. Null on rows written before the column
+   *  existed, which is honestly "no more than `noRoute` says". */
+  reason: string | null;
   /** What this number means — see `TRAVEL_BASIS` in tfl.ts. Null on every row written before we
    *  started pinning transit to a weekday morning, which is to say: measured at an unknown time
    *  of day, and not comparable with anything. */
@@ -840,6 +844,7 @@ function toCachedTravel(r: any): CachedTravel {
     changes: r.changes,
     options: (r.journeys ?? null) as JourneyOption[] | null,
     noRoute: r.no_route ?? false,
+    reason: r.reason ?? null,
     basis: r.basis ?? null,
     computedAt: r.computed_at,
   };
@@ -848,7 +853,7 @@ function toCachedTravel(r: any): CachedTravel {
 export async function getCachedTravel(postcode: string): Promise<CachedTravel[]> {
   const { data, error } = await db()
     .from('travel_time')
-    .select('dest_postcode, mode, seconds, changes, no_route, journeys, basis, computed_at')
+    .select('dest_postcode, mode, seconds, changes, no_route, reason, journeys, basis, computed_at')
     .eq('origin_postcode', postcode);
   fail('reading travel cache', error);
   return (data ?? []).map(toCachedTravel);
@@ -902,7 +907,7 @@ export async function getCachedTravelFor(
 
   const { data, error } = await db()
     .from('travel_time')
-    .select('origin_postcode, dest_postcode, mode, seconds, changes, no_route, journeys, basis, computed_at')
+    .select('origin_postcode, dest_postcode, mode, seconds, changes, no_route, reason, journeys, basis, computed_at')
     .in('origin_postcode', [...new Set(postcodes)]);
   fail('reading travel cache', error);
 

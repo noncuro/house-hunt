@@ -211,6 +211,22 @@ export const TRAVEL_MODES: TravelMode[] = ['walking', 'cycling', 'transit'];
  *  numbers that matter. */
 export const WALKING_LIMIT_SECONDS = 60 * 60;
 
+/** A brisk walk, in miles per hour. Only ever used to turn the limit above into a distance — it is
+ *  not a pace anything is estimated at, because TfL's own number is better than any pace we would
+ *  pick. Deliberately fast: it decides how far away a leg has to be before we stop asking, and
+ *  overestimating the walker is what keeps that refusal true for everybody. */
+const BRISK_WALK_MPH = 3;
+
+/** How far away a place has to be, in a straight line, before there is no point asking how long it
+ *  takes to walk there.
+ *
+ *  This is `WALKING_LIMIT_SECONDS` restated as a distance rather than a second opinion about what is
+ *  walkable, which is why it is derived rather than typed out. A real route is never shorter than
+ *  the straight line, so a destination further off than this cannot be reached on foot inside the
+ *  hour — and an answer over the hour is one every view here already discards as not a real option.
+ *  Asking TfL for it spends a call on a number that is thrown away on arrival. */
+export const WALKING_LIMIT_MILES = (WALKING_LIMIT_SECONDS / 3600) * BRISK_WALK_MPH;
+
 export interface TravelTime {
   placeId: string;
   mode: TravelMode;
