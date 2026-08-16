@@ -210,6 +210,29 @@ export function Triage({
           the pile, taking a third of the screen to say what it had already done — so they collapse
           to their own summary, and open on the word that says they will. */}
       <div className="triage-bar">
+        {/* Two drawings of one pile, not two screens: the filter, the sort and the ticks all carry
+            across, and the pane on the right is the same pane. */}
+        <span className="triage-views">
+          <button
+            type="button"
+            className={asMap ? 'key' : 'key key-on'}
+            aria-pressed={!asMap}
+            data-testid="triage-as-list"
+            onClick={() => setAsMap(false)}
+          >
+            <Icon name="places" size={12} /> List
+          </button>
+          <button
+            type="button"
+            className={asMap ? 'key key-on' : 'key'}
+            aria-pressed={asMap}
+            data-testid="triage-as-map"
+            onClick={() => setAsMap(true)}
+          >
+            <Icon name="map" size={12} /> Map
+          </button>
+        </span>
+
         <span className="triage-count" data-testid="triage-count">
           <strong>{shown.length}</strong> of {pile.length} waiting
           {unknowns > 0 && (
@@ -275,28 +298,6 @@ export function Triage({
           </select>
         </label>
 
-        {/* Two drawings of one pile, not two screens: the filter, the sort and the ticks all carry
-            across, and the pane on the right is the same pane. */}
-        <span className="triage-views">
-          <button
-            type="button"
-            className={asMap ? 'key' : 'key key-on'}
-            aria-pressed={!asMap}
-            data-testid="triage-as-list"
-            onClick={() => setAsMap(false)}
-          >
-            <Icon name="places" size={12} /> List
-          </button>
-          <button
-            type="button"
-            className={asMap ? 'key key-on' : 'key'}
-            aria-pressed={asMap}
-            data-testid="triage-as-map"
-            onClick={() => setAsMap(true)}
-          >
-            <Icon name="map" size={12} /> Map
-          </button>
-        </span>
 
         {/* The model and the button that rebuilds it, as one group at the far end of the bar: what
             Rescore acts on is the line beside it, not the filters it used to sit next to. Grouped

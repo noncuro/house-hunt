@@ -1750,14 +1750,35 @@ function monthStartIso(): string {
   return new Date(`${year}-${month}-01T00:00:00Z`).toISOString();
 }
 
+/** How many usage rows to ask for at a time.
+ *
+ *  PostgREST caps a response at its `max-rows` setting — 1000 on Supabase — and says so nowhere in
+ *  the reply: a select with no range comes back looking like the whole answer. Every figure on the
+ *  Admin screen is summed from these rows in the browser, so the month's charges quietly stopped at
+ *  the thousandth and the page showed less money than had been spent, while the warning banner —
+ *  which sums in SQL, where no such cap exists — showed the real figure. Two numbers for one fact,
+ *  and the wrong one was the one with the table under it. */
+const USAGE_PAGE = 1000;
+
 async function usageSince(since: string): Promise<UsageRow[]> {
-  const { data, error } = await db()
-    .from('api_usage')
-    .select('id, occurred_at, project_id, user_id, kind, model, input_tokens, cached_input_tokens, output_tokens, cost_usd, rightmove_id')
-    .gte('occurred_at', since)
-    .order('occurred_at', { ascending: false });
-  fail('reading spend', error);
-  return ((data ?? []) as any[]).map((r) => ({
+  const rows: Array<Record<string, unknown>> = [];
+  for (let from = 0; ; from += USAGE_PAGE) {
+    const { data, error } = await db()
+      .from('api_usage')
+      .select('id, occurred_at, project_id, user_id, kind, model, input_tokens, cached_input_tokens, output_tokens, cost_usd, rightmove_id')
+      .gte('occurred_at', since)
+      .order('occurred_at', { ascending: false })
+      // Ordered by the same column the range walks, and by `id` after it, because two rows written
+      // in the same millisecond would otherwise be free to swap places between pages — which loses
+      // one of them and counts the other twice.
+      .order('id', { ascending: false })
+      .range(from, from + USAGE_PAGE - 1);
+    fail('reading spend', error);
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < USAGE_PAGE) break;
+  }
+  return (rows as any[]).map((r) => ({
     id: String(r.id),
     occurredAt: r.occurred_at,
     projectId: r.project_id ?? null,

@@ -53,7 +53,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
       setBusy(null);
       return setOutcome(fromSignIn(reply));
     }
-    await handOver();
+    void handOver();
     setBusy(null);
     onSignedIn(reply.state);
   }
@@ -61,10 +61,16 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
   /** The one moment the extension can be signed in without asking anybody anything: the password is
    *  in a local variable a few lines up, and it is never anywhere else (design D3).
    *
-   *  Deliberately not reported when it fails. Signing in here has already succeeded, the shortlist
+   *  Not awaited, and deliberately not reported when it fails. Signing in here has already succeeded, the shortlist
    *  is about to render, and an extension that is absent or refused is what the "connect it" notice
    *  on that page is for — saying it twice, one of them while the reader is watching a spinner
-   *  labelled "signing in", would make an optional half look like a broken one. */
+   *  labelled "signing in", would make an optional half look like a broken one.
+   *
+   *  Awaiting it was worse than saying it twice. Nothing replies when the extension is not
+   *  installed, so the ask ran its full twenty-second timeout with the button still reading
+   *  "Signing in…" over a session that had already been minted — which reads as a sign-in that
+   *  hung, and is why refreshing "fixed" it. The result is not used, so there is nothing to wait
+   *  for. */
   async function handOver() {
     try {
       await signInExtension(address, password);
@@ -89,7 +95,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
     const session = await attempt(() => beginSession(address, password));
     if (!session) return setBusy(null);
     if (session.status === 'signed-in') {
-      await handOver();
+      void handOver();
       setBusy(null);
       return onSignedIn(session.state);
     }

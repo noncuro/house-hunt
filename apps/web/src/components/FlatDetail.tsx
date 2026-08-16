@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import {
-  CopyLocation,
   Flags,
   Gallery,
   HubFact,
@@ -195,9 +194,6 @@ export function FlatDetail({
         {score !== undefined && <ScoreGauge score={score} surprise={isSurprise(entry, score)} />}
       </div>
 
-      {/* The address as text you can take somewhere else — every other thing on this screen answers
-          "how far", and this is the one that answers "show me". */}
-      <CopyLocation postcode={entry.postcode} point={point} />
 
       {verdictFirst && decide}
 
@@ -231,6 +227,7 @@ export function FlatDetail({
           dot here and this flat's pin on the Map screen are the same colour. */}
       <CardMap
         point={point}
+        postcode={entry.postcode}
         hubs={hubs}
         colour={pinColour(group)}
         approximate={!entry.exactLocation}

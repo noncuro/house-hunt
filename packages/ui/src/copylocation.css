@@ -2,13 +2,17 @@
    exists on only one of the two surfaces that draw this. Same tokens, so it is the same chip. */
 .rm-copy {
   display: inline-flex;
+  /* Its own width, whatever it is inside. In a flex column — which is what every pane it sits in
+     is — a stretched button drew a postcode against a hand's width of empty box. */
+  align-self: flex-start;
+  width: fit-content;
   align-items: center;
   gap: 5px;
   border: 1px solid var(--line);
   border-radius: var(--r-chip);
   background: var(--white);
-  padding: 4px 9px;
-  font-size: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
   font-family: inherit;
   color: var(--ink-soft);
   cursor: pointer;

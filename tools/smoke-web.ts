@@ -329,7 +329,7 @@ async function checkList({ page }: Stage): Promise<void> {
   // The card opens from anywhere on it, the keyboard walks the list, and Escape leaves one layer at
   // a time. Three gestures with nothing behind them but a key press, which is exactly the kind that
   // breaks silently: nothing throws, the panel simply does the wrong thing.
-  await page.locator(`#card-${fixtureId(1)} .flat-meta`).click();
+  await page.locator(`#card-${fixtureId(1)} .flat-meta`).first().click();
   const opened = page.locator('[data-testid="flat-panel"]');
   if (!(await opened.count())) {
     note('clicking the middle of a card did not open it');

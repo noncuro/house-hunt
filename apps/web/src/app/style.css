@@ -1062,6 +1062,15 @@ code {
   gap: var(--s2);
 }
 
+/* "Show map" and the postcode you can copy, on one line: both answer "where is it, exactly", and
+   the chip on a line of its own read as a heading for the map rather than as part of it. */
+.card-map-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
 /* Plain and quiet: it is an offer, not one of the pane's decisions. */
 .card-map-toggle {
   border: 1px solid var(--line);
