@@ -15,6 +15,7 @@
 import {
   AMENITIES,
   amenityPresent,
+  nearestStationMiles,
   resolveSize,
   type AmenityKey,
   type AmenityWant,
@@ -23,7 +24,7 @@ import {
 import { parseMonthlyPrice } from './predict';
 import type { ShortlistEntry } from './db/supabase';
 import { sizeOf } from './shortlist';
-import { TRAVEL_MODES, type TravelMode, type TravelTime } from './types';
+import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime } from './types';
 import { distanceMiles } from './hubs';
 import type { Point } from './postcode';
 
@@ -38,6 +39,18 @@ import type { Point } from './postcode';
  *  all of them. It is also the honest measure for "somewhere round here": half a mile of Angel is a
  *  thing people mean, and it does not depend on what the Northern line is doing. */
 export const CROW = 'crow';
+
+/** The one destination every flat carries with it: whichever station Rightmove listed nearest.
+ *
+ *  A place id, and a fake one, because "within half a mile of a station" is the same question as
+ *  "within half a mile of Angel" and deserves the same control rather than a fourth kind of bar
+ *  bolted onto the row. It is not a place anybody saved and it is not on the map — the distance is
+ *  Rightmove's own figure for the nearest of the stations it listed, already on every card — so it
+ *  is measured as the crow flies and nothing else, and no project ever holds a row with this id.
+ *
+ *  It also answers for far more of the pile than a saved place can: a station distance arrives with
+ *  the listing, where a journey time has to be looked up per flat and mostly has not been. */
+export const NEAREST_STATION = 'nearest-station';
 
 /** What a bar can be measured in. The three journeys, and the straight line. */
 export type BarMode = TravelMode | typeof CROW;
@@ -80,7 +93,12 @@ export interface Measurable {
  *  looking like a filter and doing nothing, and that is the one failure this file exists to refuse.
  *  The picker offers only these, and `withKnownPlaces` drops a stored bar that has stopped being
  *  one of them. */
-export function barModesFor(place: Measurable): BarMode[] {
+export function barModesFor(place: Measurable & { id?: string }): BarMode[] {
+  // The nearest station has no postcode and no coordinate of its own — it is a different station
+  // for every flat — so the general rule below would say it cannot be measured to at all. It can:
+  // the distance came with the listing. Miles, and only miles, since it is Rightmove's figure and
+  // there is nowhere fixed to route a journey from.
+  if (place.id === NEAREST_STATION) return [CROW];
   const modes: BarMode[] = place.postcode === null ? [] : [...TRAVEL_MODES];
   if (place.lat !== null && place.lon !== null) modes.push(CROW);
   return modes;
@@ -97,10 +115,33 @@ export function barModesFor(place: Measurable): BarMode[] {
  *  half-hour commute to most of the South East, and switching back turned half a mile into thirty
  *  seconds and excluded every journey ever measured. Either way the control reads exactly as it did
  *  before, which is what makes it worth throwing the number away. */
-export function startingBar(place: Measurable): { mode: BarMode; max: number } | null {
+export function startingBar(place: Measurable & { id?: string }): { mode: BarMode; max: number } | null {
   const modes = barModesFor(place);
   if (modes.length === 0) return null;
   return modes.includes('transit') ? { mode: 'transit', max: 30 } : { mode: CROW, max: 1 };
+}
+
+/** The nearest station as a place, so the picker can offer it in the same select as everywhere the
+ *  hunt saved. Every field but the label and the id is empty because none of them is true of it:
+ *  it has no postcode to route from, no point on the map, and nothing to sweep. `barModesFor` is
+ *  what knows better, and it is the only thing that has to. */
+export const NEAREST_STATION_PLACE: Place = {
+  id: NEAREST_STATION,
+  label: 'Nearest station',
+  postcode: null,
+  lat: null,
+  lon: null,
+  locationIdentifier: null,
+  displayLocationIdentifier: null,
+  sweepRadiusMiles: null,
+  maxDaysSinceAdded: null,
+};
+
+/** Somewhere a bar can be measured to: the hunt's own places, and the station every flat has. The
+ *  saved ones first — a bar added with the button lands on the first of these, and the commute is
+ *  what somebody saved a place for. */
+export function destinationsFor(places: Place[]): Place[] {
+  return [...places.filter((p) => barModesFor(p).length > 0), NEAREST_STATION_PLACE];
 }
 
 /** The default for one mode, for when only the mode is changing. */
@@ -223,6 +264,14 @@ function reach(
   travel: TravelIndex | undefined,
   points: PlacePoints | undefined,
 ): Reach {
+  // Rightmove's own number, off the listing, so neither end of it is a place with a position — and
+  // a flat with no stations listed is unknown rather than infinitely far from one. Asked before the
+  // mode, because the mode can only ever be `crow` here and a bar restored from storage with
+  // anything else in it should still measure the thing it names.
+  if (bar.placeId === NEAREST_STATION) {
+    const miles = nearestStationMiles(entry.nearestStations);
+    return miles === null ? 'unknown' : miles <= bar.max ? 'within' : 'beyond';
+  }
   // Measured on the map, so neither postcode nor cache comes into it — only whether we know where
   // both ends are. A flat with no coordinate is unknown for the same reason everything else here is.
   if (bar.mode === CROW) {
@@ -264,6 +313,44 @@ export function applyFilter(
   return { kept, unknowns };
 }
 
+/** Which of the bars this flat was measured against have no measurement — in the words a screen can
+ *  put on the row.
+ *
+ *  The tally under the filter says how many flats are here on a shrug; it cannot say *which*, and on
+ *  a row that is the whole question. "Kept: we have no size for this one" is a different instruction
+ *  from "700 sq ft" — it is the one that says open the floorplan — and without it the two are drawn
+ *  identically, which is the invisible half of the unknown rule finally made visible.
+ *
+ *  Short phrases, because they are chips beside an address and not a paragraph. Empty means the flat
+ *  cleared every bar on an actual answer. */
+export function unknownBars(
+  entry: ShortlistEntry,
+  filter: TriageFilter,
+  travel?: TravelIndex,
+  points?: PlacePoints,
+): string[] {
+  const missing: string[] = [];
+  if (filter.maxPrice !== null && parseMonthlyPrice(entry.price) === null) missing.push('no rent');
+  if (filter.minBedrooms !== null && entry.bedrooms === null) missing.push('beds unknown');
+  if (filter.minSqft !== null && !resolveSize(sizeOf(entry))) missing.push('no size');
+  if (filter.minGreatRoomSqft !== null && (entry.analysis?.biggestRoomSqft ?? null) === null) {
+    missing.push('main room unmeasured');
+  }
+  for (const key of filter.amenities) {
+    if (amenityPresent(key, entry.analysis) === null) {
+      missing.push(`${AMENITIES.find((a) => a.key === key)?.label ?? key} unknown`);
+    }
+  }
+  // The commonest unknown of the lot, and the one most worth saying. The travel cache only holds
+  // pairings somebody has already looked up, so on a fresh sweep almost the whole pile is unmeasured
+  // — a travel bar that dropped those would empty the screen and look like a hunt with nowhere to
+  // live in it.
+  if (filter.travel.some((bar) => reach(entry, bar, travel, points) === 'unknown')) {
+    missing.push('journey not measured');
+  }
+  return missing;
+}
+
 /** True when this flat clears the filter with a shrug rather than an answer — at least one bar it
  *  was measured against has no measurement. */
 function unknownTo(
@@ -272,16 +359,7 @@ function unknownTo(
   travel?: TravelIndex,
   points?: PlacePoints,
 ): boolean {
-  if (filter.maxPrice !== null && parseMonthlyPrice(entry.price) === null) return true;
-  if (filter.minBedrooms !== null && entry.bedrooms === null) return true;
-  if (filter.minSqft !== null && !resolveSize(sizeOf(entry))) return true;
-  if (filter.minGreatRoomSqft !== null && (entry.analysis?.biggestRoomSqft ?? null) === null) return true;
-  if (filter.amenities.some((key) => amenityPresent(key, entry.analysis) === null)) return true;
-  // The commonest unknown of the lot, and the one most worth counting. The travel cache only holds
-  // pairings somebody has already looked up, so on a fresh sweep almost the whole pile is unmeasured
-  // — a travel bar that dropped those would empty the screen and look like a hunt with nowhere to
-  // live in it.
-  return filter.travel.some((bar) => reach(entry, bar, travel, points) === 'unknown');
+  return unknownBars(entry, filter, travel, points).length > 0;
 }
 
 /** The hunt's own must-haves, expressed as a filter.
@@ -388,6 +466,9 @@ export function withKnownPlaces(
 ): TriageFilter {
   const known = new Map([...places].map((p) => [p.id, p]));
   const travel = filter.travel.filter((t) => {
+    // The nearest station is not one of the project's places and never will be, so it is not
+    // something a project can stop having — it survives here on its own terms.
+    if (t.placeId === NEAREST_STATION) return t.mode === CROW;
     const place = known.get(t.placeId);
     // And a bar whose place can no longer answer it goes the same way, for the same reason: a
     // postcode removed from a place leaves its transit bars reading `unknown` for every flat in the

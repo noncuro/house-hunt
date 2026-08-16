@@ -29,7 +29,7 @@
 import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Locator, type Page } from 'playwright';
 import {
   createInvite,
@@ -54,6 +54,7 @@ import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 import { startFunctions } from './edge-functions';
 import { demandFreePort, stopTree } from './servers';
+import { checkArchiveIsComplete } from './manifest-paths';
 
 /** Must match `storageKey` in `apps/web/src/lib/client.ts`. Asserted below rather than trusted:
  *  a session written under the wrong key renders a perfectly good sign-in form, and every
@@ -976,135 +977,10 @@ async function checkInstallAssets(page: Page): Promise<void> {
 
   const saved = resolve(SHOTS, 'served-extension.zip');
   writeFileSync(saved, bytes);
-  const names = new Set(
-    execFileSync('unzip', ['-Z1', saved], { encoding: 'utf8' }).split('\n').filter(Boolean),
-  );
-  if (!names.has('manifest.json')) {
-    note('the served zip has no manifest.json — Chrome would refuse to load it');
-    return;
-  }
-  // The whole of the completeness check now lives here rather than in `install.sh`. The installer
-  // verifies the archive's own CRCs, which is exact and needs no parser; knowing which *files* a
-  // manifest asks Chrome for needs one, and a shell has none it can count on. This side has
-  // `JSON.parse`, and the archive it reads is the committed zip, which is the file people download.
-  const refs = referencedPaths(JSON.parse(execFileSync('unzip', ['-p', saved, 'manifest.json'], { encoding: 'utf8' })));
-  const missing = refs.filter((ref) => (ref.includes('*') ? !matchesAny(ref, names) : !names.has(ref)));
+  // The same parser `check:zip` gates the commit with, asked here about the bytes the site actually
+  // handed over — which is the only question this harness can answer that the other one cannot.
+  const { refs, missing } = checkArchiveIsComplete(saved, (problem) => note(`the served zip: ${problem}`));
   console.log(`served zip: ${refs.length} path(s) referenced, ${missing.length} missing`);
-  if (refs.length === 0) note("the served zip's manifest.json asks Chrome to load nothing at all");
-  for (const ref of missing) note(`the served zip's manifest.json asks Chrome to load ${ref}, which is not in the zip`);
-}
-
-/** Every file the manifest asks Chrome to load, extension-root-relative.
- *
- *  Field-aware, because a scan for path-shaped strings is wrong in both directions on manifests
- *  Chrome accepts. It claims things that are not files — a `short_name` of `House.hunt` — and it
- *  misses things that are: a path with a space in it, or one written `content-scripts\/panel.js`,
- *  which is legal JSON for the same path and which a text scan looks up with the backslash still in
- *  place. `JSON.parse` settles the escapes, and reading named fields settles the rest.
- *
- *  A manifest carrying a key this does not know about stops the run rather than being checked in
- *  part. That is the whole point of the finding this answers: a parser that silently covers less
- *  than it claims reports a green tick about the half it looked at. Adding a field here is a
- *  deliberate act, and the failure tells you which field to add. */
-function referencedPaths(manifest: Record<string, unknown>): string[] {
-  /** Top-level manifest keys that hold no path, so finding one is not a reason to stop. Anything not
-   *  here and not read below is a key this parser has never seen, which is the case it must refuse:
-   *  a new field holding a filename would otherwise be checked by not being checked. */
-  const pathless = new Set([
-    'manifest_version', 'name', 'short_name', 'description', 'version', 'version_name', 'key',
-    'permissions', 'optional_permissions', 'host_permissions', 'optional_host_permissions',
-    'content_security_policy', 'externally_connectable', 'incognito', 'minimum_chrome_version',
-    'offline_enabled', 'update_url', 'homepage_url', 'author', 'omnibox', 'commands',
-    'cross_origin_embedder_policy', 'cross_origin_opener_policy',
-  ]);
-  const found: string[] = [];
-  const add = (value: unknown, where: string): void => {
-    if (typeof value !== 'string') {
-      note(`the served manifest's ${where} is not a string — this check cannot read that shape`);
-      return;
-    }
-    found.push(value.replace(/^\//, ''));
-  };
-
-  for (const [key, value] of Object.entries(manifest)) {
-    if (pathless.has(key)) continue;
-    switch (key) {
-      case 'background': {
-        const background = value as Record<string, unknown>;
-        if ('service_worker' in background) add(background.service_worker, 'background.service_worker');
-        for (const [i, script] of ((background.scripts as unknown[]) ?? []).entries()) add(script, `background.scripts[${i}]`);
-        break;
-      }
-      case 'content_scripts':
-        for (const [i, entry] of (value as Record<string, unknown>[]).entries()) {
-          for (const kind of ['js', 'css'] as const) {
-            for (const [j, path] of ((entry[kind] as unknown[]) ?? []).entries()) add(path, `content_scripts[${i}].${kind}[${j}]`);
-          }
-        }
-        break;
-      case 'icons':
-        for (const [size, path] of Object.entries(value as Record<string, unknown>)) add(path, `icons["${size}"]`);
-        break;
-      case 'action':
-      case 'browser_action':
-      case 'page_action': {
-        const action = value as Record<string, unknown>;
-        if ('default_popup' in action) add(action.default_popup, `${key}.default_popup`);
-        if (typeof action.default_icon === 'string') add(action.default_icon, `${key}.default_icon`);
-        else if (action.default_icon) {
-          for (const [size, path] of Object.entries(action.default_icon as Record<string, unknown>)) add(path, `${key}.default_icon["${size}"]`);
-        }
-        break;
-      }
-      case 'web_accessible_resources':
-        for (const [i, entry] of (value as Record<string, unknown>[]).entries()) {
-          for (const [j, path] of ((entry.resources as unknown[]) ?? []).entries()) add(path, `web_accessible_resources[${i}].resources[${j}]`);
-        }
-        break;
-      case 'default_locale':
-        // Not a path itself; it is the one field that names a file only by implication, and the
-        // file it implies is the one whose absence breaks every `__MSG_` in the manifest.
-        add(`_locales/${String(value)}/messages.json`, 'default_locale');
-        break;
-      case 'options_page':
-        add(value, 'options_page');
-        break;
-      case 'options_ui':
-        add((value as Record<string, unknown>).page, 'options_ui.page');
-        break;
-      case 'side_panel':
-        add((value as Record<string, unknown>).default_path, 'side_panel.default_path');
-        break;
-      case 'devtools_page':
-        add(value, 'devtools_page');
-        break;
-      case 'chrome_url_overrides':
-        for (const [page, path] of Object.entries(value as Record<string, unknown>)) add(path, `chrome_url_overrides.${page}`);
-        break;
-      case 'declarative_net_request':
-        for (const [i, rule] of (((value as Record<string, unknown>).rule_resources as Record<string, unknown>[]) ?? []).entries()) {
-          add(rule.path, `declarative_net_request.rule_resources[${i}].path`);
-        }
-        break;
-      case 'storage':
-        add((value as Record<string, unknown>).managed_schema, 'storage.managed_schema');
-        break;
-      case 'sandbox':
-        for (const [i, path] of (((value as Record<string, unknown>).pages as unknown[]) ?? []).entries()) add(path, `sandbox.pages[${i}]`);
-        break;
-      default:
-        note(`the served manifest has a "${key}" this check does not know how to read — it may name files that nothing is verifying (add it to referencedPaths)`);
-    }
-  }
-  return [...new Set(found)];
-}
-
-/** Chrome allows a glob in `web_accessible_resources`, so a literal lookup would report a pattern
- *  as missing. Matched rather than resolved: `*` spans path separators there, and the only question
- *  is whether the archive holds anything the pattern would serve. */
-function matchesAny(pattern: string, names: Set<string>): boolean {
-  const rx = new RegExp(`^${pattern.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
-  return [...names].some((name) => rx.test(name));
 }
 
 /** Every prefix of the installer, run in a scrubbed environment, changing nothing in its sandbox.

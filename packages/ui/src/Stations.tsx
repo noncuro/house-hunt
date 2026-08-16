@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Hint } from './Hint';
 import { formatDuration, ModeIcon } from './Journey';
-import { stationDistance } from '@house-hunt/core';
+import { dedupeStations, stationDistance, type Station } from '@house-hunt/core';
 import { useHost } from './host';
 import { FALLBACK_LINE_COLOUR, LINE_COLOURS, textOn } from '@house-hunt/core';
 import './stations.css';
@@ -22,12 +22,6 @@ import './stations.css';
  *  stops being "the nearest" and starts being a directory. */
 export const STATIONS_SHOWN = 4;
 
-interface NearbyStation {
-  name: string;
-  distance: number;
-  unit: string;
-}
-
 type Walks = Record<string, { seconds?: number; lines: string[] }>;
 
 export function Stations({
@@ -37,12 +31,14 @@ export function Stations({
   empty = 'None listed',
 }: {
   postcode: string | null;
-  stations: NearbyStation[];
+  stations: Station[];
   limit?: number;
   empty?: string;
 }) {
   const host = useHost();
-  const shown = stations.slice(0, limit);
+  // Merged before the list is cut, not after: King's Cross arrives as four rows, and taking the
+  // first four of those is a panel showing one interchange and calling it four stations.
+  const shown = useMemo(() => dedupeStations(stations).slice(0, limit), [stations, limit]);
   const [walks, setWalks] = useState<Walks>({});
 
   // Keyed on the names rather than on the array, which is rebuilt on every render. The walk and

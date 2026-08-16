@@ -4,12 +4,13 @@
 import {
   addressBesidePostcode,
   claimLabel,
+  dedupeStations,
   flagsFor,
   relativeUpdate,
   resolveReading,
 } from '../packages/core/src/facts';
 import { galleryFor } from '../packages/core/src/shortlist';
-import type { Analysis } from '../packages/core/src/types';
+import type { Analysis, Station } from '../packages/core/src/types';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -337,6 +338,80 @@ check(
   }).find((f) => f.key === 'dishwasher')?.text,
   'no dishwasher',
 );
+
+console.log('dedupeStations');
+/** The four rows a flat off the Caledonian Road really gets back, verbatim from Rightmove — the
+ *  case in issue #40. Four rows for one interchange is the whole of what a panel shows, so a flat
+ *  beside King's Cross listed as worse-connected than one with four separate stations near it. */
+const station = (name: string, distance: number, types: string[] = ['NATIONAL_TRAIN']): Station =>
+  ({ name, distance, unit: 'miles', types });
+
+const kingsCross = [
+  station("King's Cross St. Pancras Underground Station", 0.4, ['LONDON_UNDERGROUND']),
+  station('London Kings Cross Station', 0.4),
+  station('St. Pancras International Station', 0.5),
+  station('Kings Cross Thameslink Station', 0.4),
+];
+check('four entrances to one interchange are one station', dedupeStations(kingsCross).length, 1);
+check(
+  'and it keeps the name that says the most',
+  dedupeStations(kingsCross)[0]?.name,
+  "King's Cross St. Pancras Underground Station",
+);
+check('the nearest of the distances', dedupeStations(kingsCross)[0]?.distance, 0.4);
+// Merging must not lose a mode: this is the difference between "there is a tube" and "there is a
+// tube and you can get a train to Edinburgh".
+check(
+  'and every mode any of them had',
+  dedupeStations(kingsCross)[0]?.types,
+  ['LONDON_UNDERGROUND', 'NATIONAL_TRAIN'],
+);
+
+// Two stations, not one, and a quarter of a mile apart on the same road. The name is a superset
+// either way round, so distance is what has to keep them separate.
+check(
+  'a name that contains another is not enough on its own',
+  dedupeStations([
+    station("Shepherd's Bush Station", 0.2, ['LONDON_UNDERGROUND']),
+    station("Shepherd's Bush Market Station", 0.5, ['LONDON_UNDERGROUND']),
+  ]).length,
+  2,
+);
+// ...and nor is standing in the same place.
+check(
+  'nor is being the same distance away',
+  dedupeStations([station('Angel Station', 0.3), station('Old Street Station', 0.3)]).length,
+  2,
+);
+// Two names that say exactly as much as each other keep the first, which is the nearest: there is
+// nothing to prefer in "Highbury & Islington Underground Station" over "Highbury & Islington".
+check(
+  'the survivors are still in distance order',
+  dedupeStations([
+    station('Highbury & Islington Station', 0.6),
+    station('Caledonian Road Station', 0.3, ['LONDON_UNDERGROUND']),
+    station('Highbury & Islington Underground Station', 0.6, ['LONDON_UNDERGROUND']),
+  ]).map((s) => s.name),
+  ['Caledonian Road Station', 'Highbury & Islington Station'],
+);
+// Kilometres and miles are not comparable numbers, and a listing served in one unit beside one
+// served in the other must not merge on the arithmetic happening to agree.
+check(
+  'two units are never the same spot',
+  dedupeStations([
+    station('Kings Cross Station', 0.4),
+    { name: "King's Cross St. Pancras Underground Station", distance: 0.4, unit: 'km', types: [] },
+  ]).length,
+  2,
+);
+// A name that is nothing but the words this strips has no place in it left to compare, so it
+// stands alone rather than swallowing whatever it is listed beside.
+check(
+  'a name with no place left in it merges with nothing',
+  dedupeStations([station('London Underground Station', 0.3), station('Angel Station', 0.3)]).length,
+  2,
+);
+check('nothing in, nothing out', dedupeStations([]), []);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

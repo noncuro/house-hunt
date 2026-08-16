@@ -17,8 +17,12 @@ import {
   defaultMax,
   startingBar,
   filterIsOn,
+  destinationsFor,
   huntFloor,
   matchesFilter,
+  unknownBars,
+  NEAREST_STATION,
+  NEAREST_STATION_PLACE,
   parseFilter,
   splitByHuntFloor,
   withKnownPlaces,
@@ -507,6 +511,83 @@ check(
   splitByHuntFloor([tiny, roomy], {}).below.length,
   0,
 );
+
+// --------------------------------------------------------------------------------------------- //
+console.log('\nthe nearest station: a place nobody saved');
+
+const station = (miles: number, unit = 'miles') => [
+  { name: 'Angel Station', types: ['LONDON_UNDERGROUND'], distance: miles, unit },
+];
+const nearAStation = flat({ rightmoveId: 'near', nearestStations: station(0.3) });
+const farFromOne = flat({ rightmoveId: 'far', nearestStations: station(1.4) });
+const noStations = flat({ rightmoveId: 'none' });
+const halfMileOfATube = only({ travel: [{ placeId: NEAREST_STATION, mode: CROW, max: 0.5 }] });
+
+check('three hundred yards away stays', matchesFilter(nearAStation, halfMileOfATube), true);
+check('a mile and a half goes', matchesFilter(farFromOne, halfMileOfATube), false);
+// The rule again, on the one bar that needs neither the travel cache nor a coordinate: a listing
+// with no stations on it is one nobody has a distance for, not one in the middle of nowhere.
+check('a listing with no stations on it stays', matchesFilter(noStations, halfMileOfATube), true);
+check(
+  'and is counted as kept on a shrug',
+  applyFilter([nearAStation, farFromOne, noStations], halfMileOfATube).unknowns,
+  1,
+);
+// Kilometres are converted rather than compared as if they were miles, which would read as a much
+// closer station than it is — the bar would keep a flat 0.9 miles from one.
+check(
+  'a distance in kilometres is converted, not trusted',
+  matchesFilter(flat({ nearestStations: station(1.4, 'km') }), halfMileOfATube),
+  false,
+);
+
+check('it offers the straight line and nothing else', barModesFor({ id: NEAREST_STATION, postcode: null, lat: null, lon: null }).join(), CROW);
+// It is not one of the project's places, so the pruning that drops a bar naming a deleted place
+// must not drop this one — there is nothing for it to have been deleted from.
+check('a station bar survives a project with no places at all', withKnownPlaces(halfMileOfATube, []), halfMileOfATube);
+check('and comes back out of storage intact', parseFilter(JSON.parse(JSON.stringify(halfMileOfATube))), halfMileOfATube);
+// Last in the picker, so the button that adds a bar still lands on a place somebody saved — the
+// commute is what they saved it for.
+const workPlace = { ...NEAREST_STATION_PLACE, id: 'work', label: 'Work', postcode: 'EC1V 1JN', lat: 51.53, lon: -0.09 };
+check('the picker offers it after the saved places', destinationsFor([workPlace]).map((p) => p.id), ['work', NEAREST_STATION]);
+check('and offers it on its own when nothing is saved', destinationsFor([]).map((p) => p.id), [NEAREST_STATION]);
+
+// --------------------------------------------------------------------------------------------- //
+console.log('\nwhat a row says it does not know');
+
+// The tally under the filter counts these; a row has to be able to say which of them it is. Every
+// phrase here is drawn as a chip beside an address, so they are the words, not keys.
+check('a size bar and no size', unknownBars(flat({}), only({ minSqft: 700 })), ['no size']);
+check(
+  'a measured flat has nothing to say',
+  unknownBars(flat({ floorAreaSqft: 800, floorAreaSource: 'sizings' }), only({ minSqft: 700 })),
+  [],
+);
+check(
+  'an amenity nobody could see names itself',
+  unknownBars(flat({ analysis: analysis({}) }), only({ amenities: ['outdoor'] })),
+  ['outdoor space unknown'],
+);
+check(
+  'and one the model answered does not',
+  unknownBars(flat({ analysis: analysis({ hasOutdoorSpace: false }) }), only({ amenities: ['outdoor'] })),
+  [],
+);
+check(
+  'two missing figures are two chips',
+  unknownBars(flat({ price: 'POA' }), only({ maxPrice: 3000, minBedrooms: 2 })),
+  ['no rent', 'beds unknown'],
+);
+// A bar nobody has looked up yet, which on a fresh sweep is nearly the whole pile.
+check(
+  'an unmeasured journey says so once, however many bars are set',
+  unknownBars(flat({ postcode: 'N1 9AA' }), only({ travel: [
+    { placeId: 'work', mode: 'transit', max: 20 },
+    { placeId: 'gym', mode: 'walking', max: 15 },
+  ] })),
+  ['journey not measured'],
+);
+check('and a filter that is off says nothing at all', unknownBars(flat({}), NO_FILTER), []);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

@@ -1145,6 +1145,15 @@ code {
   border-top: 1px solid var(--line-2);
 }
 
+/* At the top of the pane the rule belongs under it, not over it: it is separating the decision from
+   the flat below rather than closing off everything above. */
+.detail-decide-first {
+  padding-top: 0;
+  padding-bottom: var(--s3);
+  border-top: 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
 .detail-decide .rm-ratings {
   flex: none;
 }
@@ -1547,6 +1556,12 @@ code {
 
 .compare-clear {
   color: var(--good-ink);
+}
+
+/* The name and the distance are one fact, and a station whose name wraps mid-column reads as two
+   rows. */
+.compare-station {
+  white-space: nowrap;
 }
 
 /* Measured on a basis we no longer use: roughly right, and never ranked silently against a current
@@ -2063,6 +2078,25 @@ code {
 
 .triage-line {
   font-size: 11.5px;
+}
+
+/* Quiet, and quieter than the flat's own numbers: this is why a row is here, not something about
+   the flat. Wrapping rather than truncating — two missing figures is exactly the row worth reading
+   twice. */
+.triage-unknowns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.triage-unknown {
+  padding: 0 5px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-control);
+  color: var(--faint);
+  font-size: 10.5px;
+  line-height: 15px;
 }
 
 .triage-pane {

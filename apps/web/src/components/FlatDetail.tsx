@@ -48,7 +48,8 @@ import { isSurprise } from '@/lib/score';
  *  and twice in the other, and the travel block laid out differently in each.
  *
  *  The order is the order a decision is made in: the pictures, then the numbers, then the objections,
- *  then the journeys, and the verdict last because it is the thing you do having read the rest. */
+ *  then the journeys, and the verdict last because it is the thing you do having read the rest —
+ *  except in triage, which asks for it first and says why on `verdictFirst`. */
 export function FlatDetail({
   entry,
   places,
@@ -68,6 +69,14 @@ export function FlatDetail({
    *  handler because this is where the gallery is: passing the open/close of it upwards so the
    *  keyboard could reach it would put one pane's state on the screen above for the sake of one key. */
   keys = false,
+  /** Draw the verdict directly under the address rather than at the foot of the pane.
+   *
+   *  Everywhere else the order is the order a decision is made in — the pictures, the numbers, the
+   *  objections, the journeys, and the verdict last, having read the rest. Triage is the surface
+   *  where that stops being true: the pile is worked one flat at a time and the decision is why the
+   *  pane is open at all, so having to scroll past the photographs to reach three buttons is the
+   *  scroll you do on every single flat. */
+  verdictFirst = false,
 }: {
   entry: ShortlistEntry;
   places: Place[];
@@ -84,6 +93,7 @@ export function FlatDetail({
   onSetOffMarket: (off: boolean) => void;
   stageSaving?: Stage | null;
   keys?: boolean;
+  verdictFirst?: boolean;
 }) {
   const [galleryAt, setGalleryAt] = useState<number | null>(null);
   const images = galleryFor(entry);
@@ -140,6 +150,33 @@ export function FlatDetail({
   const funnelled = entry.stage !== null || verdict?.rating === 'love' || verdict?.rating === 'maybe';
   const point = entry.lat !== null && entry.lon !== null ? { lat: entry.lat, lon: entry.lon } : null;
 
+  // The only part of the pane that writes anything, drawn in one of two places — see `verdictFirst`.
+  const decide = (
+    <div className={verdictFirst ? 'detail-decide detail-decide-first' : 'detail-decide'}>
+      <VerdictLine verdict={verdict} />
+      <RatingButtons
+        compact
+        keys={keys}
+        value={verdict?.rating}
+        onRate={(rating) => onRate(rating, note)}
+      />
+      <input
+        className="note-edit"
+        value={note}
+        placeholder="Note…"
+        aria-label="Note on this flat"
+        onChange={(e) => setNote(e.target.value)}
+        // Blur fires before the click that caused it, so leaving the note to click a different
+        // rating would race two saves — one at the old rating, one at the new — and the later
+        // reply won. The rating buttons pass the note themselves.
+        onBlur={(e) => {
+          if (e.relatedTarget instanceof Element && e.relatedTarget.closest('.rm-ratings')) return;
+          if (verdict && note !== verdict.note) onRate(verdict.rating, note);
+        }}
+      />
+    </div>
+  );
+
   return (
     <div className="detail" data-testid="flat-detail">
       <Shots entry={entry} images={images} onOpen={setGalleryAt} />
@@ -156,6 +193,8 @@ export function FlatDetail({
         <h2 className="detail-address">{addressBesidePostcode(entry.displayAddress, entry.postcode)}</h2>
         {score !== undefined && <ScoreGauge score={score} surprise={isSurprise(entry, score)} />}
       </div>
+
+      {verdictFirst && decide}
 
       <p className="detail-facts">
         {entry.price && <span className="detail-rent">{entry.price}</span>}
@@ -226,33 +265,9 @@ export function FlatDetail({
 
       {entry.analysis?.summary && <p className="detail-summary dim">{entry.analysis.summary}</p>}
 
-      {/* The decision, last and on its own rule. Everything above it is what the flat is; this is
-          the only part of the pane that writes anything. */}
-      <div className="detail-decide">
-        <VerdictLine verdict={verdict} />
-        <RatingButtons
-          compact
-          keys={keys}
-          value={verdict?.rating}
-          onRate={(rating) => onRate(rating, note)}
-        />
-        <input
-          className="note-edit"
-          value={note}
-          placeholder="Note…"
-          aria-label="Note on this flat"
-          onChange={(e) => setNote(e.target.value)}
-          // Blur fires before the click that caused it, so leaving the note to click a different
-          // rating would race two saves — one at the old rating, one at the new — and the later
-          // reply won. The rating buttons pass the note themselves.
-          onBlur={(e) => {
-            if (e.relatedTarget instanceof Element && e.relatedTarget.closest('.rm-ratings')) return;
-            if (verdict && note !== verdict.note) onRate(verdict.rating, note);
-          }}
-        />
-      </div>
+      {!verdictFirst && decide}
 
-      {/* Under the verdict and deliberately quieter: what you think of a place and how far it has
+      {/* Under the verdict where the verdict is last, and deliberately quieter either way: what you think of a place and how far it has
           got are two facts, and an offer that fell through must not undo a love. Offered only once
           there is something in the funnel to move. */}
       {funnelled && (

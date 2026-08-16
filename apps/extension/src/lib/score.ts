@@ -9,6 +9,7 @@
  *  only cost is fetching the model once (`model:get`), which the panel does alongside its hubs.
  */
 import {
+  nearestStationMiles,
   score as scoreModel,
   type Analysis,
   type Hub,
@@ -17,14 +18,6 @@ import {
   type Model,
   type PredictInput,
 } from '@house-hunt/core';
-
-/** Nearest station distance in miles (Rightmove's unit; a stray km is converted, not trusted). */
-function nearestStationMiles(listing: Listing): number | null {
-  const miles = listing.nearestStations
-    .filter((s) => typeof s.distance === 'number')
-    .map((s) => (s.unit === 'km' ? s.distance * 0.621371 : s.distance));
-  return miles.length ? Math.min(...miles) : null;
-}
 
 export function predictInputFromListing(
   listing: Listing,
@@ -42,7 +35,7 @@ export function predictInputFromListing(
     listedSource: listing.floorArea?.source ?? null,
     lat: point?.lat ?? listing.latitude,
     lon: point?.lon ?? listing.longitude,
-    nearestStationMiles: nearestStationMiles(listing),
+    nearestStationMiles: nearestStationMiles(listing.nearestStations),
     furnishType: listing.furnishType,
     analysis,
   };

@@ -5,10 +5,12 @@ import { AmenityLabel, Icon, RATINGS, ScoreGauge, ratingOf } from '@house-hunt/u
 import {
   addressBesidePostcode,
   applyFilter,
+  destinationsFor,
   placePoints,
   resolveSize,
   sizeOf,
   splitByHuntFloor,
+  unknownBars,
   type ArchiveReason,
   type Hub,
   type HuntPreferences,
@@ -108,6 +110,8 @@ export function Triage({
   // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave the
   // ranking meaning something about flats no longer on screen.
   const { kept, unknowns } = applyFilter(pile, filter, travel.data, points);
+  // Per row rather than per pile: the same question `unknowns` counts, asked of one flat.
+  const unknownFor = (entry: ShortlistEntry) => unknownBars(entry, filter, travel.data, points);
   const shown = useMemo(() => sortForTriage(kept, scores, sortMode), [kept, scores, sortMode]);
 
   // The flat on the right. Follows the pile when what you were reading leaves it — which is what
@@ -397,6 +401,19 @@ export function Triage({
                       {addressBesidePostcode(entry.displayAddress, entry.postcode)}
                     </span>
                     <span className="triage-line dim">{oneLine(entry)}</span>
+                    {/* Why this one is still here when a bar it does not obviously clear is set.
+                        The count under the filter says how many are kept on a shrug; this says
+                        which, and which figure is the missing one — "no size" is the row to open
+                        the floorplan on, and without it it is drawn exactly like a measured one. */}
+                    {unknownFor(entry).length > 0 && (
+                      <span className="triage-unknowns" data-testid="triage-unknown">
+                        {unknownFor(entry).map((what) => (
+                          <span className="triage-unknown" key={what}>
+                            {what}
+                          </span>
+                        ))}
+                      </span>
+                    )}
                   </button>
                   {scores?.has(entry.rightmoveId) && (
                     <ScoreGauge
@@ -420,6 +437,7 @@ export function Triage({
                 <FlatDetail
                   key={current.rightmoveId}
                   keys
+                  verdictFirst
                   entry={current}
                   places={places}
                   hubs={hubs}
@@ -464,8 +482,11 @@ function summarise(filter: TriageFilter, places: Place[]): ReactNode {
   if (filter.minBedrooms !== null) bits.push(`${filter.minBedrooms}+ beds`);
   if (filter.minSqft !== null) bits.push(`${filter.minSqft}+ sq ft`);
   if (filter.minGreatRoomSqft !== null) bits.push(`main room ${filter.minGreatRoomSqft}+ sq ft`);
+  // Through the same list the picker offers, so the nearest station reads as itself here rather
+  // than as a bar naming a place this hunt does not have.
+  const destinations = destinationsFor(places);
   for (const bar of filter.travel) {
-    const place = places.find((p) => p.id === bar.placeId);
+    const place = destinations.find((p) => p.id === bar.placeId);
     // A bar naming a place that has since been deleted is silently dropped from the summary; the
     // filter itself is pruned the same way one level up (`withKnownPlaces`).
     if (place) bits.push(`${bar.max}${bar.mode === 'crow' ? ' mi' : ' min'} to ${place.label}`);
