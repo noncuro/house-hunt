@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { keys as shellKeys, useAuth, useProjectSettings, useSetProjectSettings } from '@/lib/queries';
 import { AmenityLabel, Hint, Icon, TRANSIT_BASIS_NOTE, type IconName } from '@house-hunt/ui';
@@ -246,18 +246,37 @@ interface SqftField {
   value: number | null;
   min: number;
   max: number;
+  /** Whether the segment above needs this number to mean anything. A Must has to have a floor and a
+   *  Nice has to have a size to aim for; the second number under a Must is the one that may be
+   *  absent. Emptying a required field is undone on blur — the way to have no number here is the
+   *  "Don't mind" segment, which is what it is for. */
+  required: boolean;
   onDraft: (value: number | null) => void;
   onCommit: (value: number | null) => void;
 }
 
 /** One number in square feet, wearing the words that say which number it is.
  *
- *  Typed into the parent's draft as you go and written once on blur — not one write per keystroke,
- *  which would also fight the disabled-while-saving guard. Clamping happens on blur too: `min`/`max`
- *  on the input do not stop a typed 1 or 30000 from reaching a write. Blank is `null`, which is the
- *  same "no opinion" the off segment means, because "no answer" and "zero square feet" are different
- *  sentences and only one of them is ever meant. */
-function Sqft({ caption, value, min, max, onDraft, onCommit, busy }: SqftField & { busy: boolean }) {
+ *  The text is this field's own and only numbers are reported upwards, which is not a nicety: the
+ *  segment above is read back out of the numbers, so a parent told "null" the moment the box goes
+ *  empty would relabel the row Nice — or Don't mind — and take the box away mid-edit, between
+ *  deleting 900 and typing 950. Nothing hears about a half-typed value now, so nothing can act on
+ *  one.
+ *
+ *  Written once on blur rather than per keystroke, which would also fight the disabled-while-saving
+ *  guard. Clamping happens there too: `min`/`max` on the input do not stop a typed 1 or 30000 from
+ *  reaching a write. */
+function Sqft({ caption, value, min, max, required, onDraft, onCommit, busy }: SqftField & { busy: boolean }) {
+  const shown = (n: number | null) => (n === null ? '' : String(n));
+  const [text, setText] = useState(shown(value));
+  // Follow the number when it changes from outside — another laptop's save, or a floor that has
+  // just pushed the aim above it — without touching what is being typed here right now.
+  const seen = useRef(value);
+  if (seen.current !== value) {
+    seen.current = value;
+    setText(shown(value));
+  }
+
   return (
     <label className="hunt-sqft">
       <span>{caption}</span>
@@ -266,14 +285,23 @@ function Sqft({ caption, value, min, max, onDraft, onCommit, busy }: SqftField &
         min={min}
         max={max}
         disabled={busy}
-        value={value ?? ''}
+        value={text}
         onChange={(e) => {
           const typed = e.target.value.trim();
-          if (typed === '') return onDraft(null);
+          setText(typed);
+          if (typed === '') return;
           const n = Number(typed);
           if (Number.isFinite(n) && n > 0) onDraft(Math.round(n));
         }}
-        onBlur={() => onCommit(value === null ? null : Math.min(max, Math.max(min, value)))}
+        onBlur={() => {
+          if (text.trim() === '' && !required) {
+            setText('');
+            return onCommit(null);
+          }
+          const next = value === null ? null : Math.min(max, Math.max(min, value));
+          setText(shown(next));
+          onCommit(next);
+        }}
       />
       <span className="hunt-unit">sq ft</span>
     </label>
@@ -325,6 +353,7 @@ function sizeFields(
       value: bars.floor,
       min: limits.min,
       max: limits.max,
+      required: true,
       onDraft: (v) => write({ ...bars, floor: v }, false),
       // The aim rises with the floor rather than being left underneath it. Only the input's `min`
       // moved before, which stops you *typing* an inverted pair and does nothing about the one
@@ -339,6 +368,9 @@ function sizeFields(
     value: bars.aim,
     min: bars.floor ?? limits.min,
     max: limits.max,
+    // Under a Nice it is the whole of the preference; under a Must it is the optional second half,
+    // and clearing it is how you go back to having only a floor.
+    required: want === 'nice',
     onDraft: (v) => write({ ...bars, aim: v }, false),
     onCommit: (v) => write({ ...bars, aim: v }, true),
   });

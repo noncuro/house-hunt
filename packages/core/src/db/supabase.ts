@@ -1760,37 +1760,49 @@ function monthStartIso(): string {
  *  and the wrong one was the one with the table under it. */
 const USAGE_PAGE = 1000;
 
+/** Walked by the key rather than by an offset, because the thing being read is still being written
+ *  to. `range(1000, 1999)` is a second query against a table that may have gained a row since the
+ *  first, and every offset after the insert shifts by one — so the boundary row is read twice and
+ *  summed twice, on a screen whose whole job is to say how much has been spent. `id` is a bigint
+ *  identity, so it is unique and always ascending: a row written mid-read gets a *higher* id, which
+ *  places it before everything already seen rather than in the middle of what has not been.
+ *
+ *  Ordered on the key for the same reason. `occurred_at` is what the answer is sorted by, and that
+ *  is done below, once the whole set is here. */
 async function usageSince(since: string): Promise<UsageRow[]> {
   const rows: Array<Record<string, unknown>> = [];
-  for (let from = 0; ; from += USAGE_PAGE) {
+  let before: number | null = null;
+  for (;;) {
     const { data, error } = await db()
       .from('api_usage')
       .select('id, occurred_at, project_id, user_id, kind, model, input_tokens, cached_input_tokens, output_tokens, cost_usd, rightmove_id')
       .gte('occurred_at', since)
-      .order('occurred_at', { ascending: false })
-      // Ordered by the same column the range walks, and by `id` after it, because two rows written
-      // in the same millisecond would otherwise be free to swap places between pages — which loses
-      // one of them and counts the other twice.
+      // No id is ever this high — a bigint identity would have to be handed out at a million a
+      // second for three hundred years — so the first page is the one with no cursor yet.
+      .lt('id', before ?? Number.MAX_SAFE_INTEGER)
       .order('id', { ascending: false })
-      .range(from, from + USAGE_PAGE - 1);
+      .limit(USAGE_PAGE);
     fail('reading spend', error);
-    const page = data ?? [];
-    rows.push(...page);
-    if (page.length < USAGE_PAGE) break;
+    const got: Array<Record<string, unknown>> = data ?? [];
+    rows.push(...got);
+    if (got.length < USAGE_PAGE) break;
+    before = Number(got.at(-1)!.id);
   }
-  return (rows as any[]).map((r) => ({
-    id: String(r.id),
-    occurredAt: r.occurred_at,
-    projectId: r.project_id ?? null,
-    userId: r.user_id ?? null,
-    kind: r.kind,
-    model: r.model ?? '',
-    inputTokens: r.input_tokens,
-    cachedInputTokens: r.cached_input_tokens,
-    outputTokens: r.output_tokens,
-    costUsd: Number(r.cost_usd),
-    rightmoveId: r.rightmove_id ?? null,
-  }));
+  return (rows as any[])
+    .sort((a, b) => String(b.occurred_at).localeCompare(String(a.occurred_at)) || Number(b.id) - Number(a.id))
+    .map((r) => ({
+      id: String(r.id),
+      occurredAt: r.occurred_at,
+      projectId: r.project_id ?? null,
+      userId: r.user_id ?? null,
+      kind: r.kind,
+      model: r.model ?? '',
+      inputTokens: r.input_tokens,
+      cachedInputTokens: r.cached_input_tokens,
+      outputTokens: r.output_tokens,
+      costUsd: Number(r.cost_usd),
+      rightmoveId: r.rightmove_id ?? null,
+    }));
 }
 
 export async function adminUsage(filter: { projectId?: string; userId?: string; since?: string }): Promise<UsageRow[]> {
