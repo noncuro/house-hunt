@@ -39,7 +39,8 @@ import {
   type StationInfo,
 } from '../_shared/tfl.ts';
 import { lookupPostcode } from '../_shared/postcode.ts';
-import { TRAVEL_MODES, type JourneyOption, type TravelMode } from '../_shared/types.ts';
+import { TRAVEL_MODES, WALKING_LIMIT_MILES, type JourneyOption, type TravelMode } from '../_shared/types.ts';
+import { distanceMiles } from '../_shared/hubs.ts';
 
 requireEnv({
   SUPABASE_URL: Deno.env.get('SUPABASE_URL'),
@@ -234,6 +235,9 @@ interface TravelRow {
   changes: number | null;
   journeys: JourneyOption[] | null;
   no_route: boolean;
+  /** Why there is no number, where the row knows. Null on anything written before the column
+   *  existed, which is honestly "no more than `no_route` says". */
+  reason: string | null;
   basis: string | null;
   computed_at: string;
 }
@@ -241,7 +245,7 @@ interface TravelRow {
 async function cachedJourneys(origin: string): Promise<Map<string, TravelRow>> {
   const rows = await rest<TravelRow[]>(
     `travel_time?origin_postcode=eq.${encodeURIComponent(origin)}` +
-      '&select=dest_postcode,mode,seconds,changes,journeys,no_route,basis,computed_at',
+      '&select=dest_postcode,mode,seconds,changes,journeys,no_route,reason,basis,computed_at',
   );
   return new Map(rows.map((r) => [`${r.dest_postcode}:${r.mode}`, r]));
 }
@@ -267,9 +271,30 @@ interface LegOutcome {
  *  at, and the backlog working through the ones nobody has opened. They differ entirely in what they
  *  do with the outcome, and not at all in how a leg is resolved, which is the half carrying the
  *  cache-write rules that took a deploy to get right. */
-async function resolveLeg(origin: string, destPostcode: string, to: string, mode: TravelMode): Promise<LegOutcome> {
+async function resolveLeg(
+  origin: string,
+  destPostcode: string,
+  to: string,
+  mode: TravelMode,
+  /** How far apart the two ends are in a straight line, where both are known. Only the walking
+   *  refusal below reads it; null means "we could not measure", which asks as it always did. */
+  straightLineMiles: number | null = null,
+): Promise<LegOutcome> {
   const outcome: LegOutcome = { seconds: null, changes: null, settled: false };
   try {
+    // Settled without asking, and settled honestly. A real route is never shorter than the straight
+    // line, so a walk this long cannot come in under `WALKING_LIMIT_SECONDS`, and every view here
+    // has always drawn an over-the-hour walk as a dash — the call would buy a number thrown away on
+    // arrival. Thrown as a non-transient `TflError` rather than handled separately so it goes down
+    // the one path a settled negative already has: cached as `no_route`, counted as one, and shown
+    // with this sentence in the hover where the dash is.
+    if (mode === 'walking' && straightLineMiles !== null && straightLineMiles > WALKING_LIMIT_MILES) {
+      throw new TflError(
+        `${straightLineMiles.toFixed(1)} miles away in a straight line — further than anyone walks in ` +
+          `the hour past which we stop counting it as a way of making the trip`,
+        false,
+      );
+    }
     // No `now` argument: `journeyTime` pins transit to the next weekday 09:00 itself, and this is
     // the only place that calls it, so the basis is a property of the system rather than of whoever
     // asked (design D4). Through the queue so one request's fifteen legs, and a grid's worth of
@@ -312,6 +337,10 @@ async function resolveLeg(origin: string, destPostcode: string, to: string, mode
         p_no_route: true,
         p_journeys: null,
         p_basis: TRAVEL_BASIS[mode],
+        // What settled it, in words, so the dash this becomes on screen says the true thing rather
+        // than the one sentence every no-route row used to be given — which credits TfL for
+        // verdicts, like the walking refusal above, that TfL was never asked for.
+        p_reason: outcome.error,
       }).catch((err) => {
         outcome.cacheWriteFailure = `cache_travel no-route ${origin} -> ${destPostcode} ${mode}: ${err}`;
       });
@@ -348,7 +377,9 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
               mode,
               seconds: 0,
               changes: null,
-              error: 'TfL found no journey for this mode',
+              // The row's own words where it has them; the old sentence only where it does not,
+              // which is a row written before reasons were stored and genuinely knows no more.
+              error: row.reason ?? 'TfL found no journey for this mode',
               transient: false,
               cached: true,
             };
@@ -538,6 +569,8 @@ interface SystemAsk {
 
 interface Gap {
   origin_postcode: string;
+  origin_lat: number | null;
+  origin_lon: number | null;
   dest_postcode: string;
   dest_lat: number | null;
   dest_lon: number | null;
@@ -631,7 +664,12 @@ async function runBackfill(ask: SystemAsk) {
         // Coordinates where the place has them, for the same reason the interactive path prefers
         // them: TfL's geocoder resolved a terminated postcode to a point in the wrong part of London.
         const to = gap.dest_lat !== null && gap.dest_lon !== null ? `${gap.dest_lat},${gap.dest_lon}` : gap.dest_postcode;
-        const leg = await resolveLeg(gap.origin_postcode, gap.dest_postcode, to, gap.mode);
+        // Null where either end is missing a point, which is a leg asked exactly as it was before.
+        const apart =
+          gap.origin_lat !== null && gap.origin_lon !== null && gap.dest_lat !== null && gap.dest_lon !== null
+            ? distanceMiles({ lat: gap.origin_lat, lon: gap.origin_lon }, { lat: gap.dest_lat, lon: gap.dest_lon })
+            : null;
+        const leg = await resolveLeg(gap.origin_postcode, gap.dest_postcode, to, gap.mode, apart);
         if (leg.cacheWriteFailure) cacheWriteFailures.push(leg.cacheWriteFailure);
 
         if (leg.error && !leg.settled) {
@@ -699,6 +737,7 @@ function toCached(row: TravelRow) {
     changes: row.changes,
     options: row.journeys,
     noRoute: row.no_route,
+    reason: row.reason,
     basis: row.basis,
     computedAt: row.computed_at,
   };
