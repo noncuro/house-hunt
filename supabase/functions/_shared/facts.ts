@@ -441,7 +441,13 @@ export function dedupeStations(stations: Station[]): Station[] {
       group.words = words;
     }
   }
-  return groups.map((g) => g.keep).sort((a, b) => a.distance - b.distance);
+  // Ordered on a converted number rather than the quoted one: 0.6 km is nearer than 0.5 miles and
+  // sorts the other way round if the units are ignored, which is the same mistake `sameSpot` refuses
+  // to make one line up. A distance in a unit nobody has taught this to read sinks, as an unknown
+  // does everywhere else here.
+  return groups
+    .map((g) => g.keep)
+    .sort((a, b) => (nearestStationMiles([a]) ?? Infinity) - (nearestStationMiles([b]) ?? Infinity));
 }
 
 function isSubset(inner: string[], outer: string[]): boolean {

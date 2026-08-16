@@ -587,6 +587,21 @@ check(
   ] })),
   ['journey not measured'],
 );
+// The station bar is not the travel cache and its absence is not an instruction: no amount of
+// opening the flat produces a station the listing never named.
+check(
+  'a listing with no stations says so in its own words',
+  unknownBars(noStations, halfMileOfATube),
+  ['no station listed'],
+);
+check(
+  'and a hunt filtering on both hears about both',
+  unknownBars(flat({ postcode: 'N1 9AA' }), only({ travel: [
+    { placeId: NEAREST_STATION, mode: CROW, max: 0.5 },
+    { placeId: 'work', mode: 'transit', max: 20 },
+  ] })),
+  ['no station listed', 'journey not measured'],
+);
 check('and a filter that is off says nothing at all', unknownBars(flat({}), NO_FILTER), []);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }

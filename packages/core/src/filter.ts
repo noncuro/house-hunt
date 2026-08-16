@@ -345,9 +345,13 @@ export function unknownBars(
   // pairings somebody has already looked up, so on a fresh sweep almost the whole pile is unmeasured
   // — a travel bar that dropped those would empty the screen and look like a hunt with nowhere to
   // live in it.
-  if (filter.travel.some((bar) => reach(entry, bar, travel, points) === 'unknown')) {
-    missing.push('journey not measured');
-  }
+  //
+  // The station is its own phrase because it is its own kind of missing. "Journey not measured" is
+  // an instruction — open the flat and it will be — and the station distance is not something
+  // opening anything will produce: the listing named no station, and that is as far as it goes.
+  const unmeasured = filter.travel.filter((bar) => reach(entry, bar, travel, points) === 'unknown');
+  if (unmeasured.some((bar) => bar.placeId === NEAREST_STATION)) missing.push('no station listed');
+  if (unmeasured.some((bar) => bar.placeId !== NEAREST_STATION)) missing.push('journey not measured');
   return missing;
 }
 

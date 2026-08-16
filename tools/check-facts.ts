@@ -343,11 +343,11 @@ console.log('dedupeStations');
 /** The four rows a flat off the Caledonian Road really gets back, verbatim from Rightmove — the
  *  case in issue #40. Four rows for one interchange is the whole of what a panel shows, so a flat
  *  beside King's Cross listed as worse-connected than one with four separate stations near it. */
-const station = (name: string, distance: number, types: string[] = ['NATIONAL_TRAIN']): Station =>
-  ({ name, distance, unit: 'miles', types });
+const station = (name: string, distance: number, unit = 'miles', types: string[] = ['NATIONAL_TRAIN']): Station =>
+  ({ name, distance, unit, types });
 
 const kingsCross = [
-  station("King's Cross St. Pancras Underground Station", 0.4, ['LONDON_UNDERGROUND']),
+  station("King's Cross St. Pancras Underground Station", 0.4, 'miles', ['LONDON_UNDERGROUND']),
   station('London Kings Cross Station', 0.4),
   station('St. Pancras International Station', 0.5),
   station('Kings Cross Thameslink Station', 0.4),
@@ -372,8 +372,8 @@ check(
 check(
   'a name that contains another is not enough on its own',
   dedupeStations([
-    station("Shepherd's Bush Station", 0.2, ['LONDON_UNDERGROUND']),
-    station("Shepherd's Bush Market Station", 0.5, ['LONDON_UNDERGROUND']),
+    station("Shepherd's Bush Station", 0.2, 'miles', ['LONDON_UNDERGROUND']),
+    station("Shepherd's Bush Market Station", 0.5, 'miles', ['LONDON_UNDERGROUND']),
   ]).length,
   2,
 );
@@ -389,8 +389,8 @@ check(
   'the survivors are still in distance order',
   dedupeStations([
     station('Highbury & Islington Station', 0.6),
-    station('Caledonian Road Station', 0.3, ['LONDON_UNDERGROUND']),
-    station('Highbury & Islington Underground Station', 0.6, ['LONDON_UNDERGROUND']),
+    station('Caledonian Road Station', 0.3, 'miles', ['LONDON_UNDERGROUND']),
+    station('Highbury & Islington Underground Station', 0.6, 'miles', ['LONDON_UNDERGROUND']),
   ]).map((s) => s.name),
   ['Caledonian Road Station', 'Highbury & Islington Station'],
 );
@@ -410,6 +410,13 @@ check(
   'a name with no place left in it merges with nothing',
   dedupeStations([station('London Underground Station', 0.3), station('Angel Station', 0.3)]).length,
   2,
+);
+// Two units in one list is not a shape Rightmove sends today, and the order has to survive it
+// anyway: 0.6 km is a shorter walk than 0.5 miles and sorts the other way round on the raw number.
+check(
+  'kilometres are ordered against miles, not beside them',
+  dedupeStations([station('Angel Station', 0.5), station('Old Street Station', 0.6, 'km')]).map((s) => s.name),
+  ['Old Street Station', 'Angel Station'],
 );
 check('nothing in, nothing out', dedupeStations([]), []);
 

@@ -159,8 +159,9 @@ select id, status_code, created from net._http_response order by created desc li
 ```
 
 `select run_travel_backfill(10);` runs one small pass by hand. It returns null — and says so as a
-notice — when the previous request has not answered yet, which is how two runs are kept off the same
-gaps.
+notice — when the previous request was made within the last sixteen minutes and has not answered
+yet, which is how two runs are kept off the same gaps. Sixteen rather than fifteen: the window has
+to outlast the gap between slots or the next slot never sees anything as outstanding.
 
 ## Admin (admins only)
 

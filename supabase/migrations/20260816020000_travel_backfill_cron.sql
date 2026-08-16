@@ -48,10 +48,14 @@ comment on table travel_backfill_run is
 
 -- How long a request may be outstanding before the next run stops waiting for it.
 --
--- Above the function's own ceiling (a 300s HTTP timeout on the call) and well under the fifteen
--- minutes between runs, so a genuinely stuck request costs one skipped slot and not the backlog.
+-- Longer than the gap between runs, and that is the whole of the arithmetic. It was six minutes
+-- first — comfortably above the call's own 300s timeout, which sounded like the right bound and
+-- made the guard above unreachable: the next slot does not arrive for fifteen minutes, by which
+-- point every request is already older than six, so nothing was ever seen as outstanding. At
+-- sixteen an unanswered request skips exactly one slot and a genuinely stuck one resumes on the
+-- next, which is what a stall window is for.
 create or replace function travel_backfill_stalled_after() returns interval
-language sql immutable as $$ select interval '6 minutes' $$;
+language sql immutable as $$ select interval '16 minutes' $$;
 
 /** Ask the travel function to work the backlog down by one run's budget.
  *
