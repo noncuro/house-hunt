@@ -182,6 +182,22 @@ check(
   nearestHub(duncanTerrace, hubsFromProject([...SEARCHED, heathrow]))?.hub.name,
   'Angel',
 );
+// The window between ticking "search around" and the lookup coming back. A radius is the statement
+// of intent, so it is a neighbourhood from that moment — asked `isSwept` instead it would read as
+// somewhere we only commute to, and the compass would demote it for as long as the resolve took.
+const justTicked = place({ label: 'Freshly ticked', lat: 51.535, lon: -0.1045, sweepRadiusMiles: 1 });
+check(
+  'a place with a radius but no identifier yet is a neighbourhood',
+  hubsFromProject([justTicked])[0]?.fromPlace,
+  false,
+);
+check(
+  'and one with an identifier but no radius is somewhere we only travel to',
+  hubsFromProject([
+    place({ label: 'Work', lat: 51.535, lon: -0.1045, locationIdentifier: 'STATION^1', displayLocationIdentifier: 'w.html' }),
+  ])[0]?.fromPlace,
+  true,
+);
 // A place saved before addPlace resolved postcodes has no coordinates, and so does a neighbourhood
 // that was dropped but kept for its sweep history. Guessing a point would rotate every bearing
 // computed from it with nothing on screen looking wrong, which is the failure this file exists to

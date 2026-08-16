@@ -10,6 +10,7 @@
  */
 import {
   groupOf,
+  nearestStationMiles,
   parseMonthlyPrice,
   resolveSize,
   score as scoreModel,
@@ -20,15 +21,6 @@ import {
   type PredictInput,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
-
-/** Nearest station distance in miles. Rightmove gives miles; a stray kilometre is converted rather
- *  than trusted, because an unconverted km reads as a much closer station than it is. */
-function nearestStationMiles(entry: ShortlistEntry): number | null {
-  const miles = entry.nearestStations
-    .filter((s) => typeof s.distance === 'number')
-    .map((s) => (s.unit === 'km' ? s.distance * 0.621371 : s.distance));
-  return miles.length ? Math.min(...miles) : null;
-}
 
 export function predictInputFrom(entry: ShortlistEntry): PredictInput {
   return {
@@ -41,7 +33,7 @@ export function predictInputFrom(entry: ShortlistEntry): PredictInput {
     listedSource: entry.floorAreaSource,
     lat: entry.lat,
     lon: entry.lon,
-    nearestStationMiles: nearestStationMiles(entry),
+    nearestStationMiles: nearestStationMiles(entry.nearestStations),
     furnishType: entry.furnishType,
     analysis: entry.analysis ?? null,
   };
@@ -71,7 +63,8 @@ export function scoreEntries(
  *  surfaces the genuine middle (nearest 0.5), which is where a human's attention is worth most. The
  *  rest ask the listing, and are the ones that still work on the day a hunt starts — before there
  *  are enough verdicts to fit a model on, which is exactly when the pile is at its biggest. */
-export type SortMode = 'yes' | 'no' | 'uncertain' | 'default' | 'cheapest' | 'biggest' | 'great-room';
+export type SortMode =
+  | 'yes' | 'no' | 'uncertain' | 'default' | 'cheapest' | 'biggest' | 'great-room' | 'station';
 
 export const SORT_LABEL: Record<SortMode, string> = {
   default: 'Newest first',
@@ -81,6 +74,7 @@ export const SORT_LABEL: Record<SortMode, string> = {
   cheapest: 'Cheapest first',
   biggest: 'Biggest first',
   'great-room': 'Best main room',
+  station: 'Nearest station',
 };
 
 /** The three that are meaningless without a fitted model. Listed rather than inferred, so the
@@ -106,6 +100,9 @@ export function sortForTriage(
     if (mode === 'cheapest') return parseMonthlyPrice(e.price) ?? Infinity;
     if (mode === 'biggest') return negate(resolveSize(sizeOf(e))?.value);
     if (mode === 'great-room') return negate(e.analysis?.biggestRoomSqft);
+    // Ascending, and a flat with no stations listed still sinks: `??` catches the null the same way
+    // `negate` does at the other end.
+    if (mode === 'station') return nearestStationMiles(e.nearestStations) ?? Infinity;
 
     const s = scores!.get(e.rightmoveId);
     if (s == null) return Infinity; // unscored sinks to the end, whichever end you asked for

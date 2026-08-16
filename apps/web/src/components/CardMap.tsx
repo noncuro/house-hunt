@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { nearestHub, type Hub, type Point } from '@house-hunt/core';
+import { CopyLocation } from '@house-hunt/ui';
 import { cssToken } from '@/lib/pin';
 
 /** A map of one flat, in the pane that flat is being read in, behind a button.
@@ -32,12 +33,16 @@ const MILES_PER_DEGREE_LAT = 69.05;
 
 export function CardMap({
   point,
+  postcode,
   hubs,
   colour,
   approximate,
   address,
 }: {
   point: Point | null;
+  /** Shown beside the button as the thing you can paste elsewhere — it belongs with the map for the
+   *  same reason the button does: this row is the whole of "where is it, exactly". */
+  postcode: string | null;
   hubs: Hub[] | null | undefined;
   /** The verdict's colour, so a card's dot and the same flat's pin on the Map view match. */
   colour: string;
@@ -125,18 +130,22 @@ export function CardMap({
     };
   }, [open, lat, lon, hubs, colour]);
 
-  // A missing location is a real fact about the listing rather than a hole in the page, and a
-  // button that opened a blank grey square would say the opposite.
-  if (!point) {
-    return <p className="card-map-missing dim">No location for this listing — nothing to map.</p>;
-  }
-
   return (
     <div className="card-map-wrap">
-      <button className="card-map-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? 'Hide map' : 'Show map'}
-      </button>
-      {open && (
+      <div className="card-map-bar">
+        {/* A missing location is a real fact about the listing rather than a hole in the page, and a
+            button that opened a blank grey square would say the opposite. The postcode can still be
+            here without it — a listing that names one and gives no pin is common. */}
+        {point ? (
+          <button className="card-map-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+            {open ? 'Hide map' : 'Show map'}
+          </button>
+        ) : (
+          <span className="card-map-missing dim">No pin on this listing — nothing to map.</span>
+        )}
+        <CopyLocation postcode={postcode} point={point} />
+      </div>
+      {open && point && (
         <>
           <div className="card-map" ref={host} role="img" aria-label={`Map of ${address}`} />
           {tilesFailed && (

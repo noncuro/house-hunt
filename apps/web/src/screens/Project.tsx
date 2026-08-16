@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { keys as shellKeys, useAuth, useProjectSettings, useSetProjectSettings } from '@/lib/queries';
 import { AmenityLabel, Hint, Icon, TRANSIT_BASIS_NOTE, type IconName } from '@house-hunt/ui';
@@ -246,18 +246,37 @@ interface SqftField {
   value: number | null;
   min: number;
   max: number;
+  /** Whether the segment above needs this number to mean anything. A Must has to have a floor and a
+   *  Nice has to have a size to aim for; the second number under a Must is the one that may be
+   *  absent. Emptying a required field is undone on blur — the way to have no number here is the
+   *  "Don't mind" segment, which is what it is for. */
+  required: boolean;
   onDraft: (value: number | null) => void;
   onCommit: (value: number | null) => void;
 }
 
 /** One number in square feet, wearing the words that say which number it is.
  *
- *  Typed into the parent's draft as you go and written once on blur — not one write per keystroke,
- *  which would also fight the disabled-while-saving guard. Clamping happens on blur too: `min`/`max`
- *  on the input do not stop a typed 1 or 30000 from reaching a write. Blank is `null`, which is the
- *  same "no opinion" the off segment means, because "no answer" and "zero square feet" are different
- *  sentences and only one of them is ever meant. */
-function Sqft({ caption, value, min, max, onDraft, onCommit, busy }: SqftField & { busy: boolean }) {
+ *  The text is this field's own and only numbers are reported upwards, which is not a nicety: the
+ *  segment above is read back out of the numbers, so a parent told "null" the moment the box goes
+ *  empty would relabel the row Nice — or Don't mind — and take the box away mid-edit, between
+ *  deleting 900 and typing 950. Nothing hears about a half-typed value now, so nothing can act on
+ *  one.
+ *
+ *  Written once on blur rather than per keystroke, which would also fight the disabled-while-saving
+ *  guard. Clamping happens there too: `min`/`max` on the input do not stop a typed 1 or 30000 from
+ *  reaching a write. */
+function Sqft({ caption, value, min, max, required, onDraft, onCommit, busy }: SqftField & { busy: boolean }) {
+  const shown = (n: number | null) => (n === null ? '' : String(n));
+  const [text, setText] = useState(shown(value));
+  // Follow the number when it changes from outside — another laptop's save, or a floor that has
+  // just pushed the aim above it — without touching what is being typed here right now.
+  const seen = useRef(value);
+  if (seen.current !== value) {
+    seen.current = value;
+    setText(shown(value));
+  }
+
   return (
     <label className="hunt-sqft">
       <span>{caption}</span>
@@ -266,51 +285,124 @@ function Sqft({ caption, value, min, max, onDraft, onCommit, busy }: SqftField &
         min={min}
         max={max}
         disabled={busy}
-        value={value ?? ''}
+        value={text}
         onChange={(e) => {
           const typed = e.target.value.trim();
-          if (typed === '') return onDraft(null);
+          setText(typed);
+          if (typed === '') return;
           const n = Number(typed);
           if (Number.isFinite(n) && n > 0) onDraft(Math.round(n));
         }}
-        onBlur={() => onCommit(value === null ? null : Math.min(max, Math.max(min, value)))}
+        onBlur={() => {
+          if (text.trim() === '' && !required) {
+            setText('');
+            return onCommit(null);
+          }
+          const next = value === null ? null : Math.min(max, Math.max(min, value));
+          setText(shown(next));
+          onCommit(next);
+        }}
       />
       <span className="hunt-unit">sq ft</span>
     </label>
   );
 }
 
-/** A size preference: off, or one or two numbers under the same label.
+/** The two numbers behind one size question: the floor it will not go below and the size it is
+ *  aiming for. Whole-flat and main-room are the same pair under different keys, which is why the
+ *  helpers below take this shape rather than the preference names. */
+interface SizeBars {
+  floor: number | null;
+  aim: number | null;
+}
+
+/** What picking a segment does to that pair.
  *
- *  Two segments, where the amenities below get three, and the asymmetry is honest rather than
- *  sloppy: `flagsFor` decides on its own what an unmet number looks like. Under `minSqft` is always
- *  red and under `targetSqft` always amber, while `greatRoomMinSqft` never flags an absence at all —
- *  it only moves the bar at which a room earns the good great-room mark, the small-room amber coming
- *  from a constant this page cannot set. None of them carries a nice/must, and `HuntPreferences` has
- *  nowhere to store one. A third segment here would therefore claim a setting nothing reads: it
- *  would look saved and change no flag on any flat.
+ *  Don't mind clears both. Nice keeps the aim and drops the floor — moving the number somebody
+ *  already typed across rather than blanking it, because "actually it's not a hard bar" is a change
+ *  of strength, not a change of size. Must does the same in reverse — a Nice of 800 becomes a floor
+ *  of 800 — and keeps an aim only where one still stands above the floor, since amber "under what
+ *  you are aiming for" at or beneath red "under your floor" is a band that can hold nothing. */
+function pickBars(bars: SizeBars, want: AmenityWant | null, fallback: number): SizeBars {
+  if (want === null) return { floor: null, aim: null };
+  if (want === 'nice') return { floor: null, aim: bars.aim ?? bars.floor ?? fallback };
+  const floor = bars.floor ?? bars.aim ?? fallback;
+  return { floor, aim: bars.aim != null && bars.aim > floor ? bars.aim : null };
+}
+
+/** Which segment is lit, read back out of the numbers rather than stored beside them: a floor is a
+ *  must, an aim on its own is a nice, neither is don't mind. One representation, so the word and
+ *  the numbers under it cannot come to disagree. */
+function wantOf(bars: SizeBars): AmenityWant | null {
+  if (bars.floor !== null) return 'must';
+  return bars.aim !== null ? 'nice' : null;
+}
+
+/** The number fields that segment earns: one under Nice, two under Must, none under Don't mind. */
+function sizeFields(
+  want: AmenityWant | null,
+  bars: SizeBars,
+  limits: { min: number; max: number },
+  write: (next: SizeBars, commit: boolean) => void,
+): SqftField[] {
+  if (want === null) return [];
+  const fields: SqftField[] = [];
+  if (want === 'must') {
+    fields.push({
+      caption: "won't go below",
+      value: bars.floor,
+      min: limits.min,
+      max: limits.max,
+      required: true,
+      onDraft: (v) => write({ ...bars, floor: v }, false),
+      // The aim rises with the floor rather than being left underneath it. Only the input's `min`
+      // moved before, which stops you *typing* an inverted pair and does nothing about the one
+      // already saved — leaving `{ floor: 900, aim: 800 }`, an amber band with nothing in it and
+      // two numbers contradicting each other.
+      onCommit: (v) =>
+        write({ floor: v, aim: v !== null && bars.aim != null && bars.aim < v ? v : bars.aim }, true),
+    });
+  }
+  fields.push({
+    caption: 'aiming for',
+    value: bars.aim,
+    min: bars.floor ?? limits.min,
+    max: limits.max,
+    // Under a Nice it is the whole of the preference; under a Must it is the optional second half,
+    // and clearing it is how you go back to having only a floor.
+    required: want === 'nice',
+    onDraft: (v) => write({ ...bars, aim: v }, false),
+    onCommit: (v) => write({ ...bars, aim: v }, true),
+  });
+  return fields;
+}
+
+/** A size preference: don't mind, a size to aim for, or a floor with a size to aim for above it.
  *
- *  The numbers sit on their own line rather than beside the label because the whole-flat row carries
- *  two of them, and a row that reads "Big enough overall [600][800] Don't mind | Set a size" is four
- *  controls in a sentence's worth of space. One layout for both rows, so the two size questions are
- *  visibly the same kind of question. */
+ *  The same three segments the amenities below get, and for the same reason — it is the same
+ *  question asked about a number. It used to be two ("Don't mind | Set a size"), each row inventing
+ *  its own word for the on segment, so the section asked one question in two grammars and neither
+ *  of them said what missing the number would do. Now Must is red on a flat under it and Nice is
+ *  amber, in both rows, which is exactly what the words mean three rows further down.
+ *
+ *  The numbers sit on their own line rather than beside the label because Must carries two of them,
+ *  and a row that reads "Size [600][800] Don't mind | Nice | Must" is five controls in a sentence's
+ *  worth of space. */
 function SqftRow({
   label,
   icon,
-  onLabel,
+  want,
   fields,
   busy,
   onPick,
 }: {
   label: string;
   icon: IconName;
-  /** What turning this on actually does to a flat that misses it — see the note above. */
-  onLabel: string;
+  want: AmenityWant | null;
   fields: SqftField[];
   busy: boolean;
-  onPick: (on: boolean) => void;
+  onPick: (want: AmenityWant | null) => void;
 }) {
-  const on = fields.some((field) => field.value !== null);
   return (
     <div className="hunt-row">
       <span className="hunt-row-label">
@@ -319,17 +411,8 @@ function SqftRow({
         <Icon name={icon} className="hunt-ico rm-subject-warm" />
         <span>{label}</span>
       </span>
-      <Segments
-        label={label}
-        value={on}
-        busy={busy}
-        choices={[
-          { value: false, label: "Don't mind" },
-          { value: true, label: onLabel },
-        ]}
-        onPick={onPick}
-      />
-      {on && (
+      <Segments label={label} value={want} busy={busy} choices={WANT_CHOICES} onPick={onPick} />
+      {fields.length > 0 && (
         <div className="hunt-sqft-pair">
           {fields.map((field) => (
             <Sqft key={field.caption} busy={busy} {...field} />
@@ -469,6 +552,22 @@ function HuntSettings({ notify }: { notify: Notify }) {
     commit({ ...draft, amenities });
   };
 
+  // The two size rows in the one shape the helpers speak, and back out again. The preference names
+  // are the ones already in the database — `greatRoomMinSqft` is the main room's *aim*, from when
+  // it was the only room bar there was.
+  const sizeBars: SizeBars = { floor: draft.minSqft ?? null, aim: draft.targetSqft ?? null };
+  const roomBars: SizeBars = {
+    floor: draft.greatRoomFloorSqft ?? null,
+    aim: draft.greatRoomMinSqft ?? null,
+  };
+  const sizeWant = wantOf(sizeBars);
+  const roomWant = wantOf(roomBars);
+  const asSize = (bars: SizeBars) => ({ minSqft: bars.floor, targetSqft: bars.aim });
+  const asRoom = (bars: SizeBars) => ({
+    greatRoomFloorSqft: bars.floor,
+    greatRoomMinSqft: bars.aim,
+  });
+
   return (
     <section className="setting hunt-card">
       <h2 className="hunt-h">What you&rsquo;re looking for</h2>
@@ -480,83 +579,49 @@ function HuntSettings({ notify }: { notify: Notify }) {
       </Explainer>
 
       <div className="hunt-rows">
-        {/* Two size questions, one control. They are the same interaction down to the clamp-on-blur
-            — an answer that turns a number on — and writing it twice is how the second one ends up
-            without the clamp. What differs is only what missing the number does to a flat, which is
-            the word on the filled segment. */}
+        {/* Size first, because it is the question people answer first and the one the other two are
+            read against — a great room in a flat you have already ruled out as too small is not a
+            fact anybody needed. Both rows are one interaction, down to the clamp-on-blur: writing
+            it twice is how the second one ends up without the clamp. */}
         <SqftRow
-          label="Has a great room"
-          icon="room"
-          // Not "Must": missing this flags nothing. It moves where the good great-room mark starts,
-          // and that is the whole of what setting it does.
-          onLabel="Mark it"
+          label="Size"
+          icon="size"
+          want={sizeWant}
           busy={busy}
-          onPick={(on) => commit({ ...draft, greatRoomMinSqft: on ? DEFAULT_GREAT_ROOM_SQFT : null })}
-          fields={[
-            {
-              caption: 'at least',
-              value: draft.greatRoomMinSqft ?? null,
-              min: GREAT_ROOM_MIN_SQFT,
-              max: GREAT_ROOM_MAX_SQFT,
-              onDraft: (v) => setDraft({ ...draft, greatRoomMinSqft: v }),
-              onCommit: (v) => commit({ ...draft, greatRoomMinSqft: v }),
-            },
-          ]}
+          onPick={(want) => commit({ ...draft, ...asSize(pickBars(sizeBars, want, DEFAULT_MIN_SQFT)) })}
+          fields={sizeFields(
+            sizeWant,
+            sizeBars,
+            { min: MIN_SQFT_FLOOR, max: MIN_SQFT_CEILING },
+            (next, save) => (save ? commit : setDraft)({ ...draft, ...asSize(next) }),
+          )}
         />
 
-        {/* A floor and a target, because a size preference is two answers and was stored as one: the
-            flat you would take and the flat you want are rarely the same figure, and a single number
-            makes everything above it look equally fine. Turning the row on sets the floor only — a
-            target nobody typed would be a number this page invented and then flagged flats against.
-            The target cannot be typed below the floor, since amber "under what you are aiming for"
-            beneath red "under your minimum" is a band that can hold nothing. */}
+        {/* The same question about the main room. Its aim is also where the great-room mark sits, so
+            a hunt that only wants to say "450 counts as great" says it here as a Nice and gets an
+            amber on anything under — which is what setting a bar and being shown nothing under it
+            used to leave unsaid. */}
         <SqftRow
-          label="Big enough overall"
-          icon="size"
-          onLabel="Set a size"
+          label="Main room"
+          icon="room"
+          want={roomWant}
           busy={busy}
-          onPick={(on) =>
-            commit({
-              ...draft,
-              minSqft: on ? DEFAULT_MIN_SQFT : null,
-              targetSqft: on ? (draft.targetSqft ?? null) : null,
-            })
-          }
-          fields={[
-            {
-              caption: "won't go below",
-              value: draft.minSqft ?? null,
-              min: MIN_SQFT_FLOOR,
-              max: MIN_SQFT_CEILING,
-              onDraft: (v) => setDraft({ ...draft, minSqft: v }),
-              // The target rises with the floor rather than being left underneath it. Only the
-              // input's `min` moved before, which stops you *typing* an inverted pair and does
-              // nothing about the one already saved — leaving `{ floor: 900, target: 800 }`, an
-              // amber band with nothing in it and two numbers contradicting each other.
-              onCommit: (v) =>
-                commit({
-                  ...draft,
-                  minSqft: v,
-                  targetSqft:
-                    v !== null && draft.targetSqft != null && draft.targetSqft < v
-                      ? v
-                      : (draft.targetSqft ?? null),
-                }),
-            },
-            {
-              caption: 'aiming for',
-              value: draft.targetSqft ?? null,
-              min: draft.minSqft ?? MIN_SQFT_FLOOR,
-              max: MIN_SQFT_CEILING,
-              onDraft: (v) => setDraft({ ...draft, targetSqft: v }),
-              onCommit: (v) => commit({ ...draft, targetSqft: v }),
-            },
-          ]}
+          onPick={(want) => commit({ ...draft, ...asRoom(pickBars(roomBars, want, DEFAULT_GREAT_ROOM_SQFT)) })}
+          fields={sizeFields(
+            roomWant,
+            roomBars,
+            { min: GREAT_ROOM_MIN_SQFT, max: GREAT_ROOM_MAX_SQFT },
+            (next, save) => (save ? commit : setDraft)({ ...draft, ...asRoom(next) }),
+          )}
         />
 
         <div className="hunt-row">
           <span className="hunt-row-label">
-            <Icon name="bed" size={13} /> Bedrooms, at least
+            <Icon name="bed" size={13} /> Bedrooms
+            {/* The segments here are the number itself, so there is no room for the Must the two
+                rows above wear. Said in the label instead, because a bedroom count *is* a floor —
+                it is the one preference that also drops flats from the triage pile. */}
+            <small className="hunt-row-note">a must — fewer is red</small>
           </span>
           <Segments
             label="Bedrooms, at least"

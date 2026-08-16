@@ -179,10 +179,11 @@ main() {
   # hunted for as a file, a path written `content-scripts\/panel.js` is legal JSON and is looked up
   # with the backslash still in it, a filename with a space is skipped in silence — and a false
   # positive here refuses a good install on somebody's laptop. So the exhaustive version lives in
-  # `smoke:web`, which has a real parser, knows which fields hold paths, and refuses to guess at a
-  # manifest shaped in a way it does not recognise. It runs against this same archive on every CI
-  # run: the committed zip and the served zip are one file, so it covers what people download, and
-  # it covers it before they download it.
+  # `tools/manifest-paths.ts`, which has a real parser, knows which fields hold paths, and refuses to
+  # guess at a manifest shaped in a way it does not recognise. `check:zip` runs it on the committed
+  # archive — on every pull request, and again in `package.yml` before the rebuilt zip is pushed,
+  # which is the last moment anything can stop a broken build from being the file people download.
+  # `smoke:web` runs the same parser over the bytes the site actually served.
   [ "$(find "$NEW" -type f | wc -l)" -gt 1 ] \
     || die "The download holds a manifest.json and nothing else — that is not a complete extension. Nothing has been changed; if it keeps happening the copy on $ORIGIN is broken."
 
@@ -214,11 +215,27 @@ main() {
   # The whole tree, not the first level of it. Matching top-level names only was a hole of the
   # same shape as the one above: a folder holding `icon/private.txt` passes a check that asks
   # whether the build has an `icon`, and the folder is then deleted with that file in it.
+  # What something is, not merely that the name is taken. `-L` is asked first because `-d` and `-f`
+  # follow a link and would report what it points at, which is the whole of how a link to somebody
+  # else's file reads as a file of ours.
+  kind_of() {
+    if [ -L "$1" ]; then printf 'link'
+    elif [ -d "$1" ]; then printf 'dir'
+    elif [ -f "$1" ]; then printf 'file'
+    elif [ -e "$1" ]; then printf 'other'
+    else printf 'absent'
+    fi
+  }
+  # Every entry in the folder is also in the new build, compared by path *and* type. Type matters
+  # because this is what authorises deleting the folder: a regular file named `icon` sitting where
+  # the build has an `icon/` directory answered `-e` and took the whole folder with it. The build
+  # contains no symlinks at all, so a link never matches anything and is always a refusal.
   holds_only_build_files() {
     local entry
     while IFS= read -r entry; do
       entry="${entry#./}"
-      if [ "$entry" != "$MARKER" ] && [ ! -e "$NEW/$entry" ]; then return 1; fi
+      if [ "$entry" = "$MARKER" ]; then continue; fi
+      [ "$(kind_of "$1/$entry")" = "$(kind_of "$NEW/$entry")" ] || return 1
     done < <(cd "$1" && find . -mindepth 1)
   }
   is_ours() {

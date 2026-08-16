@@ -116,6 +116,14 @@
   min-width: 0;
 }
 
+/* What the segments beside it cannot say. Quieter than the label it follows: it is the strength of
+   a preference, not the name of one. */
+.hunt-row-note {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
 /* The subject's own hue, and only that: severity is never drawn here (see tokens.css). */
 .hunt-ico {
   flex: none;

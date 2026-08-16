@@ -258,7 +258,9 @@ export function featuresFor(
     biggest_room_sqft: analysis?.biggestRoomSqft ?? null,
     price_band_dist: price != null && midpoint != null ? Math.abs(price - midpoint) : null,
     meets_min_sqft: clears(sqft, prefs?.minSqft),
-    meets_great_room: clears(analysis?.biggestRoomSqft, prefs?.greatRoomMinSqft),
+    // The bar the great-room mark actually sits at, which is the aim when there is one and the
+    // floor otherwise — the same `bigThreshold` the flag is drawn from.
+    meets_great_room: clears(analysis?.biggestRoomSqft, prefs?.greatRoomMinSqft ?? prefs?.greatRoomFloorSqft),
     unmet_musts: unmetCount(analysis, prefs, 'must'),
     unmet_nices: unmetCount(analysis, prefs, 'nice'),
   };

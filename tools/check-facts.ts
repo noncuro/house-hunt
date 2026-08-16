@@ -4,12 +4,13 @@
 import {
   addressBesidePostcode,
   claimLabel,
+  dedupeStations,
   flagsFor,
   relativeUpdate,
   resolveReading,
 } from '../packages/core/src/facts';
 import { galleryFor } from '../packages/core/src/shortlist';
-import type { Analysis } from '../packages/core/src/types';
+import type { Analysis, Station } from '../packages/core/src/types';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -263,6 +264,44 @@ check(
   [],
 );
 
+// The main room asks the same question of a smaller number, and answers it in the same two
+// severities — which it did not before: a bar was a mark, and a room under it was told nothing.
+const roomFlag = (sqft: number, prefs?: Parameters<typeof flagsFor>[1]) =>
+  flagsFor({ analysis: analysis({ biggestRoomSqft: sqft }), floorplanUrl: 'p.png' }, prefs).find(
+    (f) => f.key === 'rooms',
+  );
+check('under the main-room floor is red', roomFlag(400, { greatRoomFloorSqft: 450 })?.severity, 'red');
+check(
+  'under the main-room aim is amber',
+  roomFlag(400, { greatRoomMinSqft: 450 })?.severity,
+  'yellow',
+);
+check(
+  'the hunt says it in its own numbers',
+  roomFlag(400, { greatRoomMinSqft: 450 })?.text,
+  'main room 400 sq ft — under the 450 you are aiming for',
+);
+// The band between the two, said once and in the gentler of the two colours.
+check(
+  'between the floor and the aim is amber, once',
+  flagsFor({ analysis: analysis({ biggestRoomSqft: 400 }), floorplanUrl: 'p.png' }, { greatRoomFloorSqft: 300, greatRoomMinSqft: 450 })
+    .filter((f) => f.key === 'rooms')
+    .map((f) => f.severity),
+  ['yellow'],
+);
+check('at the aim it is a great room', roomFlag(450, { greatRoomMinSqft: 450 })?.text, 'great room · 450 sq ft');
+// A floor on its own still moves the mark: without it the default 450 would call a 500 sq ft room
+// great in a hunt that said 600 was its floor.
+check('a floor alone is the mark too', roomFlag(500, { greatRoomFloorSqft: 600 })?.severity, 'red');
+// An unmeasured room is not a small one, the same rule the whole-flat bar follows.
+check(
+  'no measurement, no main-room flag',
+  flagsFor({ analysis: analysis({ biggestRoomSqft: null }), floorplanUrl: 'p.png' }, { greatRoomFloorSqft: 450 }).find(
+    (f) => f.key === 'rooms',
+  ),
+  undefined,
+);
+
 console.log('galleryFor');
 // The floorplan leads and is not repeated further down the set.
 check(
@@ -337,6 +376,87 @@ check(
   }).find((f) => f.key === 'dishwasher')?.text,
   'no dishwasher',
 );
+
+console.log('dedupeStations');
+/** The four rows a flat off the Caledonian Road really gets back, verbatim from Rightmove — the
+ *  case in issue #40. Four rows for one interchange is the whole of what a panel shows, so a flat
+ *  beside King's Cross listed as worse-connected than one with four separate stations near it. */
+const station = (name: string, distance: number, unit = 'miles', types: string[] = ['NATIONAL_TRAIN']): Station =>
+  ({ name, distance, unit, types });
+
+const kingsCross = [
+  station("King's Cross St. Pancras Underground Station", 0.4, 'miles', ['LONDON_UNDERGROUND']),
+  station('London Kings Cross Station', 0.4),
+  station('St. Pancras International Station', 0.5),
+  station('Kings Cross Thameslink Station', 0.4),
+];
+check('four entrances to one interchange are one station', dedupeStations(kingsCross).length, 1);
+check(
+  'and it keeps the name that says the most',
+  dedupeStations(kingsCross)[0]?.name,
+  "King's Cross St. Pancras Underground Station",
+);
+check('the nearest of the distances', dedupeStations(kingsCross)[0]?.distance, 0.4);
+// Merging must not lose a mode: this is the difference between "there is a tube" and "there is a
+// tube and you can get a train to Edinburgh".
+check(
+  'and every mode any of them had',
+  dedupeStations(kingsCross)[0]?.types,
+  ['LONDON_UNDERGROUND', 'NATIONAL_TRAIN'],
+);
+
+// Two stations, not one, and a quarter of a mile apart on the same road. The name is a superset
+// either way round, so distance is what has to keep them separate.
+check(
+  'a name that contains another is not enough on its own',
+  dedupeStations([
+    station("Shepherd's Bush Station", 0.2, 'miles', ['LONDON_UNDERGROUND']),
+    station("Shepherd's Bush Market Station", 0.5, 'miles', ['LONDON_UNDERGROUND']),
+  ]).length,
+  2,
+);
+// ...and nor is standing in the same place.
+check(
+  'nor is being the same distance away',
+  dedupeStations([station('Angel Station', 0.3), station('Old Street Station', 0.3)]).length,
+  2,
+);
+// Two names that say exactly as much as each other keep the first, which is the nearest: there is
+// nothing to prefer in "Highbury & Islington Underground Station" over "Highbury & Islington".
+check(
+  'the survivors are still in distance order',
+  dedupeStations([
+    station('Highbury & Islington Station', 0.6),
+    station('Caledonian Road Station', 0.3, 'miles', ['LONDON_UNDERGROUND']),
+    station('Highbury & Islington Underground Station', 0.6, 'miles', ['LONDON_UNDERGROUND']),
+  ]).map((s) => s.name),
+  ['Caledonian Road Station', 'Highbury & Islington Station'],
+);
+// Kilometres and miles are not comparable numbers, and a listing served in one unit beside one
+// served in the other must not merge on the arithmetic happening to agree.
+check(
+  'two units are never the same spot',
+  dedupeStations([
+    station('Kings Cross Station', 0.4),
+    { name: "King's Cross St. Pancras Underground Station", distance: 0.4, unit: 'km', types: [] },
+  ]).length,
+  2,
+);
+// A name that is nothing but the words this strips has no place in it left to compare, so it
+// stands alone rather than swallowing whatever it is listed beside.
+check(
+  'a name with no place left in it merges with nothing',
+  dedupeStations([station('London Underground Station', 0.3), station('Angel Station', 0.3)]).length,
+  2,
+);
+// Two units in one list is not a shape Rightmove sends today, and the order has to survive it
+// anyway: 0.6 km is a shorter walk than 0.5 miles and sorts the other way round on the raw number.
+check(
+  'kilometres are ordered against miles, not beside them',
+  dedupeStations([station('Angel Station', 0.5), station('Old Street Station', 0.6, 'km')]).map((s) => s.name),
+  ['Old Street Station', 'Angel Station'],
+);
+check('nothing in, nothing out', dedupeStations([]), []);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

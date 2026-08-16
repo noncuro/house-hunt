@@ -54,6 +54,9 @@ export function ShortlistMap({
   prefs,
   scores,
   onOpen,
+  panel = 'card',
+  selected,
+  onSelect,
 }: {
   /** Which hunt's map this is — see `lastView`. */
   projectId: string;
@@ -64,15 +67,35 @@ export function ShortlistMap({
   hubs: Hub[] | null | undefined;
   prefs: HuntPreferences;
   scores: Map<string, number> | null;
-  /** Go to the flat in full. The docked card is the glance; this is the rest of it. */
+  /** Go to the flat in full. The card beside the map is the glance; this is the rest of it. */
   onOpen: (rightmoveId: string) => void;
+  /** What sits beside the map. `card` is this screen's own: the same card the grid draws, in the
+   *  right-hand column. `none` is for a caller that already has a pane there and wants the map to
+   *  be only the map — triage, where the right half is the flat itself and the pins are one more
+   *  way into it. */
+  panel?: 'card' | 'none';
+  /** Which pin is chosen, when the caller is the one holding that. Passing it makes this a
+   *  controlled component: the map draws the selection and reports clicks, and the parent decides
+   *  what is selected — which is what stops triage having two ideas of where you are. */
+  selected?: string | null;
+  onSelect?: (rightmoveId: string | null) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const markers = useRef(new Map<string, L.CircleMarker>());
   const firstRun = useRef(true);
 
-  const [at, setAt] = useState<string | null>(null);
+  const [ownAt, setOwnAt] = useState<string | null>(null);
+  const controlled = selected !== undefined;
+  const at = controlled ? selected : ownAt;
+  // One setter whichever way round it is, so nothing below has to know.
+  const setAt = useCallback(
+    (next: string | null) => {
+      if (!controlled) setOwnAt(next);
+      onSelect?.(next);
+    },
+    [controlled, onSelect],
+  );
   // How many pins are inside the current viewport. Recomputed on move, because the answer to "how
   // many of these are in this bit of London" is the question a map is being asked, and it used to
   // be unanswerable without counting dots.
@@ -198,8 +221,8 @@ export function ShortlistMap({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      // Not while somebody is typing — the note field on the docked card is a text input on this
-      // very screen.
+      // Not while somebody is typing — the note field on the card beside the map is a text input on
+      // this very screen.
       if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select')) return;
       if (event.key === 'ArrowRight') walk.current(1);
       else if (event.key === 'ArrowLeft') walk.current(-1);
@@ -209,73 +232,86 @@ export function ShortlistMap({
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, []);
+  }, [setAt]);
 
   const missing = entries.length - located.length;
   const fuzzed = located.filter((e) => !e.exactLocation).length;
   const current = at ? (located.find((e) => e.rightmoveId === at) ?? null) : null;
 
   return (
-    <div className="mapview" data-testid="map">
-      <div className="map" ref={host} />
+    <div className={panel === 'card' ? 'mapview-split' : 'mapview-only'}>
+      <div className="mapview" data-testid="map">
+        <div className="map" ref={host} />
 
-      {/* Over the map at its top edge: what is under this viewport, and the two caveats about what
-          is not drawn. These were three separate lines below the map, where the one number people
-          wanted — how many are in this bit of London — was not among them. */}
-      <div className="map-facts">
-        <span className="map-count" data-testid="map-in-view">
-          {inView === null ? '—' : inView} of {located.length} in view
-        </span>
-        {missing > 0 && (
-          <span className="dim" title="No postcode and no pin from Rightmove.">
-            {missing} not on the map
+        {/* Over the map at its top edge: what is under this viewport, and the two caveats about what
+            is not drawn. These were three separate lines below the map, where the one number people
+            wanted — how many are in this bit of London — was not among them. */}
+        <div className="map-facts">
+          <span className="map-count" data-testid="map-in-view">
+            {inView === null ? '—' : inView} of {located.length} in view
           </span>
-        )}
-        {fuzzed > 0 && (
-          <span className="dim" title="Placed from Rightmove's approximate pin rather than the postcode.">
-            {fuzzed} approximate
-          </span>
-        )}
+          {missing > 0 && (
+            <span className="dim" title="No postcode and no pin from Rightmove.">
+              {missing} not on the map
+            </span>
+          )}
+          {fuzzed > 0 && (
+            <span className="dim" title="Placed from Rightmove's approximate pin rather than the postcode.">
+              {fuzzed} approximate
+            </span>
+          )}
+        </div>
       </div>
 
-      {current && (
-        <div className="map-dock" data-testid="map-dock">
-          <div className="map-dock-bar">
-            <button
-              type="button"
-              className="key"
-              aria-label="Previous"
-              disabled={located[0]?.rightmoveId === current.rightmoveId}
-              onClick={() => walk.current(-1)}
-            >
-              <Icon name="back" size={12} />
-            </button>
-            <button
-              type="button"
-              className="key"
-              aria-label="Next"
-              disabled={located.at(-1)?.rightmoveId === current.rightmoveId}
-              onClick={() => walk.current(1)}
-            >
-              <Icon name="forward" size={12} />
-            </button>
-            <span className="dim map-dock-hint">← → walks the pins</span>
-            <button type="button" className="key" aria-label="Close" onClick={() => setAt(null)}>
-              <Icon name="close" size={12} />
-            </button>
-          </div>
-          {/* The same card the grid draws. A map that summarised a flat its own way would be the
-              fifth renderer of the same six facts. */}
-          <FlatCard
-            entry={current}
-            places={places}
-            travel={travel}
-            hubs={hubs}
-            prefs={prefs}
-            score={scores?.get(current.rightmoveId)}
-            onOpen={onOpen}
-          />
-        </div>
+      {/* Beside the map rather than floating over its foot. The dock covered the pins nearest the
+          thing you had just clicked, which are the ones you are comparing it against — and it made
+          the map narrower exactly when you wanted it wider. */}
+      {panel === 'card' && (
+        <aside className="map-side" data-testid="map-dock">
+          {current ? (
+            <>
+              <div className="map-side-bar">
+                <button
+                  type="button"
+                  className="key"
+                  aria-label="Previous"
+                  disabled={located[0]?.rightmoveId === current.rightmoveId}
+                  onClick={() => walk.current(-1)}
+                >
+                  <Icon name="back" size={12} />
+                </button>
+                <button
+                  type="button"
+                  className="key"
+                  aria-label="Next"
+                  disabled={located.at(-1)?.rightmoveId === current.rightmoveId}
+                  onClick={() => walk.current(1)}
+                >
+                  <Icon name="forward" size={12} />
+                </button>
+                <span className="dim map-side-hint">← → walks the pins</span>
+                <button type="button" className="key" aria-label="Close" onClick={() => setAt(null)}>
+                  <Icon name="close" size={12} />
+                </button>
+              </div>
+              {/* The same card the grid draws. A map that summarised a flat its own way would be the
+                  fifth renderer of the same six facts. */}
+              <FlatCard
+                entry={current}
+                places={places}
+                travel={travel}
+                hubs={hubs}
+                prefs={prefs}
+                score={scores?.get(current.rightmoveId)}
+                onOpen={onOpen}
+              />
+            </>
+          ) : (
+            <p className="dim map-side-empty">
+              Pick a pin and the flat shows up here. <kbd>←</kbd> <kbd>→</kbd> walk them west to east.
+            </p>
+          )}
+        </aside>
       )}
     </div>
   );

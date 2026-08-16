@@ -422,6 +422,7 @@ function App({
         {route.view === 'triage' && (
           <>
             <Triage
+              projectId={project.id}
               entries={unrated}
               places={places}
               hubs={hubs}
@@ -477,6 +478,18 @@ function App({
           score={scores?.get(openEntry.rightmoveId)}
           offMarket={offMarket ?? EMPTY}
           onClose={() => setOpen(null)}
+          // j and k walk the list the panel was opened from, so reading through a shortlist is one
+          // key rather than close, find where you were, open the next. The lens's order, which is
+          // the order Places is showing: the table's own sort and the cards' grouping rearrange
+          // what you see, and following either would make the same key mean two things.
+          onStep={(delta) => {
+            const list = entries ?? [];
+            const from = list.findIndex((e) => e.rightmoveId === openEntry.rightmoveId);
+            if (from === -1) return;
+            // Stops at both ends rather than wrapping — the same reason the map's arrow keys do.
+            const next = list[Math.max(0, Math.min(list.length - 1, from + delta))];
+            if (next) setOpen(next.rightmoveId);
+          }}
           onRate={(value, note) => rate(openEntry, value, note)}
           onSetStage={(stage, reason) => setStage(openEntry, stage, reason)}
           onSetOffMarket={(off) => setOffMarket(openEntry, off)}

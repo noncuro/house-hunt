@@ -131,11 +131,19 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 - **Driving times deliberately throw** (TfL can't do them) rather than mislabel a transit number.
 - **The travel backlog is derived, not enqueued.** Nothing inserts a job when a place is added:
   `travel_gaps` computes what is missing from a project's properties, its places and the modes we
-  route, minus what `travel_time` already holds, and `.github/workflows/travel-backfill.yml` has the
-  `travel` function work a budget of them every fifteen minutes. A queue written to on place-add is
-  a queue that drifts — one failed insert and the gap is invisible for good — while a derived set
-  cannot lose work it never stored. Lazy lookup alone never fetched anything for a flat nobody
-  opened, which is how adding a place left a column of dashes that filled in only by hand.
+  route, minus what `travel_time` already holds, and a pg_cron job
+  (`20260816020000_travel_backfill_cron.sql`) has the `travel` function work a budget of them every
+  fifteen minutes. A queue written to on place-add is a queue that drifts — one failed insert and the
+  gap is invisible for good — while a derived set cannot lose work it never stored. Lazy lookup alone
+  never fetched anything for a flat nobody opened, which is how adding a place left a column of
+  dashes that filled in only by hand.
+
+  **The schedule lives in the database, and the credentials it uses live in the project's vault.** It
+  was a GitHub Actions workflow first, which is a reasonable place for a cron and was the wrong one
+  here: it needed two repository secrets nobody knew were missing, so it failed at its own guard 40
+  runs out of 40 while the app showed a column of dashes that looked exactly like a slow backlog. Two
+  `vault.create_secret` calls stand it up — `SETUP.md` has them — and `cron.job_run_details` is where
+  a failure is read, on the same connection everything else here is debugged from.
 
 **Every other decision is documented as a comment on the code that owns it** (`TRAVEL_BASIS` in
 `tfl.ts`, `SWEEP_MARGIN_HOURS` in `sweep.ts`, `duplicateIds` in `shortlist.ts`, `Lens` in
@@ -160,7 +168,9 @@ pnpm check:all      # + every pure-function check (seconds)
 ```
 
 Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `hubs`, `stage`, `shortlist`, `sweep`, `travel`,
-`png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint),
+`png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint), `sync` (the
+`_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a
+shared fix could sit unshipped with every check green),
 `one-client`, `bridge`, `withdrawn`. Each pins reasoning invisible when wrong — a bad bearing still
 looks like a bearing.
 

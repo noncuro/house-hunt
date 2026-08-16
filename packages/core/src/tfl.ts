@@ -140,12 +140,23 @@ export function textOn(background: string): string {
  *
  *  Needed because TfL's journey planner accepts neither a station name (300 disambiguation, or
  *  404) nor a Naptan id (300) as a destination — but it does accept "lat,lon". Verified against
- *  "Essex Road Station" and "Earls Court Station". */
+ *  "Essex Road Station" and "Earls Court Station".
+ *
+ *  The match has to be the station we asked for, not the best thing the index could think of. TfL's
+ *  search is fuzzy and ranks by its own idea of relevance: "Hampstead" returns **West Hampstead**
+ *  first and Hampstead itself second. Taking the first put West Hampstead's coordinates and West
+ *  Hampstead's lines on a Hampstead flat — a 19-minute walk where it is eight, and Jubilee and
+ *  Mildmay dots beside a station that has only the Northern line. Nothing about that looks wrong on
+ *  screen, which is the whole problem: it is a plausible number for a real station somewhere else.
+ *
+ *  So a match is accepted only where its name answers the one we searched for, on `stationMatches`'
+ *  terms. Nothing does is a null — the row then shows the station with no walk and no lines, which
+ *  reads as "we could not measure this" rather than as a measurement. */
 export async function resolveStation(
   name: string,
   appKey: string | undefined,
 ): Promise<StationInfo | null> {
-  for (const query of searchQueries(name)) {
+  for (const [attempt, query] of searchQueries(name).entries()) {
     const params = new URLSearchParams({ modes: SEARCH_MODES });
     if (appKey) params.set('app_key', appKey);
 
@@ -156,16 +167,61 @@ export async function resolveStation(
     if (!response.ok) continue;
 
     const body = (await response.json()) as {
-      matches?: Array<{ id?: string; lat?: number; lon?: number }>;
+      matches?: Array<{ id?: string; name?: string; lat?: number; lon?: number }>;
     };
-    const match = body.matches?.[0];
-    if (typeof match?.lat !== 'number' || typeof match?.lon !== 'number') continue;
+    const wanted = stationCore(query);
+    const match = (body.matches ?? []).flatMap((m) =>
+      typeof m.lat === 'number' && typeof m.lon === 'number' && stationMatches(stationCore(m.name ?? ''), wanted, attempt > 0)
+        ? [{ id: m.id, name: m.name, lat: m.lat, lon: m.lon }]
+        : [],
+    )[0];
+    if (!match) continue;
 
-    logInfo('tfl', `resolved station "${name}"`, { query, id: match.id });
+    logInfo('tfl', `resolved station "${name}"`, { query, id: match.id, matched: match.name });
     return { lat: match.lat, lon: match.lon, lines: match.id ? await stationLines(match.id, appKey) : [] };
   }
   logWarn('tfl', `no TfL match for station "${name}"`);
   return null;
+}
+
+/** Does a match's name answer the query — where both are already reduced by `stationCore`?
+ *
+ *  Equality on the first attempt, which is the name Rightmove gave us and which TfL's index almost
+ *  always holds verbatim.
+ *
+ *  The second attempt has already dropped a word (see `searchQueries`), so an answer that carries
+ *  that word or another in its place is exactly what it went looking for: "Kings Cross Thameslink"
+ *  is in no index, and the shortened "Kings Cross" is answered by "King's Cross St. Pancras". A
+ *  *prefix*, though, and never a substring — the failure this whole thing exists to stop is
+ *  "Hampstead" being answered by "West Hampstead", and a station with a word on the front is a
+ *  different station in a way that one with a word on the end usually is not. */
+export function stationMatches(match: string, query: string, extended: boolean): boolean {
+  if (match === query) return true;
+  return extended && match.startsWith(`${query} `);
+}
+
+/** A station name reduced to the part that identifies it, so two spellings of one station compare
+ *  equal: case, punctuation and the mode words every source spells differently all go.
+ *
+ *  Rightmove says "Hampstead Underground Station"; TfL's index says "Hampstead Underground Station"
+ *  in one place and "Hampstead" in another, and its search is a fuzzy one. */
+export function stationCore(name: string): string {
+  const words = name
+    .toLowerCase()
+    // Apostrophes vanish rather than splitting: "King's" and "Kings" are one word spelled two ways,
+    // and turning the first into "king s" would leave them unequal.
+    .replace(/['’]/g, '')
+    // Everything else becomes a boundary, so "St. Pancras" and "St Pancras" meet and "&" separates
+    // rather than counting as a letter.
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  // Only from the end, and only these. "Overground" mid-name is part of nothing, but "Rail Station"
+  // and "Underground Station" are how the same platform is written by two different sources.
+  const TAIL = new Set(['station', 'rail', 'underground', 'overground', 'dlr', 'tube']);
+  while (words.length > 1 && TAIL.has(words.at(-1)!)) words.pop();
+  return words.join(' ');
 }
 
 const SEARCH_MODES = 'tube,dlr,overground,national-rail,elizabeth-line';

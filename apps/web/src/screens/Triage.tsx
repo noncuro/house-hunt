@@ -5,10 +5,12 @@ import { AmenityLabel, Icon, RATINGS, ScoreGauge, ratingOf } from '@house-hunt/u
 import {
   addressBesidePostcode,
   applyFilter,
+  destinationsFor,
   placePoints,
   resolveSize,
   sizeOf,
   splitByHuntFloor,
+  unknownBars,
   type ArchiveReason,
   type Hub,
   type HuntPreferences,
@@ -22,6 +24,7 @@ import type { ShortlistEntry, StoredModel } from '@house-hunt/core/db';
 import { FlatDetail } from '@/components/FlatDetail';
 import { Tick, useRangePick } from '@/components/Tick';
 import { TriageFilters } from '@/components/TriageFilters';
+import { ShortlistMap } from '@/screens/Map';
 import { NEEDS_MODEL, SORT_LABEL, isSurprise, sortForTriage, type SortMode } from '@/lib/score';
 import { useCachedTravel, useRetrain } from '@/lib/queries';
 
@@ -43,6 +46,7 @@ import { useCachedTravel, useRetrain } from '@/lib/queries';
 const CONFIRM_BULK_ABOVE = 5;
 
 export function Triage({
+  projectId,
   entries,
   places,
   hubs,
@@ -64,6 +68,8 @@ export function Triage({
   stageSaving,
   notify,
 }: {
+  /** Which hunt this is, for the map's saved viewport — one map position is one hunt's. */
+  projectId: string;
   /** Everything unrated. The filter narrows it; the sort orders what is left. */
   entries: ShortlistEntry[];
   places: Place[];
@@ -91,6 +97,10 @@ export function Triage({
   const [confirming, setConfirming] = useState<Rating | null>(null);
   const [at, setAt] = useState<string | null>(null);
   const [showBelowFloor, setShowBelowFloor] = useState(false);
+  // The pile as a list or as a map. The list is the default because triage is a queue and a queue
+  // has an order; the map answers the question the order cannot — "which of these are near each
+  // other", which is most of what makes two flats comparable at all.
+  const [asMap, setAsMap] = useState(false);
 
   // The cache and nothing else, for the same reason the compare table reads it that way: a
   // read-through here would fire a journey-planner request for every gap in a pile of two hundred,
@@ -107,7 +117,16 @@ export function Triage({
 
   // Narrowed first, then ordered: sorting the pile and then throwing most of it away would leave the
   // ranking meaning something about flats no longer on screen.
-  const { kept, unknowns } = applyFilter(pile, filter, travel.data, points);
+  // Memoised because the map reads it: a fresh `kept` on every render is a fresh `shown`, and the
+  // map refits its viewport whenever the flats it is drawing change identity. Selecting a pin
+  // rerenders this screen, so without this, clicking a flat threw away the pan and zoom you had
+  // just used to find it.
+  const { kept, unknowns } = useMemo(
+    () => applyFilter(pile, filter, travel.data, points),
+    [pile, filter, travel.data, points],
+  );
+  // Per row rather than per pile: the same question `unknowns` counts, asked of one flat.
+  const unknownFor = (entry: ShortlistEntry) => unknownBars(entry, filter, travel.data, points);
   const shown = useMemo(() => sortForTriage(kept, scores, sortMode), [kept, scores, sortMode]);
 
   // The flat on the right. Follows the pile when what you were reading leaves it — which is what
@@ -191,6 +210,29 @@ export function Triage({
           the pile, taking a third of the screen to say what it had already done — so they collapse
           to their own summary, and open on the word that says they will. */}
       <div className="triage-bar">
+        {/* Two drawings of one pile, not two screens: the filter, the sort and the ticks all carry
+            across, and the pane on the right is the same pane. */}
+        <span className="triage-views">
+          <button
+            type="button"
+            className={asMap ? 'key' : 'key key-on'}
+            aria-pressed={!asMap}
+            data-testid="triage-as-list"
+            onClick={() => setAsMap(false)}
+          >
+            <Icon name="places" size={12} /> List
+          </button>
+          <button
+            type="button"
+            className={asMap ? 'key key-on' : 'key'}
+            aria-pressed={asMap}
+            data-testid="triage-as-map"
+            onClick={() => setAsMap(true)}
+          >
+            <Icon name="map" size={12} /> Map
+          </button>
+        </span>
+
         <span className="triage-count" data-testid="triage-count">
           <strong>{shown.length}</strong> of {pile.length} waiting
           {unknowns > 0 && (
@@ -255,6 +297,7 @@ export function Triage({
             ))}
           </select>
         </label>
+
 
         {/* The model and the button that rebuilds it, as one group at the far end of the bar: what
             Rescore acts on is the line beside it, not the filters it used to sit next to. Grouped
@@ -375,7 +418,25 @@ export function Triage({
           .
         </p>
       ) : (
-        <div className="triage-split">
+        <div className={asMap ? 'triage-split triage-split-map' : 'triage-split'}>
+          {asMap ? (
+            <ShortlistMap
+              projectId={projectId}
+              entries={shown}
+              places={places}
+              travel={travel.data}
+              hubs={hubs}
+              prefs={prefs}
+              scores={scores}
+              // The map is only the map here: the right-hand column is triage's own pane, and the
+              // selection is triage's — a pin and a row are two ways of saying the same thing.
+              panel="none"
+              selected={current?.rightmoveId ?? null}
+              onSelect={setAt}
+              // Opening a flat *is* choosing it on this screen; there is nowhere further to go.
+              onOpen={setAt}
+            />
+          ) : (
           <ol className="triage-pile" data-testid="triage-pile">
             {shown.map((entry) => (
               <li key={entry.rightmoveId}>
@@ -397,6 +458,19 @@ export function Triage({
                       {addressBesidePostcode(entry.displayAddress, entry.postcode)}
                     </span>
                     <span className="triage-line dim">{oneLine(entry)}</span>
+                    {/* Why this one is still here when a bar it does not obviously clear is set.
+                        The count under the filter says how many are kept on a shrug; this says
+                        which, and which figure is the missing one — "no size" is the row to open
+                        the floorplan on, and without it it is drawn exactly like a measured one. */}
+                    {unknownFor(entry).length > 0 && (
+                      <span className="triage-unknowns" data-testid="triage-unknown">
+                        {unknownFor(entry).map((what) => (
+                          <span className="triage-unknown" key={what}>
+                            {what}
+                          </span>
+                        ))}
+                      </span>
+                    )}
                   </button>
                   {scores?.has(entry.rightmoveId) && (
                     <ScoreGauge
@@ -409,6 +483,7 @@ export function Triage({
               </li>
             ))}
           </ol>
+          )}
 
           <div className="triage-pane">
             {current && (
@@ -420,6 +495,7 @@ export function Triage({
                 <FlatDetail
                   key={current.rightmoveId}
                   keys
+                  verdictFirst
                   entry={current}
                   places={places}
                   hubs={hubs}
@@ -464,8 +540,11 @@ function summarise(filter: TriageFilter, places: Place[]): ReactNode {
   if (filter.minBedrooms !== null) bits.push(`${filter.minBedrooms}+ beds`);
   if (filter.minSqft !== null) bits.push(`${filter.minSqft}+ sq ft`);
   if (filter.minGreatRoomSqft !== null) bits.push(`main room ${filter.minGreatRoomSqft}+ sq ft`);
+  // Through the same list the picker offers, so the nearest station reads as itself here rather
+  // than as a bar naming a place this hunt does not have.
+  const destinations = destinationsFor(places);
   for (const bar of filter.travel) {
-    const place = places.find((p) => p.id === bar.placeId);
+    const place = destinations.find((p) => p.id === bar.placeId);
     // A bar naming a place that has since been deleted is silently dropped from the summary; the
     // filter itself is pruned the same way one level up (`withKnownPlaces`).
     if (place) bits.push(`${bar.max}${bar.mode === 'crow' ? ' mi' : ' min'} to ${place.label}`);

@@ -84,6 +84,14 @@ jobs:
       # The `.env` is not the repository's and must not be committed with the artefact.
       - run: rm -f .env
 
+      # Before the commit, not after it. `check:zip` reads the archive that is about to be pushed
+      # and asks whether it holds every file its own manifest names — a build that dropped
+      # `background.js` still passes the installer's CRC check, still installs, and takes the
+      # working copy it replaced with it. Nothing downstream can give that back, so the publish is
+      # the last place to stop it. On this workflow `GITHUB_EVENT_NAME` is `push`, so none of it is
+      # advisory.
+      - run: pnpm check:zip
+
       - name: Commit it if the sources changed
         run: |
           # The stamp, not the zip: the archive's bytes differ between two builds of identical code.

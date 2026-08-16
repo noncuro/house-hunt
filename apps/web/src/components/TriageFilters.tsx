@@ -7,6 +7,7 @@ import {
   NO_FILTER,
   barModesFor,
   defaultMax,
+  destinationsFor,
   filterIsOn,
   startingBar,
   type AmenityKey,
@@ -42,16 +43,18 @@ export function TriageFilters({
   kept: number;
   unknowns: number;
   total: number;
-  /** The places this hunt saved, which is the whole vocabulary of a travel bar. No places means no
-   *  travel row at all — an empty picker is a control that cannot be used and does not say why. */
+  /** The places this hunt saved. `destinationsFor` is what turns them into the vocabulary of a
+   *  travel bar, and it always has at least the nearest station in it — so this row is on screen
+   *  before anybody has saved anywhere, which is exactly when a pile most needs narrowing. */
   places: Place[];
 }) {
-  // Every place we can measure to at all. A postcode is what TfL is asked with and a coordinate is
-  // what a straight line is drawn between, so a neighbourhood folded in from the old hub list has
-  // no journey time and does have a distance — filtering it out of the picker entirely was how it
-  // disappeared from this control without explanation. The mode select below is what narrows it,
-  // and `barModesFor` is the one place that decides which is which.
-  const destinations = places.filter((p) => barModesFor(p).length > 0);
+  // Every place we can measure to at all, plus the nearest station — which is not a place anybody
+  // saved and is the one destination every flat in the pile has a number for. A postcode is what
+  // TfL is asked with and a coordinate is what a straight line is drawn between, so a neighbourhood
+  // folded in from the old hub list has no journey time and does have a distance; filtering it out
+  // of the picker entirely was how it disappeared from this control without explanation. The mode
+  // select below is what narrows it, and `barModesFor` is the one place that decides which is which.
+  const destinations = destinationsFor(places);
   const on = filterIsOn(filter);
   const set = (patch: Partial<TriageFilter>) => setFilter({ ...filter, ...patch });
 
@@ -118,43 +121,41 @@ export function TriageFilters({
         </button>
       </div>
 
-      {/* How far it is from the places you saved. A row per bar rather than a column per place,
-          because a hunt has one or two journeys it actually cares about and a picker per place
-          would put six controls on screen to express one requirement. Absent when there are no
-          places: the answer then is to go and save one, which Settings is for. */}
-      {destinations.length > 0 && (
-        <div className="triage-filter-row triage-filter-travel">
-          <span className="dim">Within:</span>
-          {filter.travel.map((entry, index) => (
-            <TravelRow
-              key={index}
-              bar={entry}
-              places={destinations}
-              onChange={(next) =>
-                set({ travel: filter.travel.map((t, i) => (i === index ? next : t)) })
-              }
-              onRemove={() => set({ travel: filter.travel.filter((_, i) => i !== index) })}
-            />
-          ))}
-          <button
-            className="key"
-            data-testid="add-travel-filter"
-            // Thirty minutes on public transport to the first saved place: the commute is what
-            // people save a place for, and a bar that starts at "any" is one you have to fill in
-            // twice before it does anything.
-            onClick={() =>
-              set({
-                travel: [
-                  ...filter.travel,
-                  { placeId: destinations[0]!.id, ...startingBar(destinations[0]!)! },
-                ],
-              })
+      {/* How far it is from the places you saved, and from a station. A row per bar rather than a
+          column per place, because a hunt has one or two journeys it actually cares about and a
+          picker per place would put six controls on screen to express one requirement. */}
+      <div className="triage-filter-row triage-filter-travel">
+        <span className="dim">Within:</span>
+        {filter.travel.map((entry, index) => (
+          <TravelRow
+            key={index}
+            bar={entry}
+            places={destinations}
+            onChange={(next) =>
+              set({ travel: filter.travel.map((t, i) => (i === index ? next : t)) })
             }
-          >
-            + Travel time
-          </button>
-        </div>
-      )}
+            onRemove={() => set({ travel: filter.travel.filter((_, i) => i !== index) })}
+          />
+        ))}
+        <button
+          className="key"
+          data-testid="add-travel-filter"
+          // Thirty minutes on public transport to the first saved place — the commute is what
+          // people save a place for, and a bar that starts at "any" is one you have to fill in
+          // twice before it does anything. With nowhere saved that is a mile of a station, which
+          // is `startingBar`'s answer for anywhere there is no postcode to route from.
+          onClick={() =>
+            set({
+              travel: [
+                ...filter.travel,
+                { placeId: destinations[0]!.id, ...startingBar(destinations[0]!)! },
+              ],
+            })
+          }
+        >
+          + Travel time
+        </button>
+      </div>
 
       {on && (
         <p className="dim triage-filter-count">

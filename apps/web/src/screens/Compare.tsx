@@ -13,10 +13,13 @@ import {
   readTravel,
 } from '@house-hunt/ui';
 import {
+  dedupeStations,
   flagsFor,
+  nearestStationMiles,
   problemsOnly,
   relativeUpdate,
   resolveSize,
+  stationDistance,
   worstSeverity,
   type Flag,
   type HuntPreferences,
@@ -121,6 +124,15 @@ export function Compare({
     }),
     [picked, setPicked],
   );
+
+  // How many of the picks the current lens is not drawing. `entries` is what this table was handed,
+  // which is already the lens's answer, so this is the whole of the difference between the number in
+  // the bar and the number of boxes with ticks in them.
+  const hiddenPicks = useMemo(() => {
+    if (picked.length === 0) return 0;
+    const shown = new Set(entries.map((e) => e.rightmoveId));
+    return picked.filter((id) => !shown.has(id)).length;
+  }, [picked, entries]);
 
   // The table is wider than the page whenever there is more than a place or two saved, and a
   // plain `overflow-x: auto` gives no sign of it: the audit found 191px — the whole "Listed"
@@ -297,6 +309,16 @@ export function Compare({
         {picked.length > 0 && (
           <p className="table-picked" data-testid="picked">
             <span>{picked.length} picked</span>
+            {/* A pick is held above the lens on purpose — tick four, filter to the loved ones, and
+                the head-to-head still gives you four, because a tick is an act and changing which
+                slice is on screen is not undoing it. What was missing was the sentence: the bar
+                said "3 picked" over two ticked boxes, and Clear was the only thing that made the
+                two numbers agree. */}
+            {hiddenPicks > 0 && (
+              <span className="dim" data-testid="picked-hidden">
+                · {hiddenPicks} not in this view
+              </span>
+            )}
             <button
               type="button"
               className="key"
@@ -597,6 +619,29 @@ function buildColumns(
   // picker. These are the neutral column form of the same fields `facts.ts` turns into flags; the
   // value comes straight off `entry.analysis`, so there is no second copy of what a fact is.
   columns.push(...featureColumns());
+
+  // The one location column every flat can fill in. A journey time has to be looked up per flat
+  // and mostly has not been, where the station and its distance arrive with the listing — so this
+  // is the column that is actually populated on the day a sweep lands, which is why it is on by
+  // default and the per-place ones are not. Sorted on miles, drawn in the unit Rightmove sent.
+  columns.push({
+    key: 'station',
+    label: 'Nearest station',
+    numeric: true,
+    value: (e) => nearestStationMiles(e.nearestStations),
+    render: (e) => {
+      // Deduped, or a flat by King's Cross names whichever of its four entrances Rightmove happened
+      // to list first — see `dedupeStations`.
+      const nearest = dedupeStations(e.nearestStations)[0];
+      if (!nearest) return dash('The listing named no station.');
+      return (
+        <span className="compare-station">
+          {nearest.name.replace(/\s+Station$/, '')}{' '}
+          <span className="dim">{stationDistance(nearest.distance, nearest.unit)}</span>
+        </span>
+      );
+    },
+  });
 
   // Per place: the fastest way there, and then each mode on its own.
   //

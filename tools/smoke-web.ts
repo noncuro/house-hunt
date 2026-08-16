@@ -29,7 +29,7 @@
 import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Locator, type Page } from 'playwright';
 import {
   createInvite,
@@ -54,6 +54,7 @@ import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 import { startFunctions } from './edge-functions';
 import { demandFreePort, stopTree } from './servers';
+import { checkArchiveIsComplete } from './manifest-paths';
 
 /** Must match `storageKey` in `apps/web/src/lib/client.ts`. Asserted below rather than trusted:
  *  a session written under the wrong key renders a perfectly good sign-in form, and every
@@ -324,6 +325,47 @@ async function checkList({ page }: Stage): Promise<void> {
   await openLens(page, 'shortlisted');
 
   await page.screenshot({ path: resolve(SHOTS, 'web-list.png'), fullPage: true });
+
+  // The card opens from anywhere on it, the keyboard walks the list, and Escape leaves one layer at
+  // a time. Three gestures with nothing behind them but a key press, which is exactly the kind that
+  // breaks silently: nothing throws, the panel simply does the wrong thing.
+  await page.locator(`#card-${fixtureId(1)} .flat-meta`).first().click();
+  const opened = page.locator('[data-testid="flat-panel"]');
+  if (!(await opened.count())) {
+    note('clicking the middle of a card did not open it');
+  } else {
+    const firstFlat = await panelAddress(page);
+    await page.keyboard.press('j');
+    await settle(page);
+    const nextFlat = await panelAddress(page);
+    if (nextFlat === firstFlat) note('j did not move the panel to the next flat');
+    await page.keyboard.press('k');
+    await settle(page);
+    if ((await panelAddress(page)) !== firstFlat) note('k did not come back to the flat j left');
+
+    // Escape with a photo open closes the photo and nothing else. It used to close both, so leaving
+    // a photograph threw away the flat you were reading it about.
+    const shot = opened.locator('.shots .shot').first();
+    if (await shot.count()) {
+      await shot.click();
+      await settle(page);
+      if (!(await page.locator('.lightbox').count())) note('clicking a photo in the panel opened no gallery');
+      await page.keyboard.press('Escape');
+      await settle(page);
+      if (await page.locator('.lightbox').count()) note('Escape did not close the gallery');
+      if (!(await page.locator('[data-testid="flat-panel"]').count())) {
+        note('Escape closed the flat panel as well as the gallery');
+      }
+    }
+
+    // The location, as something you can paste into a map. Its text rather than its presence: a
+    // chip that renders the empty string is the failure worth catching.
+    const location = (await opened.locator('.rm-copy-value').first().innerText().catch(() => '')).trim();
+    if (!/^[A-Z]{1,2}\d/.test(location) && !/^-?\d+\.\d+,-?\d+\.\d+$/.test(location)) {
+      note(`the panel's copyable location reads "${location}", which is neither a postcode nor a point`);
+    }
+    await closeFlat(page);
+  }
 
   // And the same screen on a phone, which is where a shortlist is actually read — standing outside
   // the building, deciding whether to bother. Nothing else here narrows the window, so the whole
@@ -655,9 +697,9 @@ async function checkMap({ page }: Stage): Promise<void> {
   const inView = await page.locator('[data-testid="map-in-view"]').innerText().catch(() => '');
   if (!/\d+ of \d+ in view/.test(inView)) note(`the map says "${inView}" rather than how many are in view`);
 
-  // Clicking a pin docks the flat at the foot and keeps the map. It used to navigate, which threw
-  // away the street you were looking at — so the assertion is both halves: the card arrives, and the
-  // map is still there under it.
+  // Clicking a pin draws the flat in the column beside the map and keeps the map. It used to
+  // navigate, which threw away the street you were looking at — so the assertion is both halves:
+  // the card arrives, and the map is still there beside it.
   const pins = page.locator('.leaflet-interactive');
   if ((await pins.count()) === 0) note('the map drew no pins for a fixture with located flats');
   else {
@@ -665,17 +707,17 @@ async function checkMap({ page }: Stage): Promise<void> {
     const dock = page.locator('[data-testid="map-dock"]');
     await dock
       .waitFor({ timeout: 10_000 })
-      .catch(() => note('clicking a pin docked no card at the foot of the map'));
+      .catch(() => note('clicking a pin drew no card beside the map'));
     if (!(await page.locator('.leaflet-container').isVisible())) {
       note('clicking a pin left the map');
     }
-    // The arrow keys walk the pins, which is the whole reason the dock is a dock rather than a
-    // panel: one flat after another without going back to a list between them.
+    // The arrow keys walk the pins, which is what the column beside the map is for: one flat after
+    // another without going back to a list between them.
     const first = await dock.locator('.flat-address').innerText().catch(() => '');
     await page.keyboard.press('ArrowRight');
     await settle(page);
     const second = await dock.locator('.flat-address').innerText().catch(() => '');
-    if (first !== '' && first === second) note('the right arrow key did not move the dock to another pin');
+    if (first !== '' && first === second) note('the right arrow key did not move the panel to another pin');
   }
 
   await page.screenshot({ path: resolve(SHOTS, 'web-map.png') });
@@ -740,6 +782,39 @@ async function checkTriage({ page }: Stage): Promise<void> {
   const restored = await rows.count();
   if (restored !== fixture.unratedCount) {
     note(`clearing the filters left ${restored}, not the ${fixture.unratedCount} unrated`);
+  }
+
+  // The map as the other drawing of the same pile. The pane on the right is the same pane — the
+  // assertion is that it is still there and still one flat, because a view switch that quietly
+  // empties the half of the screen you are working in reads as the flat having gone.
+  await page.locator('[data-testid="triage-as-map"]').click();
+  await settle(page);
+  if (!(await page.locator('.triage-split-map .leaflet-container').count())) {
+    note('the triage map view drew no map');
+  }
+  if (!(await page.locator('.triage-pane [data-testid="flat-detail"]').count())) {
+    note('switching triage to the map emptied the pane beside it');
+  }
+  const triagePins = page.locator('.triage-split-map .leaflet-interactive');
+  if ((await triagePins.count()) > 1) {
+    const before = await paneAddress(page);
+    await triagePins.last().click();
+    await settle(page);
+    // The pane opens on the first flat in the pile, which the map is free to have drawn as the last
+    // pin — clicking it then changes nothing, correctly. Try the other end before believing it.
+    if (await paneAddress(page) === before) {
+      await triagePins.first().click();
+      await settle(page);
+    }
+    if (before !== '' && (await paneAddress(page)) === before) {
+      note('clicking a pin in triage did not change the flat in the pane');
+    }
+  }
+  await page.screenshot({ path: resolve(SHOTS, 'web-triage-map.png') });
+  await page.locator('[data-testid="triage-as-list"]').click();
+  await settle(page);
+  if (!(await page.locator('[data-testid="triage-pile"]').count())) {
+    note('switching back to the list did not bring the pile back');
   }
 
   // The bulk bar appears when something is ticked, and not before. It used to sit there all session
@@ -843,6 +918,11 @@ async function paneAddress(page: Page): Promise<string> {
       .innerText()
       .catch(() => '')) ?? ''
   ).trim();
+}
+
+/** The address the open flat panel is showing, or '' when none is open. */
+async function panelAddress(page: Page): Promise<string> {
+  return ((await page.locator('.panel-where').first().innerText().catch(() => '')) ?? '').trim();
 }
 
 /** Open one flat's panel from wherever the page is, and hand back a locator scoped to it.
@@ -976,135 +1056,10 @@ async function checkInstallAssets(page: Page): Promise<void> {
 
   const saved = resolve(SHOTS, 'served-extension.zip');
   writeFileSync(saved, bytes);
-  const names = new Set(
-    execFileSync('unzip', ['-Z1', saved], { encoding: 'utf8' }).split('\n').filter(Boolean),
-  );
-  if (!names.has('manifest.json')) {
-    note('the served zip has no manifest.json — Chrome would refuse to load it');
-    return;
-  }
-  // The whole of the completeness check now lives here rather than in `install.sh`. The installer
-  // verifies the archive's own CRCs, which is exact and needs no parser; knowing which *files* a
-  // manifest asks Chrome for needs one, and a shell has none it can count on. This side has
-  // `JSON.parse`, and the archive it reads is the committed zip, which is the file people download.
-  const refs = referencedPaths(JSON.parse(execFileSync('unzip', ['-p', saved, 'manifest.json'], { encoding: 'utf8' })));
-  const missing = refs.filter((ref) => (ref.includes('*') ? !matchesAny(ref, names) : !names.has(ref)));
+  // The same parser `check:zip` gates the commit with, asked here about the bytes the site actually
+  // handed over — which is the only question this harness can answer that the other one cannot.
+  const { refs, missing } = checkArchiveIsComplete(saved, (problem) => note(`the served zip: ${problem}`));
   console.log(`served zip: ${refs.length} path(s) referenced, ${missing.length} missing`);
-  if (refs.length === 0) note("the served zip's manifest.json asks Chrome to load nothing at all");
-  for (const ref of missing) note(`the served zip's manifest.json asks Chrome to load ${ref}, which is not in the zip`);
-}
-
-/** Every file the manifest asks Chrome to load, extension-root-relative.
- *
- *  Field-aware, because a scan for path-shaped strings is wrong in both directions on manifests
- *  Chrome accepts. It claims things that are not files — a `short_name` of `House.hunt` — and it
- *  misses things that are: a path with a space in it, or one written `content-scripts\/panel.js`,
- *  which is legal JSON for the same path and which a text scan looks up with the backslash still in
- *  place. `JSON.parse` settles the escapes, and reading named fields settles the rest.
- *
- *  A manifest carrying a key this does not know about stops the run rather than being checked in
- *  part. That is the whole point of the finding this answers: a parser that silently covers less
- *  than it claims reports a green tick about the half it looked at. Adding a field here is a
- *  deliberate act, and the failure tells you which field to add. */
-function referencedPaths(manifest: Record<string, unknown>): string[] {
-  /** Top-level manifest keys that hold no path, so finding one is not a reason to stop. Anything not
-   *  here and not read below is a key this parser has never seen, which is the case it must refuse:
-   *  a new field holding a filename would otherwise be checked by not being checked. */
-  const pathless = new Set([
-    'manifest_version', 'name', 'short_name', 'description', 'version', 'version_name', 'key',
-    'permissions', 'optional_permissions', 'host_permissions', 'optional_host_permissions',
-    'content_security_policy', 'externally_connectable', 'incognito', 'minimum_chrome_version',
-    'offline_enabled', 'update_url', 'homepage_url', 'author', 'omnibox', 'commands',
-    'cross_origin_embedder_policy', 'cross_origin_opener_policy',
-  ]);
-  const found: string[] = [];
-  const add = (value: unknown, where: string): void => {
-    if (typeof value !== 'string') {
-      note(`the served manifest's ${where} is not a string — this check cannot read that shape`);
-      return;
-    }
-    found.push(value.replace(/^\//, ''));
-  };
-
-  for (const [key, value] of Object.entries(manifest)) {
-    if (pathless.has(key)) continue;
-    switch (key) {
-      case 'background': {
-        const background = value as Record<string, unknown>;
-        if ('service_worker' in background) add(background.service_worker, 'background.service_worker');
-        for (const [i, script] of ((background.scripts as unknown[]) ?? []).entries()) add(script, `background.scripts[${i}]`);
-        break;
-      }
-      case 'content_scripts':
-        for (const [i, entry] of (value as Record<string, unknown>[]).entries()) {
-          for (const kind of ['js', 'css'] as const) {
-            for (const [j, path] of ((entry[kind] as unknown[]) ?? []).entries()) add(path, `content_scripts[${i}].${kind}[${j}]`);
-          }
-        }
-        break;
-      case 'icons':
-        for (const [size, path] of Object.entries(value as Record<string, unknown>)) add(path, `icons["${size}"]`);
-        break;
-      case 'action':
-      case 'browser_action':
-      case 'page_action': {
-        const action = value as Record<string, unknown>;
-        if ('default_popup' in action) add(action.default_popup, `${key}.default_popup`);
-        if (typeof action.default_icon === 'string') add(action.default_icon, `${key}.default_icon`);
-        else if (action.default_icon) {
-          for (const [size, path] of Object.entries(action.default_icon as Record<string, unknown>)) add(path, `${key}.default_icon["${size}"]`);
-        }
-        break;
-      }
-      case 'web_accessible_resources':
-        for (const [i, entry] of (value as Record<string, unknown>[]).entries()) {
-          for (const [j, path] of ((entry.resources as unknown[]) ?? []).entries()) add(path, `web_accessible_resources[${i}].resources[${j}]`);
-        }
-        break;
-      case 'default_locale':
-        // Not a path itself; it is the one field that names a file only by implication, and the
-        // file it implies is the one whose absence breaks every `__MSG_` in the manifest.
-        add(`_locales/${String(value)}/messages.json`, 'default_locale');
-        break;
-      case 'options_page':
-        add(value, 'options_page');
-        break;
-      case 'options_ui':
-        add((value as Record<string, unknown>).page, 'options_ui.page');
-        break;
-      case 'side_panel':
-        add((value as Record<string, unknown>).default_path, 'side_panel.default_path');
-        break;
-      case 'devtools_page':
-        add(value, 'devtools_page');
-        break;
-      case 'chrome_url_overrides':
-        for (const [page, path] of Object.entries(value as Record<string, unknown>)) add(path, `chrome_url_overrides.${page}`);
-        break;
-      case 'declarative_net_request':
-        for (const [i, rule] of (((value as Record<string, unknown>).rule_resources as Record<string, unknown>[]) ?? []).entries()) {
-          add(rule.path, `declarative_net_request.rule_resources[${i}].path`);
-        }
-        break;
-      case 'storage':
-        add((value as Record<string, unknown>).managed_schema, 'storage.managed_schema');
-        break;
-      case 'sandbox':
-        for (const [i, path] of (((value as Record<string, unknown>).pages as unknown[]) ?? []).entries()) add(path, `sandbox.pages[${i}]`);
-        break;
-      default:
-        note(`the served manifest has a "${key}" this check does not know how to read — it may name files that nothing is verifying (add it to referencedPaths)`);
-    }
-  }
-  return [...new Set(found)];
-}
-
-/** Chrome allows a glob in `web_accessible_resources`, so a literal lookup would report a pattern
- *  as missing. Matched rather than resolved: `*` spans path separators there, and the only question
- *  is whether the archive holds anything the pattern would serve. */
-function matchesAny(pattern: string, names: Set<string>): boolean {
-  const rx = new RegExp(`^${pattern.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
-  return [...names].some((name) => rx.test(name));
 }
 
 /** Every prefix of the installer, run in a scrubbed environment, changing nothing in its sandbox.

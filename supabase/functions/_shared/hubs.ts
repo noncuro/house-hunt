@@ -199,12 +199,19 @@ export const SWEEP_HUBS: SeedHub[] = SEED_HUBS;
  *
  *  Somewhere the hunt sweeps around outranks somewhere it only measures to — see `Hub.fromPlace`
  *  and `nearestHub`. "0.3 mi NW of Work" tells you how long the commute is and nothing whatever
- *  about where the flat is, and where the flat is, is the entire question the compass answers. */
+ *  about where the flat is, and where the flat is, is the entire question the compass answers.
+ *
+ *  The radius alone is what says which is which, and deliberately not `isSwept`. That answers a
+ *  different question — whether a Rightmove URL can safely be built — and wants both halves of an
+ *  identifier as well. A place somebody has just ticked a radius onto, whose lookup has not come
+ *  back, is a neighbourhood; asked the other question it reads as somewhere we only commute to, and
+ *  the compass demotes it for as long as the resolve takes. `sweepableHubs` below already states the
+ *  rule this now follows: a radius is the statement of intent. */
 export function hubsFromProject(places: Place[]): Hub[] {
   return places.flatMap((p) =>
     p.lat === null || p.lon === null
       ? []
-      : [{ name: p.label, lat: p.lat, lon: p.lon, fromPlace: !isSwept(p) }],
+      : [{ name: p.label, lat: p.lat, lon: p.lon, fromPlace: p.sweepRadiusMiles === null }],
   );
 }
 

@@ -13,7 +13,7 @@
  *  backfilled, forever, with every check green. Comparing the two texts is the only way to see it. */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { NO_ROUTE_RETRY_DAYS, TRAVEL_BASIS, nextWeekdayMorning, staleTravel } from '../packages/core/src/tfl';
+import { NO_ROUTE_RETRY_DAYS, TRAVEL_BASIS, nextWeekdayMorning, staleTravel, stationCore, stationMatches } from '../packages/core/src/tfl';
 import { TRAVEL_MODES } from '../packages/core/src/types';
 
 let failures = 0;
@@ -218,6 +218,40 @@ modes(
   edited('create function public.travel_gaps', 'create function public.travel_backlog'),
   'no `create function public.travel_gaps ... $$ ... $$` body — did it move or change quoting?',
 );
+
+/* Which station a name means. TfL's search is fuzzy and ranks by relevance, so the guard against
+ * being handed a different station is name equality once both sides are reduced — and every case
+ * below is a real pair of spellings seen from Rightmove and from TfL's index. */
+const same = (name: string, a: string, b: string) =>
+  check(name, [stationCore(a), stationCore(b), stationCore(a) === stationCore(b)], [stationCore(a), stationCore(b), true]);
+
+same('Rightmove\'s suffix and TfL\'s are the same station', 'Hampstead Underground Station', 'Hampstead');
+same('a rail station and its bare name', 'Finchley Road & Frognal Station', 'Finchley Road & Frognal Rail Station');
+same('an apostrophe is not part of the name', "King's Cross St. Pancras Underground Station", 'Kings Cross St Pancras');
+same('two mode words at the end both go', 'Battersea Power Station Underground Station', 'Battersea Power Station');
+
+check('West Hampstead is not Hampstead', stationCore('West Hampstead') === stationCore('Hampstead'), false);
+check('Finchley Road is not Finchley Road & Frognal',
+  stationCore('Finchley Road Underground Station') === stationCore('Finchley Road & Frognal Rail Station'), false);
+// A name that is nothing but a mode word keeps it rather than reducing to the empty string, which
+// would compare equal to every other reduced-away name.
+check('a name made only of mode words survives', stationCore('Station'), 'station');
+
+
+/* And which of TfL's answers count. The first attempt is the name off the listing and has to be
+ * met exactly; the second has already dropped a word, so an answer that adds one back is what it
+ * went looking for — but only on the end. */
+const core2 = (a: string, b: string, extended: boolean) => stationMatches(stationCore(a), stationCore(b), extended);
+
+check('the exact name is taken on the first attempt', core2('Hampstead Underground Station', 'Hampstead', false), true);
+check('a longer name is refused on the first attempt', core2('Hampstead Heath Rail Station', 'Hampstead', false), false);
+check('a shortened query accepts what it was shortened from',
+  core2("King's Cross St. Pancras Underground Station", 'Kings Cross', true), true);
+check('a word on the front is a different station, however shortened the query',
+  core2('West Hampstead', 'Hampstead', true), false);
+check('and not a bare substring either', core2('Old Hampstead Road', 'Hampstead', true), false);
+check('a longer word is not the query plus a word', core2('Hampsteadish', 'Hampstead', true), false);
+
 
 if (failures > 0) {
   console.error(`\n${failures} failing`);

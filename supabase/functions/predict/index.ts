@@ -24,7 +24,7 @@ import {
   type LabelMode,
   type PredictInput,
 } from '../_shared/predict.ts';
-import type { HuntPreferences } from '../_shared/facts.ts';
+import { nearestStationMiles, type HuntPreferences } from '../_shared/facts.ts';
 
 interface VerdictRow {
   rightmove_id: string;
@@ -64,15 +64,6 @@ interface AnalysisRow {
   utilities_included: boolean | null;
 }
 
-/** Smallest nearest-station distance, in miles. Rightmove gives miles, but a stray kilometre unit
- *  would otherwise read as a much closer station, so convert rather than trust. */
-function nearestStationMiles(stations: PropertyRow['nearest_stations']): number | null {
-  const miles = (stations ?? [])
-    .filter((s) => typeof s.distance === 'number')
-    .map((s) => (s.unit === 'km' ? (s.distance as number) * 0.621371 : (s.distance as number)));
-  return miles.length ? Math.min(...miles) : null;
-}
-
 /** The analysis row as the feature builder wants it. Only the fields the builder and the amenity
  *  predicates read — a partial `Analysis`, which is all `featuresFor` asks for. */
 function analysisOf(a: AnalysisRow | undefined): PredictInput['analysis'] {
@@ -103,7 +94,7 @@ function inputOf(p: PropertyRow, a: AnalysisRow | undefined): PredictInput {
     // Prefer the postcode point (design: route from the postcode, not the pin); fall back to the pin.
     lat: p.postcode_lat ?? p.latitude,
     lon: p.postcode_lon ?? p.longitude,
-    nearestStationMiles: nearestStationMiles(p.nearest_stations),
+    nearestStationMiles: nearestStationMiles(p.nearest_stations ?? []),
     furnishType: p.furnish_type,
     analysis: analysisOf(a),
   };

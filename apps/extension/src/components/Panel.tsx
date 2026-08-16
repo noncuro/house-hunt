@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { CopyLocation } from '@house-hunt/ui';
 import { Hint } from '@house-hunt/ui';
 import { Toasts, useToasts } from '@house-hunt/ui';
 import { CappedNotice, SpendWarning } from '@house-hunt/ui';
@@ -529,7 +530,16 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       </div>
 
       <div className="rm-row">
-        <CopyablePostcode postcode={listing.postcode ?? listing.outcode} />
+        {/* The listing's own pin as the fallback, not `point` above: that one is resolved *from* the
+            postcode, so where there is no postcode to copy there is no such point either. */}
+        <CopyLocation
+          postcode={listing.postcode ?? listing.outcode}
+          point={
+            listing.latitude !== null && listing.longitude !== null
+              ? { lat: listing.latitude, lon: listing.longitude }
+              : null
+          }
+        />
         <FloorplanChip listing={listing} analysis={analysis} pending={analysisPending} />
         <PhotosChip listing={listing} onOpen={() => setGalleryAt(0)} />
       </div>
@@ -850,6 +860,7 @@ function PreferencesNote({ prefs }: { prefs: HuntPreferences | undefined }) {
   if (
     anyAmenity ||
     prefs.greatRoomMinSqft != null ||
+    prefs.greatRoomFloorSqft != null ||
     prefs.minSqft != null ||
     prefs.targetSqft != null
   ) {
@@ -931,27 +942,6 @@ function CountFact({
     <Fact reading={reading} format={(n) => `${n} ${word}`}>
       <Icon name={icon} size={12} /> {reading.value} {word}
     </Fact>
-  );
-}
-
-function CopyablePostcode({ postcode }: { postcode: string | null }) {
-  const [copied, setCopied] = useState(false);
-  if (!postcode) return <span className="rm-chip rm-dim">No postcode</span>;
-
-  return (
-    <button
-      className="rm-chip rm-chip-action"
-      title="Copy postcode"
-      onClick={() => {
-        void navigator.clipboard.writeText(postcode).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
-        });
-      }}
-    >
-      <Icon name="pin" size={12} /> {postcode}{' '}
-      <Icon name={copied ? 'tick' : 'twin'} size={12} label={copied ? 'Copied' : 'Copy'} />
-    </button>
   );
 }
 

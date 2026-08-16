@@ -17,6 +17,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { EXPECTED_EXTENSION_VERSION } from '../apps/web/src/lib/extension-version';
 import { ROOT, STAMP, ZIP, hashOf, stampNow, type Stamp } from './package-stamp';
+import { checkArchiveIsComplete } from './manifest-paths';
 
 // Advisory on a pull request, fatal everywhere else. On a branch that bumps the extension, the zip
 // and its stamp are legitimately behind — `package.yml` rebuilds and commits them when the change
@@ -74,6 +75,20 @@ const wrong = Object.keys({ ...inZip, ...stamped.contents }).filter(
 );
 check('every file in it is the one that was stamped', wrong.length, 0);
 if (wrong.length > 0) for (const name of wrong.slice(0, 8)) console.log(`         ${name}`);
+
+console.log('\nand Chrome would find everything it names');
+
+// Fatal on a pull request too, unlike everything above it: an archive missing a file its manifest
+// names is not "behind the code", it is broken, and `package.yml` would commit it exactly as it is.
+// This runs there as well, before the push — see `manifest-paths.ts` for why placement was the
+// whole of the finding.
+const named = checkArchiveIsComplete(ZIP, (problem) => {
+  failures++;
+  console.log(`  FAIL ${problem}`);
+});
+if (named.missing.length === 0 && named.refs.length > 0) {
+  console.log(`  ok   all ${named.refs.length} path(s) the manifest names are in it`);
+}
 
 console.log('\nand was built from the code in this commit');
 
