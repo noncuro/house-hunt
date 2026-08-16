@@ -516,7 +516,8 @@ async function resolvePostcode(ask: Extract<Ask, { kind: 'postcode' }>) {
  *
  *  Sized against the wall clock rather than the rate limit: two at a time at roughly a second each
  *  is about a minute of work, comfortably inside a function invocation, and at the every-15-minutes
- *  cadence in `.github/workflows/travel-backfill.yml` it is ~240 legs an hour — a few thousand a
+ *  cadence the pg_cron job runs at (`20260816020000_travel_backfill_cron.sql`) it is ~240 legs an
+ *  hour — a few thousand a
  *  day, which clears any backlog a household hunt can generate within a day of adding a place.
  *  Against TfL's 500-a-minute keyed allowance it is not close to anything. */
 const DEFAULT_BACKFILL_CALLS = 60;

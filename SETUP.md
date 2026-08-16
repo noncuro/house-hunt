@@ -127,6 +127,41 @@ chosen to look at. It is not defensible once calls are charged against somebody'
 `analyse` resolves the caller's JWT, checks they are a member of the project they name, checks the
 project has actually opened the listing, and claims against both caps before it spends anything.
 
+## The travel backfill's two secrets (admins only)
+
+A pg_cron job asks the `travel` function to work the journey backlog down every fifteen minutes.
+The credentials it calls with live in the project's own vault rather than in the repository, so a
+fresh deployment has to put them there once:
+
+```sql
+select vault.create_secret(
+  'https://<project-ref>.supabase.co/functions/v1', 'travel_functions_url',
+  'Where run_travel_backfill posts. No trailing slash.'
+);
+select vault.create_secret('<service-role key>', 'travel_service_role_key',
+  'What authorises the scheduled backfill as the service role.');
+```
+
+Both names are exactly what `run_travel_backfill` looks for; without either it raises rather than
+returning quietly, which is the whole reason this moved out of GitHub Actions — the workflow it
+replaced needed two repository secrets nobody knew were missing and failed 40 runs out of 40 while
+the app showed a column of dashes that looked like a slow backlog.
+
+To check it, on the database connection in AGENTS.md:
+
+```sql
+select * from cron.job where jobname = 'travel-backfill';
+select status, return_message, start_time from cron.job_run_details
+  where jobid = (select jobid from cron.job where jobname = 'travel-backfill')
+  order by start_time desc limit 5;
+select * from travel_backfill_run;              -- what the last run handed pg_net
+select id, status_code, created from net._http_response order by created desc limit 5;
+```
+
+`select run_travel_backfill(10);` runs one small pass by hand. It returns null — and says so as a
+notice — when the previous request has not answered yet, which is how two runs are kept off the same
+gaps.
+
 ## Admin (admins only)
 
 The **Admin** tab appears only for addresses listed in the `admin_email` table, which a deployment
