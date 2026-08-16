@@ -567,24 +567,17 @@ function checkModes(gaps: Gap[]): void {
 
 /** The one credential that means "this is the schedule", and the header it travels in.
  *
- *  It used to be the service-role key in the `Authorization` header, which worked and was too much
- *  authority for the job: that key opens every table in the database, and all the schedule needs to
- *  be allowed to do is ask for `kind: 'backfill'`. Handing it the master key to prove it is itself
- *  meant one secret could not be rotated without the other, and a leak of the thing that spends the
- *  TfL budget was a leak of everything.
+ *  It was the service-role key in `Authorization`, which worked and was the wrong secret: that key
+ *  opens every table in the database, and the only thing the schedule may do with it is ask for
+ *  `kind: 'backfill'`. One secret doing two jobs is also one neither purpose can rotate alone.
  *
- *  Reusing `Authorization` was also what made it fragile in a way that cost an afternoon. Supabase
- *  now issues two kinds of key — the legacy JWT and the newer `sb_secret_` — and the platform
- *  injects whichever is current as `SUPABASE_SERVICE_ROLE_KEY`, so the vault's copy and the
- *  function's copy silently stopped being the same string and every scheduled run came back 401
- *  while a direct call with the other key returned 200. A secret that exists for exactly one purpose
- *  is not tied to the platform's key rotation at all.
+ *  Its own header rather than `Authorization`, because that header and `apikey` belong to the
+ *  gateway, which validates them as project keys and rejects a random string before this function is
+ *  reached. The schedule sends the *publishable* key in both — safe, since every table here is
+ *  `to authenticated` and `anon` holds nothing — and this token is what the function decides on.
  *
- *  Its own header, because `Authorization` and `apikey` are the gateway's and it validates them: a
- *  random token there is rejected by Kong before this function is reached. The schedule sends the
- *  *publishable* key in both — a key that grants nothing on its own, since every table here is
- *  `to authenticated` and `anon` holds nothing — and the token below is what this function actually
- *  decides on. */
+ *  SETUP.md has the rest, including why tying this to the platform's own service key turned out to
+ *  be a way of failing silently. */
 const BACKFILL_TOKEN = Deno.env.get('TRAVEL_BACKFILL_TOKEN');
 const BACKFILL_HEADER = 'x-backfill-token';
 
@@ -718,9 +711,12 @@ serve(async (request) => {
   // person, it holds no session and has no hourly allowance to check, and leaving the order below
   // untouched means an unauthenticated request still gets its 401 before its body is parsed.
   if (isBackfill(request)) {
-    const ask = await body<SystemAsk>(request);
-    if (ask.kind !== 'backfill') {
-      throw new HttpError(400, 'bad-request', `the backfill token asks for backfill, not ${String(ask.kind)}`);
+    // `body` is a cast and nothing more, so a JSON `null` or a bare string would reach the field
+    // access below as a TypeError and leave through the 500 path — a broken request reported as a
+    // broken server, which is the one distinction the reply convention exists to keep.
+    const ask = (await body<SystemAsk>(request)) as SystemAsk | null;
+    if (typeof ask !== 'object' || ask === null || ask.kind !== 'backfill') {
+      throw new HttpError(400, 'bad-request', `the backfill token asks for backfill, not ${String((ask as SystemAsk | null)?.kind)}`);
     }
     return await runBackfill(ask);
   }

@@ -143,21 +143,26 @@ First generate the token and give it to the function, from a shell:
 ```bash
 export TRAVEL_BACKFILL_TOKEN="$(openssl rand -hex 32)"
 supabase secrets set TRAVEL_BACKFILL_TOKEN="$TRAVEL_BACKFILL_TOKEN" --project-ref "$SUPABASE_PROJECT_REF"
-echo "$TRAVEL_BACKFILL_TOKEN"   # paste into the third call below, then forget it
 ```
 
-Then, on the database connection in AGENTS.md:
+Then hand the same value to the vault from that shell, so it goes into the database without ever
+being printed — `psql -v` interpolates it and the token stays out of scrollback and shell history:
 
-```sql
+```bash
+PGPASSWORD="$SUPABASE_DB_PASSWORD" psql -h ... -U "postgres.$SUPABASE_PROJECT_REF" -d postgres \
+  -v tok="$TRAVEL_BACKFILL_TOKEN" -v pub="$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" <<'SQL'
 select vault.create_secret(
   'https://<project-ref>.supabase.co/functions/v1', 'travel_functions_url',
   'Where run_travel_backfill posts. No trailing slash.'
 );
-select vault.create_secret('<publishable key>', 'travel_publishable_key',
+select vault.create_secret(:'pub', 'travel_publishable_key',
   'Gets the scheduled call past the gateway. Grants nothing on its own.');
-select vault.create_secret('<the token you just generated>', 'travel_backfill_token',
+select vault.create_secret(:'tok', 'travel_backfill_token',
   'What tells the travel function this is the schedule. Must match the TRAVEL_BACKFILL_TOKEN secret.');
+SQL
 ```
+
+(The connection line is the one in AGENTS.md.)
 
 All three names are exactly what `run_travel_backfill` looks for; missing any of them it raises and
 says which, rather than returning quietly — the whole reason this moved out of GitHub Actions is
