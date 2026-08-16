@@ -656,9 +656,9 @@ async function checkMap({ page }: Stage): Promise<void> {
   const inView = await page.locator('[data-testid="map-in-view"]').innerText().catch(() => '');
   if (!/\d+ of \d+ in view/.test(inView)) note(`the map says "${inView}" rather than how many are in view`);
 
-  // Clicking a pin docks the flat at the foot and keeps the map. It used to navigate, which threw
-  // away the street you were looking at — so the assertion is both halves: the card arrives, and the
-  // map is still there under it.
+  // Clicking a pin draws the flat in the column beside the map and keeps the map. It used to
+  // navigate, which threw away the street you were looking at — so the assertion is both halves:
+  // the card arrives, and the map is still there beside it.
   const pins = page.locator('.leaflet-interactive');
   if ((await pins.count()) === 0) note('the map drew no pins for a fixture with located flats');
   else {
@@ -666,17 +666,17 @@ async function checkMap({ page }: Stage): Promise<void> {
     const dock = page.locator('[data-testid="map-dock"]');
     await dock
       .waitFor({ timeout: 10_000 })
-      .catch(() => note('clicking a pin docked no card at the foot of the map'));
+      .catch(() => note('clicking a pin drew no card beside the map'));
     if (!(await page.locator('.leaflet-container').isVisible())) {
       note('clicking a pin left the map');
     }
-    // The arrow keys walk the pins, which is the whole reason the dock is a dock rather than a
-    // panel: one flat after another without going back to a list between them.
+    // The arrow keys walk the pins, which is what the column beside the map is for: one flat after
+    // another without going back to a list between them.
     const first = await dock.locator('.flat-address').innerText().catch(() => '');
     await page.keyboard.press('ArrowRight');
     await settle(page);
     const second = await dock.locator('.flat-address').innerText().catch(() => '');
-    if (first !== '' && first === second) note('the right arrow key did not move the dock to another pin');
+    if (first !== '' && first === second) note('the right arrow key did not move the panel to another pin');
   }
 
   await page.screenshot({ path: resolve(SHOTS, 'web-map.png') });
@@ -741,6 +741,33 @@ async function checkTriage({ page }: Stage): Promise<void> {
   const restored = await rows.count();
   if (restored !== fixture.unratedCount) {
     note(`clearing the filters left ${restored}, not the ${fixture.unratedCount} unrated`);
+  }
+
+  // The map as the other drawing of the same pile. The pane on the right is the same pane — the
+  // assertion is that it is still there and still one flat, because a view switch that quietly
+  // empties the half of the screen you are working in reads as the flat having gone.
+  await page.locator('[data-testid="triage-as-map"]').click();
+  await settle(page);
+  if (!(await page.locator('.triage-split-map .leaflet-container').count())) {
+    note('the triage map view drew no map');
+  }
+  if (!(await page.locator('.triage-pane [data-testid="flat-detail"]').count())) {
+    note('switching triage to the map emptied the pane beside it');
+  }
+  const triagePins = page.locator('.triage-split-map .leaflet-interactive');
+  if ((await triagePins.count()) > 1) {
+    const before = await paneAddress(page);
+    await triagePins.last().click();
+    await settle(page);
+    if (before !== '' && (await paneAddress(page)) === before) {
+      note('clicking a pin in triage did not change the flat in the pane');
+    }
+  }
+  await page.screenshot({ path: resolve(SHOTS, 'web-triage-map.png') });
+  await page.locator('[data-testid="triage-as-list"]').click();
+  await settle(page);
+  if (!(await page.locator('[data-testid="triage-pile"]').count())) {
+    note('switching back to the list did not bring the pile back');
   }
 
   // The bulk bar appears when something is ticked, and not before. It used to sit there all session

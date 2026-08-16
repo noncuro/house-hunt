@@ -422,6 +422,7 @@ function App({
         {route.view === 'triage' && (
           <>
             <Triage
+              projectId={project.id}
               entries={unrated}
               places={places}
               hubs={hubs}

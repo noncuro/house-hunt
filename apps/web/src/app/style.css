@@ -805,6 +805,22 @@ code {
   border-radius: var(--r-card);
   box-shadow: var(--shadow-card);
   overflow: hidden;
+  /* The whole card opens the flat, so it has to look like it does — the controls inside it set
+     their own cursor back. */
+  cursor: pointer;
+}
+
+.flat button,
+.flat a,
+.flat input,
+.flat label,
+.flat select {
+  cursor: auto;
+}
+
+.flat button,
+.flat a {
+  cursor: pointer;
 }
 
 /* The verdict as an edge, not as a wash. The stamp inside the card says the word; this is only so a
@@ -1787,20 +1803,30 @@ code {
   color: var(--ink);
 }
 
-.map-dock {
-  position: absolute;
-  left: var(--s2);
-  bottom: var(--s2);
-  z-index: 500;
-  width: min(340px, calc(100% - var(--s4)));
+/* Map on the left, the flat on the right — sixty/forty, which is the split at which the map is
+   still a map and the card is still readable. The card used to float over the map's bottom-left
+   corner, covering the pins nearest the one you had just clicked, which are the ones you are
+   comparing it against. */
+.mapview-split {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr);
+  gap: var(--s3);
+  align-items: stretch;
+}
+
+/* The map's own height comes from `.mapview`; the column beside it matches and scrolls. */
+.map-side {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 200px);
+  min-height: 420px;
+  overflow-y: auto;
   background: var(--raised);
   border: 1px solid var(--line);
   border-radius: var(--r-panel);
-  box-shadow: var(--shadow-pop);
-  overflow: hidden;
 }
 
-.map-dock-bar {
+.map-side-bar {
   display: flex;
   align-items: center;
   gap: var(--s1);
@@ -1808,14 +1834,20 @@ code {
   border-bottom: 1px solid var(--line-3);
 }
 
-.map-dock-hint {
+.map-side-hint {
   flex: 1;
   font-size: 11px;
   text-align: center;
 }
 
-/* The card inside the dock is the grid's card; the dock supplies the frame. */
-.map-dock .flat {
+.map-side-empty {
+  margin: 0;
+  padding: var(--s4);
+  font-size: 12.5px;
+}
+
+/* The card in the column is the grid's card; the column supplies the frame. */
+.map-side .flat {
   border: none;
   border-radius: 0;
   box-shadow: none;
@@ -2025,6 +2057,22 @@ code {
   grid-template-columns: minmax(240px, 330px) minmax(0, 1fr);
   gap: var(--s4);
   align-items: start;
+}
+
+/* The map wants the room the list does not: sixty/forty, where the list is a third of the width
+   because a row is an address and a map is a neighbourhood. */
+.triage-split-map {
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr);
+}
+
+/* On its own the map fills the column it is given; the split above decides how wide that is. */
+.mapview-only {
+  min-width: 0;
+}
+
+.triage-views {
+  display: inline-flex;
+  gap: var(--s1);
 }
 
 .triage-pile {
@@ -2762,9 +2810,16 @@ input[type='checkbox'] {
     height: calc(100vh - 180px);
   }
 
-  .map-dock {
-    right: var(--s2);
-    width: auto;
+  /* Stacked, and the map keeps the top: on a phone the flat is what you scroll to having chosen a
+     pin, not something competing with the pins for width. */
+  .mapview-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .map-side {
+    height: auto;
+    min-height: 0;
+    max-height: 60vh;
   }
 
   /* A bottom sheet: the flat arrives from the edge nearest the thumb, and leaves the screen behind

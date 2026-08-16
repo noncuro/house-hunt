@@ -24,6 +24,7 @@ import type { ShortlistEntry, StoredModel } from '@house-hunt/core/db';
 import { FlatDetail } from '@/components/FlatDetail';
 import { Tick, useRangePick } from '@/components/Tick';
 import { TriageFilters } from '@/components/TriageFilters';
+import { ShortlistMap } from '@/screens/Map';
 import { NEEDS_MODEL, SORT_LABEL, isSurprise, sortForTriage, type SortMode } from '@/lib/score';
 import { useCachedTravel, useRetrain } from '@/lib/queries';
 
@@ -45,6 +46,7 @@ import { useCachedTravel, useRetrain } from '@/lib/queries';
 const CONFIRM_BULK_ABOVE = 5;
 
 export function Triage({
+  projectId,
   entries,
   places,
   hubs,
@@ -66,6 +68,8 @@ export function Triage({
   stageSaving,
   notify,
 }: {
+  /** Which hunt this is, for the map's saved viewport — one map position is one hunt's. */
+  projectId: string;
   /** Everything unrated. The filter narrows it; the sort orders what is left. */
   entries: ShortlistEntry[];
   places: Place[];
@@ -93,6 +97,10 @@ export function Triage({
   const [confirming, setConfirming] = useState<Rating | null>(null);
   const [at, setAt] = useState<string | null>(null);
   const [showBelowFloor, setShowBelowFloor] = useState(false);
+  // The pile as a list or as a map. The list is the default because triage is a queue and a queue
+  // has an order; the map answers the question the order cannot — "which of these are near each
+  // other", which is most of what makes two flats comparable at all.
+  const [asMap, setAsMap] = useState(false);
 
   // The cache and nothing else, for the same reason the compare table reads it that way: a
   // read-through here would fire a journey-planner request for every gap in a pile of two hundred,
@@ -260,6 +268,29 @@ export function Triage({
           </select>
         </label>
 
+        {/* Two drawings of one pile, not two screens: the filter, the sort and the ticks all carry
+            across, and the pane on the right is the same pane. */}
+        <span className="triage-views">
+          <button
+            type="button"
+            className={asMap ? 'key' : 'key key-on'}
+            aria-pressed={!asMap}
+            data-testid="triage-as-list"
+            onClick={() => setAsMap(false)}
+          >
+            <Icon name="places" size={12} /> List
+          </button>
+          <button
+            type="button"
+            className={asMap ? 'key key-on' : 'key'}
+            aria-pressed={asMap}
+            data-testid="triage-as-map"
+            onClick={() => setAsMap(true)}
+          >
+            <Icon name="map" size={12} /> Map
+          </button>
+        </span>
+
         {/* The model and the button that rebuilds it, as one group at the far end of the bar: what
             Rescore acts on is the line beside it, not the filters it used to sit next to. Grouped
             rather than merely adjacent so the pair wraps together on a narrow window.
@@ -379,7 +410,25 @@ export function Triage({
           .
         </p>
       ) : (
-        <div className="triage-split">
+        <div className={asMap ? 'triage-split triage-split-map' : 'triage-split'}>
+          {asMap ? (
+            <ShortlistMap
+              projectId={projectId}
+              entries={shown}
+              places={places}
+              travel={travel.data}
+              hubs={hubs}
+              prefs={prefs}
+              scores={scores}
+              // The map is only the map here: the right-hand column is triage's own pane, and the
+              // selection is triage's — a pin and a row are two ways of saying the same thing.
+              panel="none"
+              selected={current?.rightmoveId ?? null}
+              onSelect={setAt}
+              // Opening a flat *is* choosing it on this screen; there is nowhere further to go.
+              onOpen={setAt}
+            />
+          ) : (
           <ol className="triage-pile" data-testid="triage-pile">
             {shown.map((entry) => (
               <li key={entry.rightmoveId}>
@@ -426,6 +475,7 @@ export function Triage({
               </li>
             ))}
           </ol>
+          )}
 
           <div className="triage-pane">
             {current && (
