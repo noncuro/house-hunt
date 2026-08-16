@@ -138,8 +138,9 @@ function Recheck() {
   if (targets.length === 0) {
     return (
       <p className="dim">
-        Everything in the funnel was last read within {RECHECK_AFTER_DAYS} days, so there is nothing
-        worth reopening yet. Places nobody has liked or staged are not re-checked.
+        Nothing in the funnel is due for a re-check — a reading holds for {RECHECK_AFTER_DAYS} days.
+        Places nobody has liked or staged are left alone, and so is anything archived: a flat you
+        have walked away from is not worth a tab to find out it has gone.
       </p>
     );
   }
@@ -151,9 +152,10 @@ function Recheck() {
           full coverage of a run that skips four hundred flats on purpose. */}
       <p className="dim">
         {targets.length} {targets.length === 1 ? 'place' : 'places'} in the funnel{' '}
-        {targets.length === 1 ? 'has' : 'have'} not been read for {RECHECK_AFTER_DAYS} days or more.
-        Reopening tells us what they cost now and which have gone — the ones you love go first, so
-        stopping halfway costs you the least. Places nobody has liked or staged are left alone.
+        {targets.length === 1 ? 'is' : 'are'} due for a re-check — last read over{' '}
+        {RECHECK_AFTER_DAYS} days ago, or on a date we cannot read. Reopening tells us what they cost
+        now and which have gone — the ones you love go first, so stopping halfway costs you the
+        least. Places nobody has liked or staged are left alone, and so is anything archived.
       </p>
       <div className="sweep-fill">
         {extension.isPending ? null : present ? (
