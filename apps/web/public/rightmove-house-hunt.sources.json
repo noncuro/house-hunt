@@ -1,7 +1,7 @@
 {
-  "version": "0.4.1",
+  "version": "0.4.2",
   "files": {
-    "apps/extension/package.json": "76b51edd744631bcdc54cfc0bbe3465e04c6ee531b12b2ec9c61f61f743e2e23",
+    "apps/extension/package.json": "4632c8668540013cad06bb333cf8bd003785cb020e0fb71498ad14a9a55c9c52",
     "apps/extension/public/icon/128.png": "4cc10de2d8a0d3434361911b368afed44613def5bfab2efaf7e3bb0ab05dca95",
     "apps/extension/public/icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "apps/extension/public/icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
@@ -24,7 +24,7 @@
     "apps/extension/src/lib/extract.ts": "85ea0b1b73fd599022901a8654ad93a5df2202ea21e1728e4d9ccdb1695738fa",
     "apps/extension/src/lib/log.ts": "9c0e064f5e569aed778a4b923552a6db6d6b1cd9c71b54dabf383bb27ece15c1",
     "apps/extension/src/lib/messages.ts": "5f624ef762fca34ff94c69f906b7ab3e8d6fdd588bfa8424d7abf7219254bfb9",
-    "apps/extension/src/lib/score.ts": "caa1455573f5c9ecf67cbd04aea98f9b1fd639eee7fcc1aa158cac52827f564b",
+    "apps/extension/src/lib/score.ts": "e684a26482360515085bd312c25e7c31ac2e87e9d066f0bee50b8df868392a44",
     "apps/extension/src/lib/search-page.ts": "8f7a7adb9146f0849288f4c03addaec5f92111373418fc7099c529020cf57c21",
     "apps/extension/src/lib/ui-host.ts": "2e2683f4ff2ad74f0bae67cda1f4f08065319fd8c2e4235ddcd10514d1f90a13",
     "apps/extension/src/lib/web-app.ts": "1e7f143e24b0c14b5904d07c13781d50b3de328fa2fc7249e32194d477aeed70",
@@ -46,7 +46,7 @@
     "packages/core/src/log.ts": "06ad7dc27687521632590229ea162b7f52694cec2b366c57c929feed2a04cff7",
     "packages/core/src/png.ts": "4fbbdce846a509c93268410b4675b74b10f3634ffffe9f24246e81cf57226ecd",
     "packages/core/src/postcode.ts": "bf0e0827fd7fee4dfb6c848d3f8267bdc1acdeff4affaa6a7a3d4a7fbd5bd89c",
-    "packages/core/src/predict.ts": "04d574543a06e9d76ebdd5d68b14fd7f76c9c7f3a073c08a6a4a024152424b0d",
+    "packages/core/src/predict.ts": "a6133ac6ae9514f4bf2fc737df5b9439eb45920fe0da9818550813c900a1dc61",
     "packages/core/src/recheck.ts": "4c58377aa2b17ce4ecd807eb66f94a97fa026e9829301f9c511e9f19679ef1a6",
     "packages/core/src/search-card.ts": "95b76d7635021eb683a5a33f2c77933dba287177a5b962a4e696516f4a4c3612",
     "packages/core/src/shortlist.ts": "745addf8b32294386d84d8f9eb0f0464db333c32a6d0e4f2a620571dc05e36c7",
@@ -98,11 +98,11 @@
     "tsconfig.base.json": "9342b7b7cce5a4f7aeb9515d8d9ba33a9ce5efe8ce7b41545252cb4d852a223e"
   },
   "contents": {
-    "background.js": "9d22335a9feb51919ca4a5d4194ca84519bf0996b3df7387fb8b355e5047816d",
+    "background.js": "180f5faf8bedfcc959b406d83ed46b03a55e6c54ae4b0b938be926f5b564f550",
     "content-scripts/bridge.js": "75542b112082c435e7233a7a45aab20efa28b3247e98e404c8cf403f7fe96d8b",
     "content-scripts/page-model.js": "0599dfe7d6d1f953a7f5252c7eb79055d30c29df66c32652046035f1d01dc28e",
     "content-scripts/panel.css": "cea609923adb42c881dbc0d8ba91ba92cd539c776f14d5c79898363b447e051a",
-    "content-scripts/panel.js": "9ebee4b8c0a44352d4a14bb45f5ce6d3ddd2969a7774d996d5027b8fc85c3efd",
+    "content-scripts/panel.js": "a30a3b7e4c14bea1da74edfaea481f36d4b5f997440c5eac56123c381a304254",
     "content-scripts/search.css": "415969fdb568c1e5c9192d7c12b932039ff621cfefe23643cb4af15b925998fc",
     "content-scripts/search.js": "ff74fbf48dd0f92062fddcad19e882378270066f768128b7593d8e17d151703d",
     "content-scripts/sweep.css": "fb2791b7fa0e0ae63485bf5cc55b430896eeb7478c4c06c9d57ee4180c396c9b",
@@ -111,6 +111,6 @@
     "icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
     "icon/48.png": "024a0e6ecf9b4aa36acf9468b400d6eabf030e59d24c29c3a4594f0bfe213343",
-    "manifest.json": "a09549f48cdf20e4213cf71fefb697f295e60f2e6ba2d416a858d0880c8f2c37"
+    "manifest.json": "427f75ea28faea502eb33d2807a2f678cc150f4805377127eda8afc49bdbf159"
   }
 }
