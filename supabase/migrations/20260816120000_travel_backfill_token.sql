@@ -67,6 +67,16 @@ begin
     raise exception 'run_travel_backfill: the vault has no % — see SETUP.md', array_to_string(v_missing, ' or ');
   end if;
 
+  -- Serialised against another caller before the row is read, not just against the row.
+  -- `travel_backfill_run` is the record of what was asked for, and the check below is a read of it
+  -- followed by a decision — two runs entering together both see nothing outstanding, both post, and
+  -- both draw the same gaps, because nothing is missing any less until the first has written its
+  -- answers. The upsert afterwards makes the *table* consistent and the duplicate TfL spend has
+  -- already happened. pg_cron will not overlap a job with itself, but a hand-run
+  -- `select run_travel_backfill(...)` beside a scheduled one is exactly the case that costs money.
+  -- Transaction-scoped, so it is released whether this returns or raises.
+  perform pg_advisory_xact_lock(hashtext('travel-backfill'));
+
   select * into v_previous from travel_backfill_run where id = 1;
   if v_previous.request_id is not null
      and v_previous.requested_at > now() - travel_backfill_stalled_after()
