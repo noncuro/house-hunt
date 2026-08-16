@@ -26,7 +26,23 @@ const SHARED = resolve(ROOT, 'supabase/functions/_shared');
  *  the functions share with each other (`http.ts`, `caller.ts`) — those have no original to drift
  *  from and are edited in place, which is why the GENERATED header below is the way to tell which
  *  is which. */
-const FILES = ['analysis.ts', 'png.ts', 'tfl.ts', 'postcode.ts', 'predict.ts', 'log.ts', 'types.ts'];
+//  `facts.ts` joined when the verdict model started reading the hunt's stated preferences: the
+//  amenity predicates that decide whether a flat is missing a must-have, and `resolveSize`, are
+//  facts the panel already renders, and a second copy inside the model is exactly the thing the
+//  one-fact-one-renderer rule exists to prevent. `sweep.ts` and `hubs.ts` come with it because it
+//  imports their types.
+const FILES = [
+  'analysis.ts',
+  'png.ts',
+  'tfl.ts',
+  'postcode.ts',
+  'predict.ts',
+  'facts.ts',
+  'sweep.ts',
+  'hubs.ts',
+  'log.ts',
+  'types.ts',
+];
 
 const HEADER = `// GENERATED — do not edit. Copied from packages/core/src/ by tools/sync-edge-function.ts.
 // Edit the original and run \`pnpm sync:function\`.

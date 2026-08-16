@@ -8,7 +8,15 @@
  *  panel budgets — so it runs here in the content script rather than round-tripping the worker. The
  *  only cost is fetching the model once (`model:get`), which the panel does alongside its hubs.
  */
-import { score as scoreModel, type Analysis, type Hub, type Listing, type Model, type PredictInput } from '@house-hunt/core';
+import {
+  score as scoreModel,
+  type Analysis,
+  type Hub,
+  type HuntPreferences,
+  type Listing,
+  type Model,
+  type PredictInput,
+} from '@house-hunt/core';
 
 /** Nearest station distance in miles (Rightmove's unit; a stray km is converted, not trusted). */
 function nearestStationMiles(listing: Listing): number | null {
@@ -28,16 +36,15 @@ export function predictInputFromListing(
     price: listing.price,
     bedrooms: listing.bedrooms,
     bathrooms: listing.bathrooms,
-    floorAreaSqft: listing.floorArea?.sqft ?? null,
+    // The listed area and where it came from, not a resolved number: `featuresFor` runs it through
+    // `resolveSize` against the floorplan, so both surfaces get the size the panel already shows.
+    listedSqft: listing.floorArea?.sqft ?? null,
+    listedSource: listing.floorArea?.source ?? null,
     lat: point?.lat ?? listing.latitude,
     lon: point?.lon ?? listing.longitude,
     nearestStationMiles: nearestStationMiles(listing),
     furnishType: listing.furnishType,
-    naturalLight: analysis?.naturalLight ?? null,
-    hasOutdoorSpace: analysis?.hasOutdoorSpace ?? null,
-    hasDishwasher: analysis?.hasDishwasher ?? null,
-    laundry: analysis?.laundry ?? null,
-    hasBathtub: analysis?.hasBathtub ?? null,
+    analysis,
   };
 }
 
@@ -47,6 +54,8 @@ export function scoreListing(
   analysis: Analysis | null,
   hubs: Hub[],
   point: { lat: number; lon: number } | null,
+  /** What the hunt said it wants — the model was fitted with these and scores against them. */
+  prefs?: HuntPreferences,
 ): number {
-  return scoreModel(model, predictInputFromListing(listing, analysis, point), hubs);
+  return scoreModel(model, predictInputFromListing(listing, analysis, point), hubs, prefs);
 }

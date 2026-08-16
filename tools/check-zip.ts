@@ -18,11 +18,24 @@ import { relative, resolve } from 'node:path';
 import { EXPECTED_EXTENSION_VERSION } from '../apps/web/src/lib/extension-version';
 import { ROOT, STAMP, ZIP, hashOf, stampNow, type Stamp } from './package-stamp';
 
+// Advisory on a pull request, fatal everywhere else. On a branch that bumps the extension, the zip
+// and its stamp are legitimately behind — `package.yml` rebuilds and commits them when the change
+// reaches main, which is the whole point of having a workflow do it — so failing here would block
+// every extension PR on a step the robot is about to take anyway. Locally and on main it is a real
+// failure: there is nothing else coming.
+const advisory = process.env.GITHUB_EVENT_NAME === 'pull_request';
+
 let failures = 0;
-function check(what: string, got: unknown, want: unknown): void {
+/** `stale` marks a check that a pending repackage will fix by itself, which is the whole set of
+ *  them that compare the archive to the code beside it. A check that a repackage would NOT fix —
+ *  the two hand-maintained version strings disagreeing with each other — stays fatal everywhere,
+ *  because that one is a forgotten bump and no workflow is coming to fix it. */
+function check(what: string, got: unknown, want: unknown, stale = false): void {
   const ok = got === want;
-  if (!ok) failures++;
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${what}${ok ? '' : ` — got ${got}, want ${want}`}`);
+  if (!ok && !(stale && advisory)) failures++;
+  const how = ok ? 'ok  ' : stale && advisory ? 'note' : 'FAIL';
+  const why = stale && advisory ? ' (main will rebuild it on merge)' : '';
+  console.log(`  ${how} ${what}${ok ? '' : ` — got ${got}, want ${want}${why}`}`);
 }
 
 function missing(path: string): never {
@@ -36,7 +49,7 @@ if (!existsSync(ZIP)) missing(ZIP);
 if (!existsSync(STAMP)) missing(STAMP);
 
 const manifest = JSON.parse(execFileSync('unzip', ['-p', ZIP, 'manifest.json'], { encoding: 'utf8' }));
-check('carries the version the website expects', manifest.version, EXPECTED_EXTENSION_VERSION);
+check('carries the version the website expects', manifest.version, EXPECTED_EXTENSION_VERSION, true);
 
 // The same number in the same place the bump rule names, so a mismatch says which of the copies was
 // forgotten rather than only that they disagree.
@@ -44,7 +57,7 @@ const pkg = JSON.parse(readFileSync(resolve(ROOT, 'apps/extension/package.json')
 check("and the extension's own package.json agrees", pkg.version, EXPECTED_EXTENSION_VERSION);
 
 const stamped: Stamp = JSON.parse(readFileSync(STAMP, 'utf8'));
-check('the stamp is of the same version', stamped.version, EXPECTED_EXTENSION_VERSION);
+check('the stamp is of the same version', stamped.version, EXPECTED_EXTENSION_VERSION, true);
 
 console.log('\nand the stamp is of this archive');
 
@@ -71,12 +84,6 @@ const changed = Object.keys(now.files)
   .filter((path) => now.files[path] !== stamped.files[path])
   .map((path) => (path in stamped.files ? path : `${path} (new)`))
   .concat(Object.keys(stamped.files).filter((path) => !(path in now.files)).map((p) => `${p} (deleted)`));
-
-// Advisory on a pull request, fatal everywhere else. On a branch the zip is legitimately behind —
-// `package.yml` rebuilds and commits it when the change reaches main, which is the whole point of
-// having a workflow do it — so failing here would block every extension PR on a step the robot is
-// about to take anyway. Locally and on main it is a real failure: there is nothing else coming.
-const advisory = process.env.GITHUB_EVENT_NAME === 'pull_request';
 
 if (changed.length > 0) {
   if (!advisory) failures++;

@@ -24,6 +24,7 @@ import {
   type LabelMode,
   type PredictInput,
 } from '../_shared/predict.ts';
+import type { HuntPreferences } from '../_shared/facts.ts';
 
 interface VerdictRow {
   rightmove_id: string;
@@ -36,6 +37,7 @@ interface PropertyRow {
   bedrooms: number | null;
   bathrooms: number | null;
   floor_area_sqft: number | null;
+  floor_area_source: 'sizings' | 'description' | null;
   furnish_type: string | null;
   latitude: number | null;
   longitude: number | null;
@@ -43,13 +45,23 @@ interface PropertyRow {
   postcode_lon: number | null;
   nearest_stations: Array<{ distance?: number; unit?: string }>;
 }
+/** The analysis columns the feature builder reads, in the camelCase shape `Analysis` uses — the
+ *  amenity predicates in `facts.ts` are the same ones the panel's flags run, so they take that
+ *  shape rather than the row's. */
 interface AnalysisRow {
   rightmove_id: string;
   natural_light: 'low' | 'medium' | 'high' | null;
   has_outdoor_space: boolean | null;
+  outdoor_sqft: number | null;
   has_dishwasher: boolean | null;
   laundry: 'in-unit' | 'in-building' | 'none' | null;
   has_bathtub: boolean | null;
+  biggest_room_sqft: number | null;
+  floorplan_sqft: number | null;
+  floorplan_legible: boolean | null;
+  is_house_share: boolean | null;
+  sleeping_separation: 'separate' | 'practically-separate' | 'same-space' | null;
+  utilities_included: boolean | null;
 }
 
 /** Smallest nearest-station distance, in miles. Rightmove gives miles, but a stray kilometre unit
@@ -61,22 +73,39 @@ function nearestStationMiles(stations: PropertyRow['nearest_stations']): number 
   return miles.length ? Math.min(...miles) : null;
 }
 
+/** The analysis row as the feature builder wants it. Only the fields the builder and the amenity
+ *  predicates read — a partial `Analysis`, which is all `featuresFor` asks for. */
+function analysisOf(a: AnalysisRow | undefined): PredictInput['analysis'] {
+  if (!a) return null;
+  return {
+    naturalLight: a.natural_light,
+    hasOutdoorSpace: a.has_outdoor_space,
+    outdoorSqft: a.outdoor_sqft,
+    hasDishwasher: a.has_dishwasher,
+    laundry: a.laundry,
+    hasBathtub: a.has_bathtub,
+    biggestRoomSqft: a.biggest_room_sqft,
+    floorplanSqft: a.floorplan_sqft,
+    floorplanLegible: a.floorplan_legible,
+    isHouseShare: a.is_house_share,
+    sleepingSeparation: a.sleeping_separation,
+    utilitiesIncluded: a.utilities_included,
+  } as PredictInput['analysis'];
+}
+
 function inputOf(p: PropertyRow, a: AnalysisRow | undefined): PredictInput {
   return {
     price: p.price,
     bedrooms: p.bedrooms,
     bathrooms: p.bathrooms,
-    floorAreaSqft: p.floor_area_sqft,
+    listedSqft: p.floor_area_sqft,
+    listedSource: p.floor_area_source,
     // Prefer the postcode point (design: route from the postcode, not the pin); fall back to the pin.
     lat: p.postcode_lat ?? p.latitude,
     lon: p.postcode_lon ?? p.longitude,
     nearestStationMiles: nearestStationMiles(p.nearest_stations),
     furnishType: p.furnish_type,
-    naturalLight: a?.natural_light ?? null,
-    hasOutdoorSpace: a?.has_outdoor_space ?? null,
-    hasDishwasher: a?.has_dishwasher ?? null,
-    laundry: a?.laundry ?? null,
-    hasBathtub: a?.has_bathtub ?? null,
+    analysis: analysisOf(a),
   };
 }
 
@@ -99,7 +128,7 @@ serve(async (request): Promise<Result> => {
   // is positional: the id list below seeds the property fetch, and the fit deals rows into folds by
   // position. `updated_at` leads so that "the last rating seen" is a definition rather than an
   // accident, in case the one-row-per-flat key below ever widens again.
-  const [verdicts, exclusions, hubs] = await Promise.all([
+  const [verdicts, exclusions, hubs, settings] = await Promise.all([
     rest<VerdictRow[]>(
       `verdict?project_id=eq.${eq(projectId)}&select=rightmove_id,rating,updated_at&order=updated_at.asc,rightmove_id.asc`,
     ),
@@ -109,7 +138,15 @@ serve(async (request): Promise<Result> => {
     // the shortlist already fixed a listing against — so the feature the model is scored on is the
     // one it was trained on.
     rest<HubPoint[]>(`place?project_id=eq.${eq(projectId)}&select=lat,lon`),
+    // What the hunt said it wants. The model is fitted with these twice over — as the preference
+    // columns and as the centre its weights are shrunk toward — so a hunt that has never opened
+    // the page trains the same zero-mean model it always did, and one that has states its taste
+    // before its verdicts are numerous enough to show it.
+    rest<Array<{ preferences: HuntPreferences | null }>>(
+      `project_setting?project_id=eq.${eq(projectId)}&select=preferences`,
+    ),
   ]);
+  const prefs = settings[0]?.preferences ?? undefined;
 
   const excluded = new Set(exclusions.map((e) => e.rightmove_id));
   // `verdict` is keyed (project_id, rightmove_id) since the multi-tenant migration dropped `person`,
@@ -136,10 +173,10 @@ serve(async (request): Promise<Result> => {
     // stratified folds deal rows out by position, so an unordered read would cross-validate a
     // different partition each time and hand back a different λ on unchanged data.
     rest<PropertyRow[]>(
-      `property?rightmove_id=in.(${idList})&select=rightmove_id,price,bedrooms,bathrooms,floor_area_sqft,furnish_type,latitude,longitude,postcode_lat,postcode_lon,nearest_stations&order=rightmove_id.asc`,
+      `property?rightmove_id=in.(${idList})&select=rightmove_id,price,bedrooms,bathrooms,floor_area_sqft,floor_area_source,furnish_type,latitude,longitude,postcode_lat,postcode_lon,nearest_stations&order=rightmove_id.asc`,
     ),
     rest<AnalysisRow[]>(
-      `property_analysis?rightmove_id=in.(${idList})&select=rightmove_id,natural_light,has_outdoor_space,has_dishwasher,laundry,has_bathtub`,
+      `property_analysis?rightmove_id=in.(${idList})&select=rightmove_id,natural_light,has_outdoor_space,outdoor_sqft,has_dishwasher,laundry,has_bathtub,biggest_room_sqft,floorplan_sqft,floorplan_legible,is_house_share,sleeping_separation,utilities_included`,
     ),
   ]);
 
@@ -148,7 +185,7 @@ serve(async (request): Promise<Result> => {
   for (const p of properties) {
     const label = labelFor(rating.get(p.rightmove_id) as 'no' | 'maybe' | 'love', labelMode);
     if (label == null) continue; // a `maybe` dropped under love-vs-no
-    examples.push({ raw: featuresFor(inputOf(p, analysisById.get(p.rightmove_id)), hubs), label });
+    examples.push({ raw: featuresFor(inputOf(p, analysisById.get(p.rightmove_id)), hubs, prefs), label });
   }
 
   const model = fitProjectModel(examples, labelMode);

@@ -13,7 +13,7 @@
  *  point, so the failure of forgetting to bump this is a false "up to date", never a false alarm —
  *  which is why the comparison below only ever flags an install that is *behind* this, not one ahead
  *  (a dev build loaded unpacked is usually ahead, and must not nag). */
-export const EXPECTED_EXTENSION_VERSION = '0.4.1';
+export const EXPECTED_EXTENSION_VERSION = '0.4.2';
 
 /** Is the installed version behind what we ship? `null` (an extension too old to report its version
  *  at all — it predates the `hello` version field) counts as behind. A version equal to or ahead of
