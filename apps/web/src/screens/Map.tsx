@@ -216,12 +216,19 @@ export function ShortlistMap({
     // on the first run of a mount that restored where you were, which is the same fight one step
     // removed.
     const restored = firstRun.current && lastView.has(projectId);
-    firstRun.current = false;
     if (restored) {
       // Where you left it, deliberately unfitted — and nothing below should undo that.
       fitted.current = true;
+      // `firstRun` survives a run that had nothing to draw. It means "no run has yet had any pins",
+      // not "the effect has run once" — and the difference is the whole of this branch: with the
+      // flats still loading, clearing it here would make the *next* run, the one that finally has
+      // coordinates, an ordinary one, which fits and throws away the view that was restored. That
+      // predates this change and is easiest to meet by switching to the map, away, and back while
+      // a refetch is in flight.
+      if (located.length > 0) firstRun.current = false;
       return;
     }
+    firstRun.current = false;
     if (fit(instance, located)) fitted.current = true;
   }, [located, projectId]);
 
@@ -245,7 +252,11 @@ export function ShortlistMap({
       const instance = map.current;
       if (!instance) return;
       instance.invalidateSize();
-      if (!fitted.current) fit(instance, latest.current);
+      // The result is recorded, not discarded. Without this `fitted` stays false after a retry that
+      // worked, so the *next* resize — the pane beside the map opening, the window changing —
+      // frames the pins again over wherever the reader had panned to. A repair that runs once is a
+      // repair; one that runs on every resize is the map refusing to stay where it is put.
+      if (!fitted.current && fit(instance, latest.current)) fitted.current = true;
     });
     observer.observe(element);
     return () => observer.disconnect();
