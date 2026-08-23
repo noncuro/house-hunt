@@ -84,6 +84,30 @@ function cspFor(phase: string): string {
   ].join('; ');
 }
 
+/** The service worker gets its own, and needs one.
+ *
+ *  A worker inherits the CSP of the response that served its script, and that policy governs the
+ *  worker's own `fetch()` calls rather than the page's. `public/sw.js` fetches listing photographs
+ *  from Rightmove's CDN so they are still there with no signal — which the policy above forbids,
+ *  because its `connect-src` is `'self'` plus Supabase and nothing else. The symptom would have been
+ *  the quietest kind: every photograph loading perfectly online, from the `<img>` tags the page's
+ *  own `img-src` allows, and none of them in the cache when the connection went.
+ *
+ *  So the two are separated rather than the page's being widened. Nothing about the argument above —
+ *  that a script on this origin can read the credentials handed to the extension — applies to a
+ *  worker, which has no DOM, receives no `postMessage` from the page's own handoff, and runs only
+ *  the one script we shipped it. `script-src 'self'` still says that last part.
+ */
+const WORKER_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  // The photographs, and only the photographs. `img-src` on the page names the same origins for
+  // the same files — this is the worker being allowed to *fetch* what the page is allowed to draw.
+  `connect-src 'self' ${SUPABASE_ORIGIN} https://media.rightmove.co.uk https://*.rightmove.co.uk`.trim(),
+  "object-src 'none'",
+  "base-uri 'self'",
+].join('; ');
+
 const nextConfig = (phase: string): NextConfig => ({
   // The packages are TypeScript source rather than a build, so Next compiles them like app code.
   transpilePackages: ['@house-hunt/core', '@house-hunt/ui'],
@@ -92,16 +116,26 @@ const nextConfig = (phase: string): NextConfig => ({
   outputFileTracingRoot: fileURLToPath(new URL('../../', import.meta.url)),
   reactStrictMode: true,
   async headers() {
+    // The three that are true of everything served here, whatever policy goes with them.
+    const common = [
+      { key: 'Referrer-Policy', value: 'same-origin' },
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      // A private house hunt has no business in a search index.
+      { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+    ];
+
     return [
       {
-        source: '/:path*',
-        headers: [
-          { key: 'Content-Security-Policy', value: cspFor(phase) },
-          { key: 'Referrer-Policy', value: 'same-origin' },
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          // A private house hunt has no business in a search index.
-          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
-        ],
+        // The worker, and nothing else — see `WORKER_CSP`. It is listed first and the rule below
+        // excludes it by name, because two matching rules would send two `Content-Security-Policy`
+        // headers, and a browser given two enforces both: the intersection, which is the page's
+        // policy again and the exact thing this rule exists to avoid.
+        source: '/sw.js',
+        headers: [{ key: 'Content-Security-Policy', value: WORKER_CSP }, ...common],
+      },
+      {
+        source: '/:path((?!sw\\.js$).*)',
+        headers: [{ key: 'Content-Security-Policy', value: cspFor(phase) }, ...common],
       },
     ];
   },

@@ -25,6 +25,8 @@ import {
 import type { AuthState, ProjectSummary, SessionUser } from '@house-hunt/core';
 import { Shell, type Destination } from '@/components/Shell';
 import { FlatPanel } from '@/components/FlatPanel';
+import { Offline } from '@/components/Offline';
+import { AddFlat } from '@/screens/AddFlat';
 import { Admin } from '@/screens/Admin';
 import { ExtensionNotice } from '@/screens/Extension';
 import { FirstRun } from '@/screens/FirstRun';
@@ -37,6 +39,8 @@ import { Sweep } from '@/screens/Sweep';
 import { Triage } from '@/screens/Triage';
 import { DEFAULT_LENS, forBoard, lensMatches, type Lens } from '@/lib/lens';
 import { scoreEntries, type SortMode } from '@/lib/score';
+import { warmPhotos } from '@/lib/offline';
+import { sharedLink, withoutSharedLink } from '@/lib/shared-link';
 import { useStoredState } from '@/lib/stored';
 import { useRoute } from '@/lib/view';
 import {
@@ -79,7 +83,13 @@ export default function Page() {
 
   // The database itself is unreachable — a different thing from being signed out, and it must not be
   // dressed up as one: offering a sign-in form that cannot possibly work is the worst answer.
-  if (auth.isError) {
+  //
+  // `!auth.data` as well as `isError`, because a re-read that failed is not the same as never
+  // having read. On a phone with no signal this query fails on every load while a perfectly good
+  // copy of who-you-are sits in IndexedDB (`lib/persist.ts`), and the error branch would throw it
+  // away to print a network message over an app that is about to work. With data in hand the shell
+  // draws, and the offline notice above it says how old what you are looking at is.
+  if (auth.isError && !auth.data) {
     return (
       <div className="wrap">
         <div className="error">{(auth.error as Error).message}</div>
@@ -162,6 +172,25 @@ function App({
   // The flat opened over whatever screen you are on. A panel rather than a destination: opening one
   // from the map used to be navigation, which threw the map away, and coming back re-fitted it.
   const [open, setOpen] = useState<string | null>(null);
+
+  /** The add-a-flat dialog: `null` when shut, otherwise the address it opens with — `''` for the
+   *  header button, and a real one when the app was opened *by* a share.
+   *
+   *  A share target is a navigation, so the shared address arrives in the query string. It is read
+   *  once, on mount, and taken straight back out of the address bar: leaving it there would re-open
+   *  this dialog on every reload, including after the flat had been added, and a reload must not
+   *  repeat the action that created the page. */
+  const [adding, setAdding] = useState<string | null>(null);
+  useEffect(() => {
+    const link = sharedLink(window.location.search);
+    if (link === null) return;
+    setAdding(link);
+    // Synchronously, which is what makes this safe to run twice — as StrictMode does in
+    // development. The second pass reads an address bar this one has already cleaned and finds
+    // nothing, so no guard is needed beyond the strip itself.
+    const kept = withoutSharedLink(window.location.search);
+    window.history.replaceState(null, '', `${kept || window.location.pathname}${window.location.hash}`);
+  }, []);
 
   // Held here rather than inside Triage so that going to the map and back does not throw away the
   // narrowing you set up to work through — and stored, so neither does closing the tab. Per hunt: a
@@ -298,6 +327,13 @@ function App({
         : current,
     );
 
+  // Once the list is in hand, hand its photographs to the service worker to keep — but only when
+  // this is an installed app, which is where being underground with it is a thing that happens.
+  // See `lib/offline.ts`; a tab does nothing here.
+  useEffect(() => {
+    if (all) warmPhotos(all);
+  }, [all]);
+
   /** `…/#card-88023648` opens on that flat — the thing a `chrome-extension://` address could never
    *  do, and the reason for most of this change. You can send one of these to the other laptop, or
    *  keep one in a message thread, and it still means something a week later.
@@ -336,7 +372,10 @@ function App({
 
   const openEntry = open ? ((all ?? []).find((e) => e.rightmoveId === open) ?? null) : null;
 
-  if (shortlist.isError) {
+  // Only when there is nothing to draw. A refresh that failed over a list already on screen is what
+  // the offline notice is for — replacing the hunt with a network message is throwing away the copy
+  // this device deliberately keeps.
+  if (shortlist.isError && !all) {
     // A read that failed because the session ended, or because the project went away, is not this
     // view's error to report: the shell is already re-reading who is signed in and is about to
     // replace the whole page. Printing "sign in" here would flash that sentence with no field
@@ -369,12 +408,14 @@ function App({
       destinations={destinations}
       view={route.view}
       setView={(view) => go({ view })}
+      onAdd={() => setAdding('')}
       notify={push}
     >
-      {/* Above every screen rather than inside one: a budget and a half-installed extension are facts
-          about the setup, not about the list you happen to be looking at. Both render nothing at all
-          in the usual case. */}
+      {/* Above every screen rather than inside one: no connection, a budget and a half-installed
+          extension are facts about the setup, not about the list you happen to be looking at. All
+          three render nothing at all in the usual case. */}
       <div className="notices">
+        <Offline lastRead={shortlist.dataUpdatedAt} />
         <SpendWarning summary={spendQuery.data ?? null} />
         <ExtensionNotice email={user.email} onInstall={() => go({ view: 'install' })} />
       </div>
@@ -383,7 +424,7 @@ function App({
         {/* A hunt with nothing in it is not an empty shortlist, it is a hunt that has not been set up
             — and the three steps are the answer, not four counts reading zero. */}
         {route.view === 'places' && all.length === 0 ? (
-          <FirstRun places={places} setView={(view) => go({ view })} />
+          <FirstRun places={places} setView={(view) => go({ view })} onAdd={() => setAdding('')} />
         ) : route.view === 'places' ? (
           <Places
             projectId={project.id}
@@ -465,6 +506,24 @@ function App({
           <Settings person={user.displayName} setPerson={setPerson} notify={push} />
         )}
       </main>
+
+      {/* Adding a flat by its address: the header button, and the app's own share target. Over
+          whatever screen you are on, like the flat panel below, because it is an action rather than
+          a place — and on a phone it is the only way into the shortlist there is. */}
+      {adding !== null && (
+        <AddFlat
+          initialUrl={adding}
+          onClose={() => setAdding(null)}
+          onAdded={(rightmoveId, displayAddress) => {
+            setAdding(null);
+            setOpen(rightmoveId);
+            // Said as well as shown. Opening the flat is the confirmation in the usual case, but a
+            // read that landed after the dialog shut would otherwise close onto the list with
+            // nothing to say it had worked.
+            push(`Added ${displayAddress}.`);
+          }}
+        />
+      )}
 
       {/* One flat, over whatever you were doing, from wherever you asked. The same renderer for all
           of them — a card on Places, a pin on the map, a row in the table, a link somebody sent. */}

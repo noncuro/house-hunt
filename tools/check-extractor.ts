@@ -7,7 +7,7 @@
  *    pnpm fixture 88023648
  *    pnpm check:extractor .fixtures/88023648.html
  */
-import { ListingWithdrawn } from '../apps/extension/src/lib/extract';
+import { ListingWithdrawn } from '../packages/core/src/listing';
 import { listingFromHtml } from './read-listing';
 
 const path = process.argv[2];

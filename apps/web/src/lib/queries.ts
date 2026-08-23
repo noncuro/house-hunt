@@ -41,6 +41,8 @@ import type {
   Verdict,
 } from '@house-hunt/core';
 import { endSession } from './session';
+import { forget } from './persist';
+import { canHoldExtension } from './platform';
 import { helloExtension, signOutExtension, type ExtensionState } from './bridge';
 
 /** Data plumbing for the house hunt.
@@ -113,11 +115,16 @@ export function useShortlist() {
  *
  *  One key, so both surfaces read one answer and cannot contradict each other. Never stale on a
  *  timer: an extension does not install itself while you are reading, and re-probing on window focus
- *  would make the banner blink on every tab change. */
+ *  would make the banner blink on every tab change.
+ *
+ *  Where an extension cannot exist, the answer is `absent` without asking. Silence is how this
+ *  handshake says "not installed", so on a phone it would spend two full seconds — a deadline sized
+ *  for waking a service worker that is not there — waiting out a reply that cannot come, on every
+ *  page load, to arrive at the answer already known. */
 export function useExtension() {
   return useQuery<ExtensionState>({
     queryKey: keys.extension,
-    queryFn: helloExtension,
+    queryFn: () => (canHoldExtension() ? helloExtension() : Promise.resolve({ status: 'absent' as const })),
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     // A handshake that answers "absent" is an answer, not a failure — there is nothing to retry.
@@ -253,9 +260,17 @@ export function useSignOut() {
     // The extension goes first, and its failure is not allowed to stop this one. Signing out is
     // something you do because you want to be signed out; a bridge that did not answer must not
     // leave you signed in here on the strength of it.
+    //
+    // Skipped entirely where no extension can exist. There is nothing to sign out, and the bridge
+    // does not fail fast — it waits out a five-second deadline written for a sleeping service
+    // worker — so a phone would sit on "Signing out…" for five seconds every time.
     mutationFn: async () => {
-      await signOutExtension().catch(() => null);
+      if (canHoldExtension()) await signOutExtension().catch(() => null);
       await endSession();
+      // And the copy of the hunt on this device. Leaving it would have the next person to open this
+      // browser meet somebody else's shortlist, restored before the sign-in screen has decided
+      // anything — see `lib/persist.ts`.
+      await forget();
     },
     onSuccess() {
       client.setQueryData<AuthState>(keys.auth, { status: 'signed-out' });

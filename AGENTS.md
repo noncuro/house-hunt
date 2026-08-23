@@ -6,8 +6,10 @@ over the photos for what the listing won't say. Multi-tenant, invite-only, email
 people). In use on real listings.
 
 Two apps in one pnpm workspace: `apps/web` (Next.js — shortlist, compare, map, settings, sign-in,
-project/admin) and `apps/extension` (thin Chrome MV3 — the listing panel, search badges, sweep
-panel, all only on Rightmove pages). Shared logic in `packages/core` and `packages/ui`. Config is
+project/admin, and **the whole product**: it is installable, works offline, and adds flats from a
+pasted or shared address) and `apps/extension` (thin Chrome MV3 — the listing panel, search badges,
+sweep panel, all only on Rightmove pages, and **one of two ways in** rather than the way in: no
+browser on a phone loads it, so nothing may be reachable only through it). Shared logic in `packages/core` and `packages/ui`. Config is
 the workspace-root `.env` (see `.env.example`). **`RESEARCH.md`** is the source of truth for *why*;
 this file is *how it's built and how to check you haven't broken it*.
 
@@ -20,6 +22,7 @@ pnpm dev:web        # website: next dev on http://localhost:3100
 pnpm build          # extension -> apps/extension/.output/chrome-mv3 ("Load unpacked")
 pnpm build:web      # website: next build
 pnpm compile        # typecheck both apps
+pnpm icons          # redraw the website's app icons (only when the mark itself changes)
 ```
 
 The extension bundles only `WXT_*` vars, the website only `NEXT_PUBLIC_*`; both point at the same
@@ -72,6 +75,11 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   own CDN URLs, which is why `.fixtures/` is gitignored and why every harness answers image
   requests from memory rather than saving them.
 
+  The service worker's photo cache is not an exception to that and must not become one. It is the
+  reader's own browser holding a copy of a file it already fetched, on the reader's own device,
+  which is what an HTTP cache is — nothing is copied to our origin and nothing is served to anybody
+  else. The line is *whose server the bytes come off*, and it has not moved.
+
 ## Architecture map
 
 | Piece | Job |
@@ -82,10 +90,14 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 | ext `entrypoints/background.ts` | All network + the only Supabase client in the extension |
 | web `components/Shell.tsx` | The one header row, the hunt switcher, the account menu, the phone's tab bar |
 | web `screens/Places.tsx` | Everything the hunt has looked at, drawn four ways — Cards, Table (`Compare.tsx`), Board, Map — under one filter (`lib/lens.ts`) |
-| web `screens/*.tsx` | Triage, HeadToHead, FirstRun, Settings, Sweep, SignIn, Project, Install, Admin |
+| web `screens/*.tsx` | Triage, HeadToHead, FirstRun, Settings, Sweep, SignIn, Project, Install, Admin, AddFlat |
+| web `screens/AddFlat.tsx` | A flat from a pasted or shared address — the phone's only way in, and the extension's counterpart |
 | web `components/Flat*.tsx` | One flat: the card in a grid, the whole of it (`FlatDetail`), and the panel it opens in over any screen |
-| `packages/core/` | Facts, hubs, stage (the funnel), sweep, travel, analysis, db, bridge contract |
-| `supabase/functions/` | `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `invite`, `resolve-location`, `password` |
+| web `lib/platform.ts` | Whether an extension can exist here at all, and whether this is an installed app. Hooks, not calls, in a render — see the note in the file |
+| web `lib/persist.ts` + `public/sw.js` | The offline half: the hunt in IndexedDB, the shell/build/photographs in the Cache API |
+| web `public/manifest.webmanifest` | What makes it installable, and the share target Rightmove shares into. Icons are drawn by `pnpm icons` |
+| `packages/core/` | Facts, hubs, listing extraction, stage (the funnel), sweep, travel, analysis, db, bridge contract |
+| `supabase/functions/` | `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `listing` (one listing page, read server-side), `invite`, `resolve-location`, `password` |
 
 ## Decisions an agent might otherwise "fix"
 
@@ -128,6 +140,35 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   Two controls narrowed one list, and the flats they hid had to go somewhere the eye could find them
   again; Archived is where somebody already looks for a flat that is no longer in play, so the
   question "where did it go" stopped needing an answer.
+- **A phone is a first surface, not a narrow window, and nothing may be reachable only through the
+  extension.** No browser on a phone loads a Chrome extension — Chrome for Android loads none, and
+  iOS loads no Chrome extension at all — so every sentence offering the install is, there, an
+  instruction that cannot be followed. `lib/platform.ts` answers that question once and the notice,
+  the menu item, the first-run step and the Install screen all ask it; `useExtension` and the
+  sign-out bridge skip their deadlines rather than waiting out a reply that cannot come. The rule
+  that follows is the one to keep: a new capability that only the panel can reach has cut the phone
+  out of the product, and adding a flat was exactly that until the `listing` function existed.
+
+- **Adding a flat by address is a server-side read of one page, and the no-crawl rule is not
+  relaxed for it.** `functions/listing` fetches a single listing, for the person who has just pasted
+  or shared that exact address, rate-limited per user, and rebuilds the URL from an id so nothing a
+  caller sends can steer it elsewhere. It decodes with `packages/core/src/listing.ts` — the same
+  module the content script uses, which is why that module moved out of the extension: one page
+  shape read two ways is a fork, and the day Rightmove renames a field the copy that did not learn
+  about it returns a flat with no postcode rather than an error. Read the block at the top of
+  `resolve-location/index.ts`; the argument there is the whole permission this has. What is
+  forbidden, still, is turning a *list* into fetches — a sweep's sightings are opened in front of
+  the reader by the paced opener, and must never be handed to this.
+
+- **The offline copy is restored stale, and says so.** `lib/persist.ts` puts the last snapshot back
+  before any query mounts (React Query takes starting data on the first render and never again), and
+  always with the timestamp it was written at — so it refetches the moment there is a network, and
+  `components/Offline.tsx` can say how old what you are looking at is. That sentence is the point
+  rather than a nicety: a verdict is *shared*, so a cached one drawn as current is this app being
+  confidently wrong about the one thing it exists to get right. Spend, the admin tables and the
+  invite list are deliberately not kept — anything that is money or permission is read fresh or not
+  shown.
+
 - **Driving times deliberately throw** (TfL can't do them) rather than mislabel a transit number.
 - **The travel backlog is derived, not enqueued.** Nothing inserts a job when a place is added:
   `travel_gaps` computes what is missing from a project's properties, its places and the modes we
@@ -167,7 +208,8 @@ pnpm check          # oxlint + tsc — run on every change
 pnpm check:all      # + every pure-function check (seconds)
 ```
 
-Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `hubs`, `stage`, `shortlist`, `sweep`, `travel`,
+Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `listing` (which URLs are a
+listing, and what a share hands over), `hubs`, `stage`, `shortlist`, `sweep`, `travel`,
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint), `sync` (the
 `_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a
 shared fix could sit unshipped with every check green),

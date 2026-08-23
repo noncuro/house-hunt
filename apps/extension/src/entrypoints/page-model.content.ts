@@ -1,4 +1,5 @@
-import { extractFromPage, ListingWithdrawn } from '@/lib/extract';
+import { ListingWithdrawn } from '@house-hunt/core';
+import { extractFromPage } from '@/lib/extract';
 import { describe, PAGE_MESSAGE, PAGE_REQUEST, type PageMessage } from '@/lib/messages';
 
 /** MAIN world. This is the only script that can see window.__PAGE_MODEL — an isolated content

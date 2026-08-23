@@ -6,6 +6,7 @@ import { authState, renameProject, setActiveProject } from '@house-hunt/core/db'
 import type { AuthState, ProjectSummary, SessionUser } from '@house-hunt/core';
 import { InlineName } from '@/components/InlineName';
 import { Menu } from '@/components/Menu';
+import { useCanHoldExtension } from '@/lib/platform';
 import { keys, useSignOut } from '@/lib/queries';
 import type { View } from '@/lib/view';
 
@@ -43,6 +44,7 @@ export function Shell({
   destinations,
   view,
   setView,
+  onAdd,
   notify,
   children,
 }: {
@@ -52,11 +54,15 @@ export function Shell({
   destinations: Destination[];
   view: View;
   setView: (next: View) => void;
+  /** Open the add-a-flat dialog. In the header on every width, because it is the one thing a phone
+   *  cannot do any other way — there is no extension there to record a listing as you read it. */
+  onAdd: () => void;
   notify: (message: string) => void;
   children: React.ReactNode;
 }) {
   const client = useQueryClient();
   const signOut = useSignOut();
+  const extensionPossible = useCanHoldExtension();
 
   const rename = useMutation({
     mutationFn: async (next: string) => await renameProject(project.id, next),
@@ -114,6 +120,17 @@ export function Shell({
           ))}
         </nav>
 
+        <button
+          type="button"
+          className="shell-add"
+          title="Add a flat from its Rightmove address"
+          data-testid="shell-add"
+          onClick={onAdd}
+        >
+          <Icon name="plus" size={13} />
+          <span className="shell-add-word">Add a flat</span>
+        </button>
+
         <Menu
           className="shell-account"
           align="right"
@@ -138,18 +155,21 @@ export function Shell({
                 You
               </button>
               {/* Load-unpacked on a handful of laptops, so this is a real destination rather than a
-                  link to a store — see `screens/Install.tsx`. Desktop only: there is no Chrome to
-                  load it into on a phone, which is why the tab bar below does not carry it. */}
+                  link to a store — see `screens/Install.tsx`. It used to be hidden on a phone, on
+                  the true argument that there is no Chrome there to load an extension into. The
+                  screen answers both halves now — the extension where one can exist, and adding
+                  this app to the home screen where one cannot — so the item is drawn everywhere and
+                  named for whichever of the two it will lead to. */}
               <button
                 type="button"
-                className="menu-item shell-desktop-only"
+                className="menu-item"
                 data-testid="account-install"
                 onClick={() => {
                   setView('install');
                   close();
                 }}
               >
-                Install the extension
+                {extensionPossible ? 'Install the extension' : 'Install this app'}
               </button>
               <button
                 type="button"
@@ -167,9 +187,10 @@ export function Shell({
 
       {children}
 
-      {/* The phone's navigation. Same destinations, minus the two that need a desktop: Admin is a
-          table of money six columns wide, and the extension cannot be installed on a phone at all.
-          A `<nav>` rather than a bar of links so it is one landmark to skip past. */}
+      {/* The phone's navigation. Same destinations, minus Admin, which is a table of money six
+          columns wide. A `<nav>` rather than a bar of links so it is one landmark to skip past.
+          Adding a flat is not here: it is an action rather than a place, and it sits in the header
+          where it is reachable from every one of these. */}
       <nav className="tabbar" aria-label="Sections">
         {destinations
           .filter((d) => d.view !== 'admin')

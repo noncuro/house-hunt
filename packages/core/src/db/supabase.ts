@@ -19,7 +19,9 @@
 import { db, ensureSession } from './client';
 import { accessToken, requireSession } from './session';
 import { MIN_PASSWORD_LENGTH } from '../contracts';
+import { rightmoveListingId } from '../listing';
 import type {
+  AddListingResult,
   AdminProject,
   AdminUser,
   AuthState,
@@ -366,6 +368,73 @@ export async function recordProperty(listing: Listing): Promise<void> {
     },
   });
   fail('recording property', error);
+}
+
+/** Add a flat from a URL somebody pasted, shared or typed.
+ *
+ *  The extension's route into the shortlist is a content script reading the page you are standing
+ *  on. This is the other route, and it is what the phone has: the `listing` Edge Function fetches
+ *  that one page and decodes it with the same code, and what comes back is recorded here exactly as
+ *  the extension records its own. There is no second way into `property` — both end at
+ *  `record_property`.
+ *
+ *  The URL is checked here as well as on the server. Not belt-and-braces: a paste that is a search
+ *  page, or a link to the agent's own site, is by far the commonest mistake, and answering it from
+ *  the field the reader is looking at beats a round trip to be told the same thing. The server's
+ *  check is the one that matters — this one is only allowed to be a *quicker* no, never a yes the
+ *  server would refuse.
+ */
+export async function addListingByUrl(url: string): Promise<AddListingResult> {
+  const id = rightmoveListingId(url);
+  if (!id) return { status: 'not-a-listing' };
+
+  await requireSession();
+  const projectId = await activeProjectId();
+
+  // Asked before the fetch, so a flat this hunt already has costs nobody a request to Rightmove —
+  // which is the no-crawl rule showing up as an optimisation, and the common case when somebody
+  // shares a link that has already been round the group.
+  const { data: existing, error: lookupError } = await db()
+    .from('project_property')
+    .select('rightmove_id, property!inner(display_address)')
+    .eq('project_id', projectId)
+    .eq('rightmove_id', id)
+    .maybeSingle();
+  fail('looking for that flat', lookupError);
+  if (existing) {
+    return {
+      status: 'already-here',
+      rightmoveId: id,
+      displayAddress: (existing as any).property?.display_address ?? 'this flat',
+    };
+  }
+
+  const { data, error } = await db().functions.invoke('listing', {
+    body: { url },
+    headers: await functionHeaders(),
+  });
+  if (error) return { status: 'failed', message: await refusalFrom(error, 'could not read that listing') };
+
+  const reply = data as any;
+  if (reply?.status === 'rate-limited') {
+    return {
+      status: 'rate-limited',
+      used: reply.used ?? 0,
+      limit: reply.limit ?? 0,
+      retryAfterSeconds: reply.retry_after_seconds ?? 3600,
+    };
+  }
+  if (reply?.status === 'withdrawn') return { status: 'withdrawn', rightmoveId: reply.rightmoveId ?? id };
+  if (reply?.status !== 'read' || !reply.listing) {
+    // Including `unreadable`, whose message names what failed to decode. Said rather than
+    // swallowed: this is the shape that means Rightmove has changed the page, and the panel on the
+    // laptop is about to stop working too.
+    return { status: 'failed', message: reply?.message ?? 'that listing could not be read' };
+  }
+
+  const listing = reply.listing as Listing;
+  await recordProperty(listing);
+  return { status: 'added', rightmoveId: listing.rightmoveId, displayAddress: listing.displayAddress };
 }
 
 /** The project's verdicts for these listings — at most one per listing now (design D6).

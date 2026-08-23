@@ -17,7 +17,7 @@
  *  where somebody had fetched a withdrawn listing that day. `pnpm check:extractor` against a saved
  *  page is still the check for the real thing.
  */
-import { ListingWithdrawn, toListing } from '../apps/extension/src/lib/extract';
+import { ListingWithdrawn, toListing } from '../packages/core/src/listing';
 
 const URL = 'https://www.rightmove.co.uk/properties/91760358';
 

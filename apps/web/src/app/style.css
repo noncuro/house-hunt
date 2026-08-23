@@ -499,8 +499,36 @@ code {
   line-height: 1.4;
 }
 
-.shell-account {
+/* The one action in a row of destinations, and the only way a phone has of putting a flat into the
+   hunt at all — so it takes the right-hand end of the header rather than living behind the account
+   menu. `margin-left: auto` moved here from `.shell-account`, which is now flush against it: two
+   auto margins in one flex row split the free space between them and would have left a gap down the
+   middle of the pair. */
+.shell-add {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
   margin-left: auto;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--ink-soft);
+  border-radius: var(--r-control);
+  padding: 5px var(--s3);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.shell-add:hover {
+  background: var(--line-3);
+  border-color: var(--fainter);
+}
+
+.shell-account {
+  margin-left: 0;
 }
 
 .avatar {
@@ -2679,17 +2707,64 @@ input[type='checkbox'] {
   border-radius: var(--r-chip);
 }
 
+/* --- adding a flat ------------------------------------------------------------------------- */
+
+/* A dialog with one field in it does not want the width a whole flat needs. */
+.panel-narrow {
+  width: min(460px, 100%);
+}
+
+.addflat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.addflat .fields input {
+  flex: 1;
+  min-width: 0;
+}
+
+.addflat-aside {
+  margin: 0;
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
 /* --- narrow windows (10a/10b/10c) ---------------------------------------------------------- */
 
 @media (max-width: 768px) {
+  /* The insets are real now: `viewportFit: 'cover'` in `app/layout.tsx` is what makes
+     `env(safe-area-inset-*)` report anything but zero, and until it was set the tab bar's own
+     bottom padding was quietly `0px` on every phone with a home indicator. With the page drawn
+     under the cutout, the two edges that hold something have to say so — the header, which is
+     otherwise under the status bar, and the sides, which matter in landscape. */
   .wrap {
-    padding: var(--s3) var(--s3) 88px;
+    padding: var(--s3) calc(var(--s3) + env(safe-area-inset-right)) 88px
+      calc(var(--s3) + env(safe-area-inset-left));
+  }
+
+  .shell {
+    height: calc(44px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) calc(var(--s4) + env(safe-area-inset-right)) 0
+      calc(var(--s4) + env(safe-area-inset-left));
   }
 
   /* The destinations move to the foot, where a thumb is. */
-  .shell-nav,
-  .shell-desktop-only {
+  .shell-nav {
     display: none;
+  }
+
+  /* Icon only. The header holds the hunt's name, which is the control everything else is read
+     under, and two words beside it push that name into an ellipsis on a 360px screen. */
+  .shell-add-word {
+    display: none;
+  }
+
+  .shell-add {
+    min-height: 34px;
+    padding: 5px var(--s2);
   }
 
   .tabbar {

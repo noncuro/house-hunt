@@ -3,20 +3,112 @@
 import { useEffect, useState } from 'react';
 import type { ExtensionState } from '@/lib/bridge';
 import { EXPECTED_EXTENSION_VERSION, extensionBehind } from '@/lib/extension-version';
+import { useInstallPrompt } from '@/lib/install-prompt';
+import { useCanHoldExtension, useIsInstalled, useIsMobile } from '@/lib/platform';
 import { useExtension } from '@/lib/queries';
 
-/** Getting the Rightmove half onto this laptop.
+/** Getting this onto the device you are reading it on — which is two different jobs.
+ *
+ *  On a phone it is one job: add the app to the home screen. There is no second half to install,
+ *  because no browser on a phone loads a Chrome extension, and the sections below about
+ *  `chrome://extensions` are not merely unhelpful there — they are six numbered steps that cannot be
+ *  carried out, on the screen somebody came to for an answer. So a phone is shown the app and
+ *  nothing else.
+ *
+ *  On a laptop it is both, in that order: the app, which is worth installing there too and takes one
+ *  click, and then the extension, which is the Rightmove half and is what the rest of this file has
+ *  always been about.
+ *
+ *
+ *  Gated with every other tab — the page renders nothing until someone is signed in (see app/page),
+ *  so a signed-out visitor never sees the extension download, which matters: the zip is sent
+ *  privately, never through the Chrome Web Store, and a public download button would undo that. */
+export function Install({ email }: { email: string }) {
+  // The same probe the banner above the page reads. Two of them, each with its own deadline, could
+  // and did disagree — this screen saying "already installed (v0.3.1)" under a banner saying it was
+  // not installed at all.
+  const state = useExtension().data ?? null;
+  const extensionPossible = useCanHoldExtension();
+
+  return (
+    <div className="settings">
+      <AppInstall />
+      {extensionPossible && <ExtensionInstall email={email} state={state} />}
+    </div>
+  );
+}
+
+/** Adding the app itself: to a home screen on a phone, to the dock or the app list on a laptop.
+ *
+ *  It is worth doing on both, and for the same two reasons rather than as a nicety. An installed app
+ *  keeps its own service worker and its own storage, which is what makes the shortlist and its
+ *  photographs readable with no signal (`public/sw.js`, `lib/persist.ts`) — and the browser is far
+ *  less willing to evict an installed app's cache than a tab's. And on a phone it is what puts this
+ *  hunt in the system share sheet, so a listing goes from the Rightmove app into the shortlist
+ *  without anything being copied or pasted.
+ *
+ *  Chromium hands us its own prompt and we show it on a button. Safari does not and never will, so
+ *  the written steps are not a fallback for a missing button — on an iPhone they are the only route,
+ *  and they are drawn whether or not the button is there. */
+function AppInstall() {
+  const installed = useIsInstalled();
+  const mobile = useIsMobile();
+  const { available, install } = useInstallPrompt();
+
+  return (
+    <section className="setting">
+      <h2>{mobile ? 'Add this to your home screen' : 'Install this app'}</h2>
+
+      {installed ? (
+        <p className="notice notice-good" data-testid="app-installed">
+          Already installed here. The shortlist, what the photographs showed and the photographs
+          themselves stay readable with no signal — as they were when this last had one.
+        </p>
+      ) : (
+        <p className="dim">
+          It opens in its own window, and it keeps the hunt on this device: the shortlist, the
+          verdicts and the listing photographs stay readable underground.{' '}
+          {mobile && 'It also puts this hunt in the share sheet, so a listing goes straight from Rightmove into it.'}
+        </p>
+      )}
+
+      {available && !installed && (
+        <div className="fields">
+          <button type="button" className="primary" data-testid="app-install" onClick={() => void install()}>
+            Install it
+          </button>
+        </div>
+      )}
+
+      {!installed && (
+        // Written out rather than hidden behind the button, because on an iPhone there is no button
+        // — Safari fires no install event — and a page that shows nothing there is a page that says
+        // this cannot be done.
+        <ul className="steps">
+          <li>
+            <strong>iPhone or iPad:</strong> Safari, the Share button, then <strong>Add to Home
+            Screen</strong>. It has to be Safari; Chrome on iOS cannot add one.
+          </li>
+          <li>
+            <strong>Android:</strong> Chrome&apos;s ⋮ menu, then <strong>Install app</strong> or{' '}
+            <strong>Add to Home screen</strong>.
+          </li>
+          <li>
+            <strong>A laptop:</strong> the install icon at the right-hand end of Chrome&apos;s
+            address bar.
+          </li>
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** The Rightmove half, onto this laptop.
  *
  *  This is the download surface, not `ExtensionNotice` — the two answer different questions and must
  *  not be confused. `ExtensionNotice` (screens/Extension.tsx) reports whether an *already installed*
- *  extension is signed in as you and offers to connect it; this screen hands you the zip and the
- *  load-unpacked steps for a laptop that has no extension at all. It is a tab of its own for the
- *  same reason the notice stays a one-line aside: the install is a deliberate thing you come here to
- *  do, not something to bolt onto a warning.
- *
- *  Gated with every other tab — the page renders nothing until someone is signed in (see app/page),
- *  so a signed-out visitor never sees the download link, which matters: the zip is sent privately,
- *  never through the Chrome Web Store, and a public download button would undo that.
+ *  extension is signed in as you and offers to connect it; this hands you the zip and the
+ *  load-unpacked steps for a laptop that has no extension at all.
  *
  *  The zip is a committed static asset at `apps/web/public/rightmove-house-hunt.zip`, served from
  *  `/rightmove-house-hunt.zip`. Vercel builds only apps/web and cannot build the extension, so the
@@ -25,14 +117,9 @@ import { useExtension } from '@/lib/queries';
  *  so it was not: the served zip stayed at 0.1.0 through three version bumps while this page told
  *  everybody who downloaded it that their copy was out of date. The steps below are lifted from
  *  SETUP.md's "Installing it" so the page and the printed instructions cannot drift. */
-export function Install({ email }: { email: string }) {
-  // The same probe the banner above the page reads. Two of them, each with its own deadline, could
-  // and did disagree — this screen saying "already installed (v0.3.1)" under a banner saying it was
-  // not installed at all.
-  const state = useExtension().data ?? null;
-
+function ExtensionInstall({ email, state }: { email: string; state: ExtensionState | null }) {
   return (
-    <div className="settings">
+    <>
       <section className="setting">
         <h2>Install the browser extension</h2>
         {/* Six numbered steps for something already done reads as "this did not work". The page
@@ -98,7 +185,7 @@ export function Install({ email }: { email: string }) {
           manifest pins the extension id.
         </p>
       </section>
-    </div>
+    </>
   );
 }
 

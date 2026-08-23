@@ -1,6 +1,6 @@
 /** Cases for the description-prose floor-area fallback, which is the fiddliest bit of extraction
  *  and the one most likely to quietly regress. Run with `pnpm check:area`. */
-import { parseAreaFromText } from '../apps/extension/src/lib/extract';
+import { parseAreaFromText } from '../packages/core/src/listing';
 
 const cases: Array<[string, number | null]> = [
   ['A lovely flat extending to 1,234 sq ft over two floors.', 1234],
