@@ -77,6 +77,21 @@ const { url: supabaseUrl, anonKey } = localCredentials();
  *  broken map. */
 const ALLOW = [ORIGIN, supabaseUrl, 'https://tile.openstreetmap.org/'];
 
+/** Every context here, and the one option on it that is not about the viewport.
+ *
+ *  `serviceWorkers: 'block'` because Playwright cannot route a service worker's requests. Every
+ *  guarantee `keepOffline` makes is made with `context.route`, and a worker's own `fetch` goes
+ *  around it — so the moment the website registered one (`public/sw.js`), the rule that no harness
+ *  may reach Rightmove stopped being enforced for every request that worker handles, and the
+ *  report it prints stopped counting them. A guarantee that quietly applies to some requests is
+ *  worse than none, because the line at the end of the run still says nothing got out.
+ *
+ *  It also means these runs assert against the build that was just made rather than against a
+ *  cache-first worker's idea of it. What it costs is honest and written down: nothing here drives
+ *  the offline half at all — see the gap recorded in `docs/coverage.md`. */
+const CONTEXT = { viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' } as const;
+
+
 const problems: string[] = [];
 const note = (problem: string) => problems.push(problem);
 
@@ -156,7 +171,7 @@ try {
   // genuinely signed out and this one has a session planted in it. `signedOutPage` makes them a
   // context each.
   browser = await chromium.launch({ headless: true, args: OFFLINE_ARGS });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const context = await browser.newContext(CONTEXT);
 
   // Before the app's own scripts run, so the client finds a session the moment it is constructed
   // rather than mounting signed-out and repainting.
@@ -1289,7 +1304,7 @@ async function checkJoining({ browser }: Stage): Promise<void> {
 async function signedOutPage(
   browser: Browser,
 ): Promise<{ page: Page; offline: () => string; close: () => Promise<void> }> {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const context = await browser.newContext(CONTEXT);
   const offline = await keepOffline(context, { allow: ALLOW });
   const page = await context.newPage();
   page.on('pageerror', (e) => note(`pageerror (signed out): ${e.message}`));

@@ -45,6 +45,22 @@ const LONDON: [number, number] = [51.5074, -0.1278];
  *  `fitBounds`, staying there. */
 const lastView = new Map<string, { center: L.LatLngLiteral; zoom: number }>();
 
+/** Frame these flats, and say whether it counted.
+ *
+ *  It counts only if the container had a size to frame them in: Leaflet will happily fit bounds
+ *  into a 0×0 map and the result is a view of nowhere. Returning that judgement rather than
+ *  assuming it is what lets the caller try again when the container turns out to have a size after
+ *  all — see `fitted` in the component. */
+function fit(instance: L.Map, located: ShortlistEntry[]): boolean {
+  const { x, y } = instance.getSize();
+  if (x === 0 || y === 0 || located.length === 0) return false;
+  instance.fitBounds(L.latLngBounds(located.map((e) => [e.lat!, e.lon!] as [number, number])), {
+    padding: [40, 40],
+    maxZoom: 15,
+  });
+  return true;
+}
+
 export function ShortlistMap({
   projectId,
   entries,
@@ -84,6 +100,18 @@ export function ShortlistMap({
   const map = useRef<L.Map | null>(null);
   const markers = useRef(new Map<string, L.CircleMarker>());
   const firstRun = useRef(true);
+  /** Whether the pins have been framed against a container that actually had a size.
+   *
+   *  Leaflet measures its container once, when the map is made, and `fitBounds` works off that
+   *  measurement. Ask a map that believes it is 0×0 to fit anything and it computes a nonsense
+   *  centre and the world's zoom — after which every marker is outside the renderer's bounds and
+   *  drawn as the empty path `M0 0`. The map then looks like a map, draws two tiles of ocean, and
+   *  has no pins on it, which is the most convincing way this component can fail.
+   *
+   *  That is not hypothetical here: the shortlist is restored from IndexedDB before the first
+   *  render now (`lib/persist.ts`), so this mounts with its flats already in hand rather than a
+   *  frame or two later, and it fits against whatever the container measured at that instant. */
+  const fitted = useRef(false);
 
   const [ownAt, setOwnAt] = useState<string | null>(null);
   const controlled = selected !== undefined;
@@ -189,13 +217,39 @@ export function ShortlistMap({
     // removed.
     const restored = firstRun.current && lastView.has(projectId);
     firstRun.current = false;
-    if (located.length > 0 && !restored) {
-      instance.fitBounds(L.latLngBounds(located.map((e) => [e.lat!, e.lon!] as [number, number])), {
-        padding: [40, 40],
-        maxZoom: 15,
-      });
+    if (restored) {
+      // Where you left it, deliberately unfitted — and nothing below should undo that.
+      fitted.current = true;
+      return;
     }
+    if (fit(instance, located)) fitted.current = true;
   }, [located, projectId]);
+
+  /** Re-measure when the container's size changes, and frame the pins if that never happened.
+   *
+   *  `invalidateSize` is Leaflet's own answer to a container that was not its current size when the
+   *  map was made — the map is told to look again. A `ResizeObserver` rather than a one-off timer
+   *  because there is no single moment that is safe: the pane beside the map opens and closes, the
+   *  window is resized, and the first measurement can land before the layout it is measuring.
+   *
+   *  The re-fit is the half that matters. A map that fit against a zero-sized container did not
+   *  merely fit badly — it is looking at the wrong part of the world with every pin outside it, and
+   *  no amount of re-measuring moves it back. `fitted` is only set once the fit ran against a real
+   *  size, so this is what repairs that case and does nothing at all in the ordinary one. */
+  const latest = useRef(located);
+  latest.current = located;
+  useEffect(() => {
+    const element = host.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      const instance = map.current;
+      if (!instance) return;
+      instance.invalidateSize();
+      if (!fitted.current) fit(instance, latest.current);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   // The pin under the docked card, panned to and highlighted. `panTo` rather than `setView` on
   // purpose: walking the pins must not change the zoom you chose.
