@@ -2732,6 +2732,25 @@ input[type='checkbox'] {
   font-size: 12px;
 }
 
+/* --- where there is no keyboard ------------------------------------------------------------- */
+
+/* Keycaps, and the sentences that are only about keycaps, drawn only where a key can be pressed.
+ *
+ *  Not a width query, which is the wrong question twice over: a narrow window on a laptop still has
+ *  a keyboard, and a tablet in landscape is wide and still has none. `hover: none` and
+ *  `pointer: coarse` together are the closest thing the platform offers to "this is a touchscreen",
+ *  and a keycap on a screen where the key does nothing is an instruction that fails when followed —
+ *  the same argument `Verdict.tsx` makes for `keys` being opt-in rather than a default.
+ *
+ *  It errs towards hiding: a tablet with a keyboard case answers this query and loses the hint while
+ *  keeping the shortcut, which costs a reminder. The other way round puts "press j to move down the
+ *  pile" on a phone, which is a lie about the interface on the screen where the pile is worked. */
+@media (hover: none) and (pointer: coarse) {
+  .keys-only {
+    display: none;
+  }
+}
+
 /* --- narrow windows (10a/10b/10c) ---------------------------------------------------------- */
 
 @media (max-width: 768px) {
@@ -2757,14 +2776,21 @@ input[type='checkbox'] {
   }
 
   /* Icon only. The header holds the hunt's name, which is the control everything else is read
-     under, and two words beside it push that name into an ellipsis on a 360px screen. */
+     under, and two words beside it push that name into an ellipsis on a 360px screen.
+
+     Square and as tall as the 44px row allows, rather than the 31x34 the icon alone came to. Every
+     other tap target on this screen is given 44px below, and this one is the single control a
+     phone cannot route around — there is no extension there, so nothing enters the hunt except
+     through this button and the share sheet. Two short of the row so it does not touch its edges. */
   .shell-add-word {
     display: none;
   }
 
   .shell-add {
-    min-height: 34px;
-    padding: 5px var(--s2);
+    min-width: 40px;
+    min-height: 40px;
+    justify-content: center;
+    padding: 0;
   }
 
   .tabbar {

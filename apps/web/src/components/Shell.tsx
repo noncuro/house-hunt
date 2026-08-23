@@ -120,9 +120,14 @@ export function Shell({
           ))}
         </nav>
 
+        {/* `aria-label` as well as the word beside the icon, because the word is what a phone drops
+            (`.shell-add-word` is `display: none` there) and a `display: none` label is out of the
+            accessibility tree too. Without it this is an unnamed `+` on the surface where it is the
+            only way to put a flat in the hunt at all. */}
         <button
           type="button"
           className="shell-add"
+          aria-label="Add a flat"
           title="Add a flat from its Rightmove address"
           data-testid="shell-add"
           onClick={onAdd}

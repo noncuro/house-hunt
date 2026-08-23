@@ -308,7 +308,12 @@ export function ShortlistMap({
             </>
           ) : (
             <p className="dim map-side-empty">
-              Pick a pin and the flat shows up here. <kbd>←</kbd> <kbd>→</kbd> walk them west to east.
+              Pick a pin and the flat shows up here.{' '}
+              {/* The clause rather than the keycaps: hiding the two `kbd`s alone would leave
+                  "walk them west to east" hanging off the end of the sentence before it. */}
+              <span className="keys-only">
+                <kbd>←</kbd> <kbd>→</kbd> walk them west to east.
+              </span>
             </p>
           )}
         </aside>
