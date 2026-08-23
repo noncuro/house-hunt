@@ -47,10 +47,10 @@ const lastView = new Map<string, { center: L.LatLngLiteral; zoom: number }>();
 
 /** Frame these flats, and say whether it counted.
  *
- *  It counts only if the container had a size to frame them in: Leaflet will happily fit bounds
- *  into a 0×0 map and the result is a view of nowhere. Returning that judgement rather than
- *  assuming it is what lets the caller try again when the container turns out to have a size after
- *  all — see `fitted` in the component. */
+ *  It refuses a container with no size: Leaflet will happily fit bounds into a 0×0 map and the
+ *  result is a view of nowhere. The boolean is for a caller that wants to know whether anything
+ *  happened; the observer below simply calls it again on the next resize, because a size Leaflet
+ *  measured a frame ago is not evidence that the layout has finished — see `chosen`. */
 function fit(instance: L.Map, located: ShortlistEntry[]): boolean {
   const { x, y } = instance.getSize();
   if (x === 0 || y === 0 || located.length === 0) return false;
@@ -100,18 +100,22 @@ export function ShortlistMap({
   const map = useRef<L.Map | null>(null);
   const markers = useRef(new Map<string, L.CircleMarker>());
   const firstRun = useRef(true);
-  /** Whether the pins have been framed against a container that actually had a size.
+  /** Whether the view on screen is one the reader chose — by panning, by zooming, or by having
+   *  left the map here last time. Nothing may re-frame over it.
    *
-   *  Leaflet measures its container once, when the map is made, and `fitBounds` works off that
-   *  measurement. Ask a map that believes it is 0×0 to fit anything and it computes a nonsense
-   *  centre and the world's zoom — after which every marker is outside the renderer's bounds and
-   *  drawn as the empty path `M0 0`. The map then looks like a map, draws two tiles of ocean, and
-   *  has no pins on it, which is the most convincing way this component can fail.
+   *  This is deliberately *not* "have the pins been framed once". Leaflet measures its container
+   *  when it is told to and not otherwise, so a fit can succeed against a size that was true for a
+   *  moment and wrong by the time the layout settled — and one that "worked" is then never
+   *  corrected. Ask a map that believes it is 0×0 to fit anything and it computes a nonsense centre
+   *  at the world's zoom, after which every marker is outside the renderer's bounds and drawn as
+   *  the empty path `M0 0`: a map that looks like a map, draws two tiles of ocean, and has no pins
+   *  on it. Framing again on the next resize is what repairs that, so the only thing that may stop
+   *  it is the reader having taken over.
    *
-   *  That is not hypothetical here: the shortlist is restored from IndexedDB before the first
-   *  render now (`lib/persist.ts`), so this mounts with its flats already in hand rather than a
-   *  frame or two later, and it fits against whatever the container measured at that instant. */
-  const fitted = useRef(false);
+   *  Not hypothetical. The shortlist is restored from IndexedDB before the first render now
+   *  (`lib/persist.ts`), so this mounts with its flats already in hand rather than a frame or two
+   *  later, and fits against whatever the container measured at that instant. */
+  const chosen = useRef(false);
 
   const [ownAt, setOwnAt] = useState<string | null>(null);
   const controlled = selected !== undefined;
@@ -217,8 +221,9 @@ export function ShortlistMap({
     // removed.
     const restored = firstRun.current && lastView.has(projectId);
     if (restored) {
-      // Where you left it, deliberately unfitted — and nothing below should undo that.
-      fitted.current = true;
+      // Where you left it, deliberately unfitted — and nothing below should undo that. A view you
+      // left is a view you chose, so it counts the same as a pan.
+      chosen.current = true;
       // `firstRun` survives a run that had nothing to draw. It means "no run has yet had any pins",
       // not "the effect has run once" — and the difference is the whole of this branch: with the
       // flats still loading, clearing it here would make the *next* run, the one that finally has
@@ -229,37 +234,58 @@ export function ShortlistMap({
       return;
     }
     firstRun.current = false;
-    if (fit(instance, located)) fitted.current = true;
+    fit(instance, located);
   }, [located, projectId]);
 
-  /** Re-measure when the container's size changes, and frame the pins if that never happened.
+  /** Re-measure when the container's size changes, and re-frame until the reader takes over.
    *
    *  `invalidateSize` is Leaflet's own answer to a container that was not its current size when the
    *  map was made — the map is told to look again. A `ResizeObserver` rather than a one-off timer
    *  because there is no single moment that is safe: the pane beside the map opens and closes, the
    *  window is resized, and the first measurement can land before the layout it is measuring.
    *
-   *  The re-fit is the half that matters. A map that fit against a zero-sized container did not
-   *  merely fit badly — it is looking at the wrong part of the world with every pin outside it, and
-   *  no amount of re-measuring moves it back. `fitted` is only set once the fit ran against a real
-   *  size, so this is what repairs that case and does nothing at all in the ordinary one. */
+   *  The re-frame is the half that matters, and it repeats on purpose. Fitting once and stopping
+   *  sounds tidier and is wrong: `getSize()` is whatever Leaflet last measured, so a fit can
+   *  succeed against a size that was true for one frame, leave every pin outside the view, and mark
+   *  itself done. Each resize is another chance to be right about a container that is still
+   *  settling.
+   *
+   *  What stops it is `chosen` — the reader having panned, zoomed, or arrived on a view they left
+   *  here before. That is the thing a re-frame must never overwrite, and it is a narrower and more
+   *  honest test than "has this run once". `dragstart` is Leaflet's own and never fires for
+   *  `fitBounds`; the wheel is watched directly rather than `zoomstart`, which `fitBounds` does
+   *  fire and which would therefore stop the repair on its own first success. */
   const latest = useRef(located);
   latest.current = located;
   useEffect(() => {
     const element = host.current;
-    if (!element || typeof ResizeObserver === 'undefined') return;
+    const instance = map.current;
+    if (!element || !instance) return;
+
+    const take = () => {
+      chosen.current = true;
+    };
+    instance.on('dragstart', take);
+    element.addEventListener('wheel', take, { passive: true });
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => {
+        instance.off('dragstart', take);
+        element.removeEventListener('wheel', take);
+      };
+    }
+
     const observer = new ResizeObserver(() => {
-      const instance = map.current;
-      if (!instance) return;
-      instance.invalidateSize();
-      // The result is recorded, not discarded. Without this `fitted` stays false after a retry that
-      // worked, so the *next* resize — the pane beside the map opening, the window changing —
-      // frames the pins again over wherever the reader had panned to. A repair that runs once is a
-      // repair; one that runs on every resize is the map refusing to stay where it is put.
-      if (!fitted.current && fit(instance, latest.current)) fitted.current = true;
+      if (!map.current) return;
+      map.current.invalidateSize();
+      if (!chosen.current) fit(map.current, latest.current);
     });
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      instance.off('dragstart', take);
+      element.removeEventListener('wheel', take);
+    };
   }, []);
 
   // The pin under the docked card, panned to and highlighted. `panTo` rather than `setView` on
