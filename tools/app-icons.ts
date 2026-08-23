@@ -89,12 +89,18 @@ function draw({ size, maskable = false, opaque = false }: Icon): Uint8Array {
       const inside = radius === 0 || withinRounded(x + 0.5, y + 0.5, s, radius);
       const on = glyph.some(([gx, gy, gw, gh]) => x >= gx && x < gx + gw && y >= gy && y < gy + gh);
       const o = (y * s + x) * 4;
-      if (!inside) continue; // left transparent
-      const [r, g, b] = on ? WHITE : GREEN;
+      // Outside the corner: transparent, but still *green*. The colour of a fully transparent pixel
+      // is supposed to be unobservable, and here it is not — `downsample` averages the four
+      // channels independently, so a pixel that is half inside the corner takes half its colour
+      // from whatever is written here. Left at the zeroes the array starts as, that is black, and
+      // the rounded corners came out with a dark fringe: (13,64,45) at alpha 128 where the green
+      // beside it is (26,127,90). Writing the green under the transparency is what makes the
+      // average come back green.
+      const [r, g, b] = on && inside ? WHITE : GREEN;
       big[o] = r;
       big[o + 1] = g;
       big[o + 2] = b;
-      big[o + 3] = 255;
+      big[o + 3] = inside ? 255 : 0;
     }
   }
 
@@ -109,9 +115,12 @@ function withinRounded(x: number, y: number, s: number, r: number): boolean {
   return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
 }
 
-/** Box filter, averaging in straight (non-premultiplied) RGBA — which would be wrong in general and
- *  is right here: the only transparent pixels are outside the rounded corners, and the colour under
- *  them is the same green as the pixels beside them, so there is no other colour to bleed in. */
+/** Box filter, averaging in straight (non-premultiplied) RGBA.
+ *
+ *  Averaging straight RGBA is wrong in general — a transparent pixel's colour gets a vote it has not
+ *  earned. It is right here only because `draw` writes the background green underneath the
+ *  transparent corners rather than leaving them black, so the vote is for the colour that is
+ *  actually there. That is a property of the caller, not of this function; see the note in `draw`. */
 function downsample(big: Uint8Array, from: number, to: number, opaque: boolean): Uint8Array {
   const n = from / to;
   const out = new Uint8Array(to * to * 4);

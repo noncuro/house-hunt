@@ -29,8 +29,8 @@ The hunt itself is a website, and it is the whole product. The other two put fla
 
 | | What it is | Where it runs |
 |---|---|---|
-| **The website** | The hunt: shortlist, compare, map, triage, the funnel, travel times, who is in it | Any browser. Install it and it works with no signal |
-| **The extension** | The Rightmove half: the panel on a listing page, badges on search results, sweeps | Desktop Chrome only |
+| **The website** | The hunt: shortlist, compare, map, triage, the funnel, travel times, who is in it | Any browser. Install it and your hunt stays readable with no signal |
+| **The extension** | The Rightmove half: the panel on a listing page, badges on search results, sweeps | A desktop Chrome, Edge or Brave |
 | **The app on your phone** | The same website, added to your home screen | iPhone and Android |
 
 You need the website. You do not need the extension — it is the fastest way to add flats on a
@@ -63,11 +63,12 @@ in to twice; a phone cannot run a Chrome extension at all, and none of this need
 
 What you get by installing rather than bookmarking:
 
-- **It works underground.** The shortlist, the verdicts, what the photographs showed, and the
-  photographs themselves are kept on the device, so the app opens and reads on the Tube. It says so
-  when it is offline, and it says when what you are looking at was last read — because a shared
-  verdict may have changed since, and a cached one that looked live would be the one thing this app
-  must never do.
+- **It reads underground.** The shortlist, the verdicts, what the photographs showed, and the
+  photographs themselves are kept on the device, so the app opens and reads on the Tube. Reading is
+  the whole of it: signing in, adding a flat and rating one all need the network, and the app says
+  so rather than pretending. It also says when what you are looking at was last read — because a
+  shared verdict may have changed since, and a cached one that looked live would be the one thing
+  this app must never do.
 - **Rightmove can share into it.** Sharing a listing from the Rightmove app, or from your browser,
   lists this hunt in the share sheet. The flat lands in the shortlist with its photographs, its
   floorplan and its postcode already read — the same as if the extension had picked it up.

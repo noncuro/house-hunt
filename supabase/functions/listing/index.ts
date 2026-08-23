@@ -60,6 +60,14 @@ const USER_AGENT =
 const LIMIT_PER_HOUR = 60;
 const KIND = 'fetch_listing';
 
+/** How long to wait for Rightmove before giving up.
+ *
+ *  A `fetch` with no signal waits as long as the other end keeps the socket open, and the only thing
+ *  that ends it is the platform killing the whole invocation — at which point the caller gets a
+ *  generic failure with nothing in it about what was slow. Fifteen seconds is far above a listing
+ *  page's real cost and well below anything a person will sit through with "Reading…" on screen. */
+const FETCH_MS = 15_000;
+
 serve(async (request) => {
   requireEnv({ SUPABASE_URL, SERVICE_KEY });
 
@@ -103,7 +111,26 @@ type Result =
 async function read(id: string): Promise<Result> {
   const url = rightmoveListingUrl(id);
   // The single request. Read the block at the top of this file before adding a second one.
-  const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(FETCH_MS),
+    });
+  } catch (e) {
+    // A timeout, and only a timeout. `AbortSignal.timeout` rejects with a `TimeoutError`, and
+    // catching anything wider would file a DNS failure, a TLS error or a dropped connection under a
+    // deadline that was never reached — a sentence about Rightmove being slow when it was never
+    // spoken to. Everything else goes up as the 500 it is.
+    if (e instanceof Error && e.name === 'TimeoutError') {
+      return {
+        status: 'unreadable',
+        rightmoveId: id,
+        message: `rightmove did not answer within ${FETCH_MS / 1000} seconds`,
+      };
+    }
+    throw e;
+  }
   // A withdrawn listing answers 404 with a full page that still carries a (hollowed-out) model, so
   // the status alone is not the answer — `listingFromHtml` is what tells the two apart, and it does
   // it from the page's own shape. Anything other than 200 or 404 is Rightmove having a problem.

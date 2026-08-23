@@ -44,10 +44,38 @@ export function isMobile(): boolean {
   return touch && coarse;
 }
 
-/** Could a Chrome extension be installed in this browser? The inverse of the above, named for what
- *  the callers actually want to know, so nothing has to remember which way round the test goes. */
+/** Is this a Chromium-family browser — the only kind that can load the extension we ship?
+ *
+ *  The download is a Chrome MV3 folder. Safari's extensions are a different format inside a signed
+ *  app bundle, and Firefox's are a different manifest again, so `chrome://extensions` and "Load
+ *  unpacked" are, in both, instructions that cannot be carried out — the same failure as offering
+ *  them on a phone, just further from anybody's mind because the device *looks* capable.
+ *
+ *  `userAgentData.brands` where it exists, which is Chromium browsers saying so themselves. The
+ *  user-agent fallback is for the two that have no such API, and it works because of what is
+ *  *absent* rather than present: Safari's string carries no `Chrome/` token and Firefox's carries
+ *  neither. Edge, Opera, Brave and Arc all keep `Chrome/`, which is right — all four load this.
+ *
+ *  Pure, and takes its inputs, so `tools/check-platform.ts` can hold the strings the real browsers
+ *  send. A browser sniff that nothing checks is a browser sniff that quietly stops matching. */
+export function chromiumFamily(
+  userAgent: string,
+  brands?: Array<{ brand: string }>,
+): boolean {
+  if (brands?.length) return brands.some((b) => /Chromium|Google Chrome|Microsoft Edge/i.test(b.brand));
+  return /Chrom(e|ium)\//.test(userAgent);
+}
+
+/** Could the extension be installed in this browser? A desktop, and a Chromium.
+ *
+ *  Named for what the callers want to know, so nothing has to remember which way round either test
+ *  goes — and asked in one place, because four surfaces ask it (the notice, the account menu, the
+ *  first-run step, the Install screen) and a fifth will. */
 export function canHoldExtension(): boolean {
-  return !isMobile();
+  if (typeof navigator === 'undefined') return false;
+  const brands = (navigator as Navigator & { userAgentData?: { brands?: Array<{ brand: string }> } })
+    .userAgentData?.brands;
+  return !isMobile() && chromiumFamily(navigator.userAgent, brands);
 }
 
 /** Is the app running as an installed app rather than in a browser tab?
@@ -84,10 +112,11 @@ const never = () => () => {};
  *  device that cannot use it. `getServerSnapshot` is React's own name for "what the prerender saw",
  *  and it re-renders once with the real answer after hydrating, which is the whole mechanism.
  *
- *  So the desktop reading is the one that is briefly shown to everybody. That decides which way
- *  round these questions are phrased: what appears for a frame and then goes is a sentence about
- *  the extension, which is right on a laptop and stale for a moment on a phone — never the reverse,
- *  where a phone's own instructions would flash up on a machine that should never see them. */
+ *  So the Chrome-on-a-laptop reading is the one that is briefly shown to everybody. That decides
+ *  which way round these questions are phrased: what appears for a frame and then goes is a
+ *  sentence about the extension, which is right in Chrome and stale for a moment on a phone or in
+ *  Safari — never the reverse, where a phone's own instructions would flash up on a machine that
+ *  should never see them. */
 export function useCanHoldExtension(): boolean {
   return useSyncExternalStore(never, canHoldExtension, () => true);
 }

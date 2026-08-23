@@ -46,6 +46,15 @@ const shares: Array<[string, string | null]> = [
   // Android routinely puts the whole "look at this — <url>" string in `text` and sends no `url` at
   // all, which is the case a share target reading only `url` receives as an empty share.
   ['?text=2%20bed%20flat%20https%3A%2F%2Fwww.rightmove.co.uk%2Fproperties%2F88023648', 'https://www.rightmove.co.uk/properties/88023648'],
+  // The sharer finished their sentence. `\S+` runs to the next space, so without the trailing-prose
+  // strip the candidate keeps the full stop, its pathname matches neither listing pattern, and a
+  // perfectly good share is refused with "that is not a listing address".
+  ['?text=Look%20at%20this%20https%3A%2F%2Fwww.rightmove.co.uk%2Fproperties%2F88023648.', 'https://www.rightmove.co.uk/properties/88023648'],
+  ['?text=(https%3A%2F%2Fwww.rightmove.co.uk%2Fproperties%2F88023648)', 'https://www.rightmove.co.uk/properties/88023648'],
+  ['?text=%22https%3A%2F%2Fwww.rightmove.co.uk%2Fproperties%2F88023648%22%2C%20thoughts%3F', 'https://www.rightmove.co.uk/properties/88023648'],
+  // A query string ends in real punctuation often enough that stripping must stop at the first
+  // character that could not end an address — here the `?` is the last thing in the sentence.
+  ['?text=this%20one%3F%20https%3A%2F%2Fwww.rightmove.co.uk%2Fproperties%2F88023648%3Fchannel%3DRES_LET', 'https://www.rightmove.co.uk/properties/88023648?channel=RES_LET'],
   ['?title=A%20flat&text=nothing%20linked%20here', null],
   ['?v=triage', null],
   ['', null],

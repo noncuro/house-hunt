@@ -14,10 +14,21 @@
  *  on both sides of the network. This only finds the candidate.
  */
 
+/** Trailing characters that end a sentence or wrap a link, and can never end a listing address.
+ *
+ *  `\S+` runs to the next space, so it swallows whatever punctuation the sharer's own words put
+ *  after the link — and share sheets add their own: a full stop, or brackets round the URL. Without
+ *  this, "Look at this https://www.rightmove.co.uk/properties/88023648." yields a candidate ending
+ *  in a dot, whose pathname matches neither listing pattern, and a perfectly good share is refused
+ *  with "that is not a Rightmove listing address". */
+const TRAILING_PROSE = /[.,;:!?)\]}>'"»]+$/;
+
 /** The first http(s) URL in a shared string. Shares carry prose around the link ("2 bed flat,
  *  Kentish Town — https://…"), so a whole-string parse finds nothing on the commonest share of all. */
 function firstUrlIn(text: string): string | null {
-  return /https?:\/\/\S+/.exec(text)?.[0] ?? null;
+  const found = /https?:\/\/\S+/.exec(text)?.[0];
+  if (found === undefined) return null;
+  return found.replace(TRAILING_PROSE, '') || null;
 }
 
 /** The address somebody shared or linked to, or null if this navigation carries none.

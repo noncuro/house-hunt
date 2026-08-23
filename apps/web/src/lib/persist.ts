@@ -54,16 +54,53 @@ interface Snapshot {
   queries: Array<{ key: readonly unknown[]; data: unknown; updatedAt: number }>;
 }
 
+/** How long to wait for the database to open before giving up on the offline copy.
+ *
+ *  `indexedDB.open` has a third outcome besides success and error, and it has no deadline: when the
+ *  version has to change and another tab still holds a connection at the old one, the request goes
+ *  `blocked` and stays pending until that tab closes. `Providers` awaits this before it renders
+ *  anything, so an unbounded wait there is not a slow restore — it is a permanently blank app, on
+ *  the second tab, with nothing on screen to say why.
+ *
+ *  A second is far longer than a local database read and short enough to be invisible if it is hit.
+ *  Everything on the other side of it treats a failure as a cold start, which is what every version
+ *  of this app before the snapshot existed did on every load. */
+const OPEN_MS = 1_000;
+
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
+    let settled = false;
+
+    const give = (outcome: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      outcome();
+    };
+
+    const timer = setTimeout(
+      () =>
+        give(() => {
+          reject(new Error('the offline database did not open — another tab may be holding it'));
+          // If it opens after all, close it rather than leaving a connection nothing holds a
+          // reference to: an abandoned one would itself block the next version change.
+          request.onsuccess = () => request.result.close();
+        }),
+      OPEN_MS,
+    );
+
     request.onupgradeneeded = () => {
       const db = request.result;
       if (db.objectStoreNames.contains(STORE)) db.deleteObjectStore(STORE);
       db.createObjectStore(STORE);
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => give(() => resolve(request.result));
+    request.onerror = () => give(() => reject(request.error));
+    // Named rather than left to the timeout above, so the common cause reports itself in one second
+    // instead of being indistinguishable from a database that is merely slow.
+    request.onblocked = () =>
+      give(() => reject(new Error('the offline database is open in another tab at an older version')));
   });
 }
 
