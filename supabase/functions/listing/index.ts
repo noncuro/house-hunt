@@ -111,17 +111,32 @@ type Result =
 async function read(id: string): Promise<Result> {
   const url = rightmoveListingUrl(id);
   // The single request. Read the block at the top of this file before adding a second one.
+  //
+  // The fetch and the body read are inside one deadline because `AbortSignal.timeout` *is* one: it
+  // covers the whole exchange rather than just the headers. So a page whose headers arrive promptly
+  // and whose body then stalls — which is what a slow listing page actually looks like — rejects
+  // here at `.text()`, not at `fetch`. Guarding only the fetch left that case, the commonest of the
+  // two, falling through to the generic 500 that this whole block exists to avoid.
   let response: Response;
+  let html: string;
   try {
     response = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT },
       signal: AbortSignal.timeout(FETCH_MS),
     });
+    // A withdrawn listing answers 404 with a full page that still carries a (hollowed-out) model,
+    // so the status alone is not the answer — `listingFromHtml` below is what tells the two apart,
+    // from the page's own shape. Anything other than 200 or 404 is Rightmove having a problem, and
+    // is thrown rather than returned: it is not a state the interface has a sentence for.
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`rightmove returned ${response.status} for ${url}`);
+    }
+    html = await response.text();
   } catch (e) {
     // A timeout, and only a timeout. `AbortSignal.timeout` rejects with a `TimeoutError`, and
-    // catching anything wider would file a DNS failure, a TLS error or a dropped connection under a
-    // deadline that was never reached — a sentence about Rightmove being slow when it was never
-    // spoken to. Everything else goes up as the 500 it is.
+    // catching anything wider would file a DNS failure, a TLS error, a dropped connection or the
+    // status thrown just above under a deadline that was never reached — a sentence about Rightmove
+    // being slow when it was never spoken to. Everything else goes up as the 500 it is.
     if (e instanceof Error && e.name === 'TimeoutError') {
       return {
         status: 'unreadable',
@@ -131,14 +146,7 @@ async function read(id: string): Promise<Result> {
     }
     throw e;
   }
-  // A withdrawn listing answers 404 with a full page that still carries a (hollowed-out) model, so
-  // the status alone is not the answer — `listingFromHtml` is what tells the two apart, and it does
-  // it from the page's own shape. Anything other than 200 or 404 is Rightmove having a problem.
-  if (!response.ok && response.status !== 404) {
-    throw new Error(`rightmove returned ${response.status} for ${url}`);
-  }
 
-  const html = await response.text();
   try {
     return { status: 'read', listing: listingFromHtml(html, url) };
   } catch (e) {
