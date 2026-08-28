@@ -4,6 +4,7 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   MIN_PASSWORD_LENGTH,
+  listingUrl,
   type AdminProject,
   type AdminUser,
   type Invite,
@@ -882,7 +883,7 @@ function Charges({
                   <td>
                     {row.rightmoveId ? (
                       <a
-                        href={`https://www.rightmove.co.uk/properties/${row.rightmoveId}`}
+                        href={listingUrl(row.rightmoveId)}
                         target="_blank"
                         rel="noopener"
                       >

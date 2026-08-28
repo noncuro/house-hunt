@@ -9,6 +9,7 @@ import {
   listHubSweeps,
   locateProperties,
   pendingSightings,
+  resetSweepProgress,
   type HubSweep,
 } from '@house-hunt/core/db';
 import { keys, useHubs, useProjectSettings, useShortlist } from '@/lib/queries';
@@ -197,12 +198,22 @@ function FullSweep({
   const controller = useRef<AbortController | null>(null);
 
   // Leaving the screen stops the run: the tabs already opened are recorded and the rest are still
-  // here next time, exactly as the fill-in run's note promises.
-  useEffect(() => () => controller.current?.abort(), []);
+  // here next time, exactly as the fill-in run's note promises. Nulled as well as aborted, so the
+  // handlers below can tell a run that ended from one that was walked away from.
+  useEffect(
+    () => () => {
+      controller.current?.abort();
+      controller.current = null;
+    },
+    [],
+  );
 
   const start = () => {
     const abort = new AbortController();
     controller.current = abort;
+    // Whether this run is still the one on screen. False after an unmount, or after Stop and a
+    // second press — either way the state below belongs to somebody else now.
+    const current = () => controller.current === abort;
     setRun({ state: 'running', progress: null });
     void runFullSweep({
       hubs,
@@ -217,6 +228,7 @@ function FullSweep({
           if (reply.kind === 'error') throw new Error(reply.message);
         },
         listSweeps: listHubSweeps,
+        resetSweep: resetSweepProgress,
         pending: pendingSightings,
         shortlist: getShortlist,
         sleep: abortableSleep,
@@ -224,14 +236,21 @@ function FullSweep({
       },
     })
       .then(async (summary) => {
+        if (!current()) return;
+        // Pins first, then the repaint — the other order refetches the shortlist into the cache
+        // with the null/fuzzed positions the geocode is about to replace.
+        const mapNote = summary.filledIn > 0 || summary.rechecked > 0 ? await placePins() : null;
+        if (!current()) return;
         invalidateAfterRun(client);
         onFinished();
-        const mapNote = summary.filledIn > 0 || summary.rechecked > 0 ? await placePins() : null;
+        controller.current = null;
         setRun({ state: 'finished', summary, mapNote });
       })
       .catch((e: unknown) => {
+        if (!current()) return;
         // What did land is on screen somewhere, even when the run stopped on an error.
         invalidateAfterRun(client);
+        controller.current = null;
         setRun({ state: 'failed', message: e instanceof Error ? e.message : String(e) });
       });
   };

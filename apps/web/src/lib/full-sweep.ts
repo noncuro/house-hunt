@@ -48,11 +48,14 @@ export interface FullSweepProgress {
 
 export interface FullSweepSummary {
   hubsScanned: number;
+  /** Rightmove ids opened in the fill-in phase, so the re-check does not open them again: their
+   *  `lastSeenAt` is rewritten by the tab, asynchronously, and a re-check list built before that
+   *  lands would still count them as stale. */
+  filledIn: number;
   pagesScanned: number;
   /** Places with no search to open, by name and reason — no criteria, no radius, no verified
    *  identifier. Said out loud rather than silently left out, for the usual reason. */
   hubsSkipped: Array<{ hub: string; why: string }>;
-  filledIn: number;
   rechecked: number;
   /** True when Stop was pressed. Everything counted above still happened. */
   stopped: boolean;
@@ -63,6 +66,9 @@ export interface FullSweepDeps {
    *  tab is usually the whole mechanism being gone, and grinding on would bury the reason. */
   openTab(url: string): Promise<void>;
   listSweeps(): Promise<HubSweep[]>;
+  /** Clear a place's pages-in-progress before page 1 — see `resetSweepProgress` for why a run
+   *  that reads its progress back cannot start without this. */
+  resetSweep(placeId: string): Promise<void>;
   pending(): Promise<PendingSighting[]>;
   shortlist(): Promise<ShortlistEntry[]>;
   /** Resolves after `ms`, or rejects the moment `signal` aborts — so Stop takes effect at once
@@ -90,6 +96,18 @@ export interface FullSweepOptions {
 export const RECORD_TIMEOUT_MS = 60_000;
 const RECORD_POLL_MS = 3_000;
 
+/** The search changed shape under the run — a page reported a different total from page 1's,
+ *  which `sweepProgress` reads as a new sweep and restarts the count from that page. Rightmove does
+ *  this when a listing lands or goes mid-run and the count crosses a page boundary. The hub is
+ *  started again once (page 1 first, the new total); if it happens twice the run stops and says so
+ *  rather than chase a search that will not hold still. */
+export class SearchChanged extends Error {
+  constructor(hub: string, was: number, now: number | null) {
+    super(`${hub}'s search changed from ${was} pages to ${now ?? 'an unknown number'} mid-sweep`);
+    this.name = 'SearchChanged';
+  }
+}
+
 export class PageNotRecorded extends Error {
   constructor(hub: string, page: number) {
     super(
@@ -113,6 +131,7 @@ export async function runFullSweep(options: FullSweepOptions): Promise<FullSweep
     rechecked: 0,
     stopped: false,
   };
+  const filled = new Set<string>();
 
   // The wait is *between* tabs, never before the first — the button must visibly do something the
   // moment it is pressed — so the first open of the whole run goes straight away.
@@ -126,8 +145,8 @@ export async function runFullSweep(options: FullSweepOptions): Promise<FullSweep
 
   try {
     await scan(options, summary, open);
-    await fillIn(options, summary, open);
-    await recheck(options, summary, open);
+    await fillIn(options, summary, open, filled);
+    await recheck(options, summary, open, filled);
   } catch (e) {
     if (e instanceof Stopped || signal.aborted) {
       summary.stopped = true;
@@ -157,24 +176,37 @@ async function scan(
       continue;
     }
 
-    // Page 1 first and alone, because it is the page that says how many there are. Its record
-    // restarts the count (`sweepProgress`), so a sweep abandoned halfway last time is not resumed
-    // from its old total — the search may well have a different shape today.
-    onProgress({ phase: 'scan', label: `${hub.label} — page 1`, done: 0, total: null });
-    await open(first);
-    const recorded = await awaitRecorded(deps, signal, hub, 1);
-    summary.pagesScanned++;
-    const total = recorded.pagesTotal ?? 1;
-
-    for (let page = 2; page <= total; page++) {
-      onProgress({ phase: 'scan', label: `${hub.label} — page ${page}`, done: page - 1, total });
-      // Rebuilt from the same search rather than from a tab's `location.href` (`nextPageUrl`),
-      // because this run has no tab to read: the pages are the extension's, and it does not report
-      // back. The URL is byte-for-byte what page 1 was with the offset moved, which is what the
-      // panel's own next-page link would have produced.
-      await open(sweepSearchUrl({ ...search, page })!);
-      await awaitRecorded(deps, signal, hub, page);
+    const scanHub = async () => {
+      // Cleared first, so that "page 1 is in" below can only be this run's page 1 — see
+      // `resetSweepProgress`. Then page 1 alone, because it is the page that says how many there
+      // are; its record restarts the count (`sweepProgress`), so a sweep abandoned halfway last
+      // time is not resumed from its old total — the search may well have a different shape today.
+      await deps.resetSweep(hub.id);
+      onProgress({ phase: 'scan', label: `${hub.label} — page 1`, done: 0, total: null });
+      await open(first);
+      const recorded = await awaitRecorded(deps, signal, hub, 1);
       summary.pagesScanned++;
+      const total = recorded.pagesTotal ?? 1;
+
+      for (let page = 2; page <= total; page++) {
+        onProgress({ phase: 'scan', label: `${hub.label} — page ${page}`, done: page - 1, total });
+        // Rebuilt from the same search rather than from a tab's `location.href` (`nextPageUrl`),
+        // because this run has no tab to read: the pages are the extension's, and it does not
+        // report back. The URL is byte-for-byte what page 1 was with the offset moved, which is
+        // what the panel's own next-page link would have produced.
+        await open(sweepSearchUrl({ ...search, page })!);
+        await awaitRecorded(deps, signal, hub, page, total);
+        summary.pagesScanned++;
+      }
+    };
+
+    try {
+      await scanHub();
+    } catch (e) {
+      if (!(e instanceof SearchChanged)) throw e;
+      // Once. The pages already counted were recorded — they are just filed under a sweep the
+      // database has since restarted — so the count stands and the hub goes again from page 1.
+      await scanHub();
     }
     summary.hubsScanned++;
   }
@@ -198,11 +230,19 @@ async function awaitRecorded(
   signal: AbortSignal,
   hub: Place,
   page: number,
+  /** The total page 1 reported, for every page after it. A row that says otherwise is a restarted
+   *  count, not a recorded page — see `SearchChanged`. */
+  expectedTotal?: number,
 ): Promise<HubSweep> {
   const deadline = deps.now().getTime() + RECORD_TIMEOUT_MS;
   for (;;) {
     const sweep = (await deps.listSweeps()).find((s) => s.placeId === hub.id) ?? null;
-    if (sweep && sweep.pagesTotal !== null && recordedPage(sweep.pagesSeen, page)) return sweep;
+    if (sweep && sweep.pagesTotal !== null && recordedPage(sweep.pagesSeen, page)) {
+      if (expectedTotal !== undefined && sweep.pagesTotal !== expectedTotal) {
+        throw new SearchChanged(hub.label, expectedTotal, sweep.pagesTotal);
+      }
+      return sweep;
+    }
     if (deps.now().getTime() >= deadline) throw new PageNotRecorded(hub.label, page);
     await deps.sleep(RECORD_POLL_MS, signal);
   }
@@ -211,12 +251,9 @@ async function awaitRecorded(
 /** Whether `pagesSeen` shows this page recorded *by this run*.
  *
  *  Page 1 restarts the count (`sweepProgress`), so after its record the list is exactly `[1]` —
- *  and asking for exactly that, rather than "includes 1", is what stops a sweep abandoned on page
- *  three last week from answering for the page that has only just been opened. The one case this
- *  cannot tell apart is a previous run abandoned on page 1 *exactly*, whose old total is then read
- *  as today's: the pages opened against it are recorded either way, and if the total has changed
- *  the hub is left not-quite-swept, which widens the next window rather than narrowing it. That is
- *  the safe direction — see `sweepWindow`. */
+ *  and with the progress cleared before page 1 was opened (`resetSweep`), exactly `[1]` can only
+ *  be this run's. "Includes 1" would have let a sweep abandoned on page three last week answer for
+ *  a page that had only just been opened. */
 function recordedPage(pagesSeen: number[], page: number): boolean {
   return page === 1 ? pagesSeen.length === 1 && pagesSeen[0] === 1 : pagesSeen.includes(page);
 }
@@ -225,6 +262,7 @@ async function fillIn(
   { onProgress, deps }: FullSweepOptions,
   summary: FullSweepSummary,
   open: (url: string) => Promise<void>,
+  filled: Set<string>,
 ): Promise<void> {
   // Asked after the scan, not before it: the point of scanning first is that the worklist here
   // includes what the scan just found. Newest sighting first, as the Sweep screen's own run goes.
@@ -232,6 +270,7 @@ async function fillIn(
   for (const [i, row] of targets.entries()) {
     onProgress({ phase: 'fill', label: row.displayAddress || row.rightmoveId, done: i, total: targets.length });
     await open(listingUrl(row.rightmoveId));
+    filled.add(row.rightmoveId);
     summary.filledIn++;
   }
 }
@@ -240,10 +279,14 @@ async function recheck(
   { onProgress, deps }: FullSweepOptions,
   summary: FullSweepSummary,
   open: (url: string) => Promise<void>,
+  filled: Set<string>,
 ): Promise<void> {
-  // Read now rather than at the start, for the same reason as the fill-in: a flat the fill-in just
-  // opened has a fresh `lastSeenAt` and is not due — asking earlier would open it twice.
-  const targets = recheckTargets(await deps.shortlist(), deps.now());
+  // Read now rather than at the start, so the list reflects the scan — and minus what the fill-in
+  // opened a moment ago, because the tab that rewrites a flat's `lastSeenAt` has not necessarily
+  // finished, and a list that still saw the old date would open the same flat twice in a minute.
+  const targets = recheckTargets(await deps.shortlist(), deps.now()).filter(
+    (row) => !filled.has(row.rightmoveId),
+  );
   for (const [i, row] of targets.entries()) {
     onProgress({ phase: 'recheck', label: row.displayAddress || row.rightmoveId, done: i, total: targets.length });
     await open(listingUrl(row.rightmoveId));

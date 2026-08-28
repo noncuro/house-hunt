@@ -1418,6 +1418,26 @@ export async function recordSweepPage(
   return toHubSweep(data);
 }
 
+/** Forget which pages of this place's sweep in progress are in, before a fresh pass opens page 1.
+ *
+ *  For the unattended sweep, which has no tab to read and learns that a page landed only by
+ *  reading this row back. Page 1 restarts the count, so "recorded" is `pages_seen = [1]` — but a
+ *  pass abandoned on page 1 *last week* left exactly that, and the run would take last week's row
+ *  for today's, page on before anything had been written, and stitch today's pages onto a total
+ *  from a search that has since changed shape. Clearing first is what makes `[1]` mean this run.
+ *
+ *  Only the progress. `last_swept_at` is the record of the last *complete* pass and is what dates
+ *  the next window; touching it here would widen or narrow a search on the strength of nothing. */
+export async function resetSweepProgress(placeId: string): Promise<void> {
+  const projectId = await activeProjectId();
+  const { error } = await db()
+    .from('hub_sweep')
+    .update({ pages_total: null, pages_seen: [] })
+    .eq('project_id', projectId)
+    .eq('place_id', placeId);
+  fail('clearing sweep progress', error);
+}
+
 /** Fill in postcode-accurate coordinates for anything in this project that hasn't got them.
  *  Returns how many were resolved. Idempotent: rows that already have coordinates are never
  *  looked at again.

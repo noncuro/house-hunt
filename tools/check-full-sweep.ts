@@ -87,6 +87,10 @@ function fakeWorld({
     async listSweeps() {
       return [...sweeps.values()];
     },
+    async resetSweep(placeId) {
+      const row = sweeps.get(placeId);
+      if (row) sweeps.set(placeId, { ...row, pagesTotal: null, pagesSeen: [] });
+    },
     async pending() {
       return pending;
     },
@@ -101,7 +105,7 @@ function fakeWorld({
     },
     now: () => new Date(clock),
   };
-  return { deps, opened, sweeps, seed: (s: HubSweep) => sweeps.set(s.placeId!, s) };
+  return { deps, opened, sweeps, pagesPerHub, seed: (s: HubSweep) => sweeps.set(s.placeId!, s) };
 }
 
 const noop = () => {};
@@ -158,7 +162,8 @@ async function main() {
     check('page 2 is not opened until page 1 is read back', firstRecorded !== -1 && secondOpen > firstRecorded, order.join(' | '));
   }
   {
-    // A sweep abandoned on page 3 last week says pagesSeen [1,2,3]. That is not today's page 1.
+    // A sweep abandoned on page 1 last week says pagesSeen [1] of 5 — byte for byte what today's
+    // page 1 will say, except for the total. The reset is what keeps it from answering.
     const world = fakeWorld({ pagesPerHub: { a: 2 }, landAfter: 2 });
     world.seed({
       hub: 'a',
@@ -168,7 +173,7 @@ async function main() {
       lastWindowDays: null,
       locationIdentifier: null,
       pagesTotal: 5,
-      pagesSeen: [1, 2, 3],
+      pagesSeen: [1],
     });
     const summary = await runFullSweep({
       hubs: [place('a', 'Angel')],
@@ -196,6 +201,33 @@ async function main() {
     check('a page that never records stops the run', /page 1 of Angel/.test(error), error || 'no error');
     check('…without opening the pages after it', world.opened.length === 1, `${world.opened.length} opened`);
     check('…after the timeout, not before', world.deps.now().getTime() - started >= RECORD_TIMEOUT_MS);
+  }
+
+  {
+    // The count changes under the run: page 1 said 3 pages, and by page 2 a listing has landed
+    // and the search says 4. The database restarts the count from page 2; the run must notice,
+    // start the hub again, and finish it against the new total.
+    const world = fakeWorld({ pagesPerHub: { a: 3 } });
+    const deps: FullSweepDeps = {
+      ...world.deps,
+      async openTab(url) {
+        if (world.opened.length === 1) world.pagesPerHub.a = 4;
+        await world.deps.openTab(url);
+      },
+    };
+    const summary = await runFullSweep({
+      hubs: [place('a', 'Angel')],
+      criteria: CRITERIA,
+      intervalMs: 1000,
+      signal: new AbortController().signal,
+      onProgress: noop,
+      deps,
+    });
+    const final = world.sweeps.get('a')!;
+    check('a total that changes mid-run restarts the place', final.pagesSeen.join(',') === '1,2,3,4', `ended with pages ${final.pagesSeen.join(',')} of ${final.pagesTotal}`);
+    // Five, not six: the page that revealed the new total is what threw, and it is counted as
+    // part of the restarted pass rather than twice.
+    check('…and still counts it as one place', summary.hubsScanned === 1 && summary.pagesScanned === 5, `${summary.pagesScanned} pages`);
   }
 
   console.log('\nthen the listings');
