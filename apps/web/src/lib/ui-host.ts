@@ -1,4 +1,5 @@
 import type { UiHost } from '@house-hunt/ui';
+import { listingUrl } from '@house-hunt/core';
 import { stationWalks } from '@house-hunt/core/db';
 import { openTabExtension } from './bridge';
 
@@ -17,8 +18,7 @@ export const webHost: UiHost = {
   stationWalks,
 
   async openListing(rightmoveId) {
-    const url = `https://www.rightmove.co.uk/properties/${rightmoveId}`;
-    const reply = await openTabExtension(url);
+    const reply = await openTabExtension(listingUrl(rightmoveId));
     if (!reply) {
       throw new Error(
         'the extension did not answer — a fill-in run opens each listing in a background tab, ' +

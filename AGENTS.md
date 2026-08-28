@@ -171,7 +171,8 @@ Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `hub
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint), `sync` (the
 `_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a
 shared fix could sit unshipped with every check green),
-`one-client`, `bridge`, `withdrawn`. Each pins reasoning invisible when wrong — a bad bearing still
+`one-client`, `bridge`, `withdrawn`, `recheck`, `full-sweep` (the unattended sweep's sequencing,
+against a fake extension and clock). Each pins reasoning invisible when wrong — a bad bearing still
 looks like a bearing.
 
 Needing a local Supabase (`supabase start`, ports 5434x; not in `check:all`): `pnpm check:rls`

@@ -88,6 +88,10 @@ const ANALYSIS_FUNCTION = `${import.meta.env.WXT_SUPABASE_URL}/functions/v1/anal
  *  an alarm wakes it. A dropped timer would leak exactly the tab this is meant to reap. */
 const SWEEP_TAB_TTL_MINUTES = 0.5;
 const CLOSE_SWEEP_TAB_ALARM = 'close-sweep-tab:';
+/** What `tab:open` agrees to open — a listing, or a rental search page. Anchored on the host and
+ *  the path, so a URL that merely *mentions* a listing somewhere in its query does not pass. */
+const OPENABLE_URL =
+  /^https:\/\/www\.rightmove\.co\.uk\/(properties\/\d+|property-to-rent\/find\.html\?)/;
 
 
 export default defineBackground(() => {
@@ -407,8 +411,14 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       // Rightmove only. The URL comes from a content script, and a content script is running in a
       // page whose scripts we do not control; a worker that opened whatever it was handed would
       // be a redirector for anything that got a message into it.
-      if (!/^https:\/\/www\.rightmove\.co\.uk\/properties\/\d+/.test(request.url)) {
-        throw new Error(`refusing to open ${request.url} — only Rightmove listings`);
+      //
+      // Two shapes and no more: a listing, and a rental search (`find.html`, the one page the sweep
+      // panel runs on). The second is what lets the website's unattended sweep page through a
+      // neighbourhood's results the way a person would — each page is a real navigation in a real
+      // background tab, recorded by the same panel that records a page you opened yourself. Nothing
+      // here fetches a search; see the standing rule in AGENTS.md.
+      if (!OPENABLE_URL.test(request.url)) {
+        throw new Error(`refusing to open ${request.url} — only Rightmove listings and rental searches`);
       }
       const tab = await chrome.tabs.create({ url: request.url, active: false });
       // Schedule its own closing. Keyed by tab id so each tab reaps exactly itself, and only when the

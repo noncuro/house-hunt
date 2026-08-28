@@ -5,8 +5,8 @@ import type { SignInOutcome } from './db/session';
  *  Four messages, and deliberately few (design D3). Nothing about a flat, a verdict or a project
  *  crosses this — both surfaces read the database directly, and the bridge exists to keep two
  *  sessions in step and to lend the website the one browser capability it lacks: opening a listing
- *  in a background tab (`open-tab`). Even that carries only a URL, and only a Rightmove listing URL
- *  the worker agrees to.
+ *  in a background tab (`open-tab`). Even that carries only a URL, and only a Rightmove listing or
+ *  rental-search URL the worker agrees to.
  *
  *  **Why two sessions rather than one shared.** Supabase rotates the refresh token on every use and
  *  revokes the family when a spent one is presented. Two holders of one token diverge the first time
@@ -35,11 +35,13 @@ export type BridgeAsk =
    *  on Rightmove after you thought you had left, which is the sort of thing you only discover on
    *  someone else's laptop. */
   | { kind: 'sign-out' }
-  /** "Open this Rightmove listing in a background tab." The one thing the website cannot do for
+  /** "Open this Rightmove page in a background tab." The one thing the website cannot do for
    *  itself: a paced fill-in run needs `chrome.tabs.create`, which a page has no access to and
    *  whose background tab a browser does not throttle the way it does `window.open` from a timer.
-   *  Only the URL crosses, and the worker refuses anything that is not a Rightmove listing — so this
-   *  stays a relay to a capability the extension already had, not a general "open any tab" primitive. */
+   *  Only the URL crosses, and the worker refuses anything that is not a Rightmove listing or a
+   *  rental search page (the second is how the unattended sweep pages through a neighbourhood) —
+   *  so this stays a relay to a capability the extension already had, not a general "open any tab"
+   *  primitive. */
   | { kind: 'open-tab'; url: string };
 
 /** What the extension made of it.
