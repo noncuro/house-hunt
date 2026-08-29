@@ -40,12 +40,8 @@
  */
 import { requireActiveProject, requireCaller } from '../_shared/caller.ts';
 import { body, eq, HttpError, requireEnv, rest, SERVICE_KEY, serve, SUPABASE_URL } from '../_shared/http.ts';
-import {
-  listingFromHtml,
-  ListingWithdrawn,
-  rightmoveListingId,
-  rightmoveListingUrl,
-} from '../_shared/listing.ts';
+import { listingFromHtml, ListingWithdrawn, rightmoveListingId } from '../_shared/listing.ts';
+import { listingUrl } from '../_shared/sweep.ts';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
@@ -109,7 +105,7 @@ type Result =
   | { status: 'unreadable'; rightmoveId: string; message: string };
 
 async function read(id: string): Promise<Result> {
-  const url = rightmoveListingUrl(id);
+  const url = listingUrl(id);
   // The single request. Read the block at the top of this file before adding a second one.
   //
   // The fetch and the body read are inside one deadline because `AbortSignal.timeout` *is* one: it

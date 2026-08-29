@@ -53,13 +53,6 @@ export function rightmoveListingId(url: string): string | null {
   return legacy ? legacy[1]! : null;
 }
 
-/** The canonical page for a listing id — what we fetch, and what we store as its URL, so two people
- *  pasting the same flat from a search page and from a shared link do not record two spellings of
- *  one address. */
-export function rightmoveListingUrl(id: string): string {
-  return `https://www.rightmove.co.uk/properties/${id}`;
-}
-
 // ------------------------------------------------------------------------------------------------
 // Finding and decoding window.__PAGE_MODEL.
 // ------------------------------------------------------------------------------------------------
