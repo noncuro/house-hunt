@@ -66,6 +66,16 @@ begin
   if v_reason is not null and not p_no_route then
     raise exception 'cache_travel: a journey of % seconds does not need a reason for having none', p_seconds;
   end if;
+  -- And the other way round, which is the whole point of the column. `p_reason` has to keep its
+  -- default — the ordinary path writes a duration and has no reason to give — so dropping the
+  -- eight-argument form below does not actually stop an old caller: eight positional arguments
+  -- still resolve here, with the ninth defaulted, and write exactly the reasonless no-route row
+  -- this migration exists to end. Refusing it here is what closes that, and it closes it for a
+  -- caller nobody has thought about rather than only for the ones in this repo. Rows written before
+  -- the column existed keep their nulls: this is a rule about new writes, not about history.
+  if p_no_route and v_reason is null then
+    raise exception 'cache_travel: a cached "there is no journey" has to say what settled it';
+  end if;
 
   insert into public.travel_time (
     origin_postcode, dest_postcode, mode, seconds, changes, no_route, journeys, basis, reason, computed_at)
@@ -87,6 +97,9 @@ revoke execute on function public.cache_travel(text, text, text, int, int, boole
 grant execute on function public.cache_travel(text, text, text, int, int, boolean, jsonb, text, text)
   to service_role;
 
--- The eight-argument form is dropped so a caller that has not been updated fails at the door rather
--- than quietly writing rows with no reason on them, which is the state this migration exists to end.
+-- The eight-argument form is dropped so a caller that has not been updated is not left holding a
+-- second, reasonless implementation of this. It is the smaller half of the guarantee, though, and
+-- not the one that matters: eight positional arguments still resolve to the function above with
+-- `p_reason` defaulted, which is why the refusal is written into the body rather than trusted to
+-- the signature.
 drop function if exists public.cache_travel(text, text, text, int, int, boolean, jsonb, text);
