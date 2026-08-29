@@ -5,6 +5,9 @@
 .lightbox {
   position: fixed;
   inset: 0;
+  /* The track is three viewports wide and two of them hang off the sides. Without this they are
+     laid out beyond the edge and the page gains a horizontal scrollbar it can be dragged along. */
+  overflow: hidden;
   /* Above everything, including the panel that opened it. On the shortlist a small number would
      do; in the panel it has to clear the near-ceiling stack the panel uses to sit over Rightmove
      in the first place, and 2000 put the gallery *behind* the panel that opened it. One number
@@ -27,6 +30,42 @@
    backdrop the plan is very nearly invisible, which is the same trap that made the model call
    one "almost entirely obscured" until png.ts flattened it. Photos are opaque, so the white
    costs them nothing. */
+/* Three slides, each the width of the viewport, with the middle one exactly over it: the
+   neighbours are therefore one full screen away and invisible until a drag moves the track. Laid
+   out this way rather than by offsetting each photo from the last, because the photos are all
+   different sizes and a gap measured from an image's own edge would leave the one before it
+   already peeping in on a portrait shot. */
+.lightbox-track {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -100vw;
+  width: 300vw;
+  display: flex;
+  /* One duration for both jobs this runs — springing a short swipe back, and carrying a finished
+     one a whole screen — even though they differ by an order of magnitude in distance. It was
+     briefly 220ms on the argument that a screen width crossed in 160 would read as a flash; tried
+     on a phone, it read as drag instead, and the quicker one is what a swipe should feel like. Kept
+     at the value that was there before the track existed, and settled by hand on a real device
+     rather than by the arithmetic, which had it wrong. */
+  transition: transform 160ms ease-out;
+}
+
+.lightbox-slide {
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Over the track, which now covers the whole overlay — they are drawn before it in the markup, so
+   without this the track takes every click meant for them. */
+.lightbox-close,
+.lightbox-step,
+.lightbox-bar {
+  z-index: 1;
+}
+
 .lightbox-image {
   background: var(--white);
   max-width: 88vw;
@@ -42,11 +81,11 @@
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
-  transition: transform 160ms ease-out;
 }
 
-/* While the finger is down the photo tracks it exactly; the transition above is what springs it
-   back afterwards, and easing it on the way out would make the drag feel like it was lagging. */
+/* While the finger is down the track follows it exactly; the transition on `.lightbox-track` is
+   what springs it back afterwards, and easing it on the way out would make the drag feel like it
+   was lagging. */
 .lightbox-dragging {
   transition: none;
 }

@@ -659,11 +659,28 @@ code {
 }
 
 .menu-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   padding: var(--s2);
   border-top: 1px solid var(--line-3);
   margin-top: var(--s1);
   font-size: 12.5px;
   color: var(--muted);
+}
+
+/* Says what the name under it is for. Quieter and smaller than the name itself, so the row reads as
+   one labelled control rather than as two more things to choose between. */
+.menu-foot-label {
+  font-size: 11px;
+  color: var(--fainter);
+}
+
+/* The pencil is the only thing marking this as editable, and in a menu there is no surrounding
+   prose to imply it — so here it stays visible rather than waiting for a hover, which a touch
+   screen never sends at all. */
+.menu-foot .inline-name-edit {
+  opacity: 1;
 }
 
 /* --- Places: the toolbar ------------------------------------------------------------------- */
