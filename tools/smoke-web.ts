@@ -1405,12 +1405,16 @@ async function mapState(page: Page): Promise<{ pins: number; empty: number; desc
     const pins = [...document.querySelectorAll('.leaflet-interactive')];
     const host = document.querySelector<HTMLElement>('.leaflet-container');
     const viewBox = document.querySelector('.leaflet-overlay-pane svg')?.getAttribute('viewBox');
+    // The tile's own address says where this map is looking, in `/{z}/{x}/{y}.png`, which no other
+    // readable part of the DOM does — Leaflet keeps the centre and the zoom to itself.
+    const tile = document.querySelector<HTMLImageElement>('.leaflet-tile')?.getAttribute('src');
     return {
       pins: pins.length,
       empty: pins.filter((pin) => pin.getAttribute('d') === 'M0 0').length,
       description:
         `the container measures ${host === null ? 'nothing — there is none' : `${host.clientWidth}x${host.clientHeight}`}` +
-        ` and the renderer's viewBox is "${viewBox ?? 'none'}"`,
+        `, the renderer's viewBox is "${viewBox ?? 'none'}"` +
+        ` and it is asking for ${tile ?? 'no tiles at all'}`,
     };
   });
 }

@@ -68,7 +68,19 @@ const lastView = new Map<string, { center: L.LatLngLiteral; zoom: number }>();
  *  Asking Leaflet to re-measure first costs one forced layout and makes the guard mean what it
  *  says — "this container has no size *now*" rather than "it had none whenever Leaflet last
  *  looked". The pan `invalidateSize` does on the way is irrelevant here: `fitBounds` below sets the
- *  view outright a line later. */
+ *  view outright a line later.
+ *
+ *  `animate: false` is the other half, and it is the half that was actually breaking the browser
+ *  check. Framing the pins is not a gesture — it is where the map starts, and nobody is watching it
+ *  arrive — so the animation buys nothing, and what it costs is a view change that does not happen
+ *  when this function returns. Leaflet's animated zoom schedules itself in a
+ *  `requestAnimationFrame` and closes itself with a 250ms timer, and `setView` reports success the
+ *  moment it has scheduled that: for a quarter of a second afterwards the map is at the old view
+ *  with the tile layer holding back its new tiles and every marker still projected against the zoom
+ *  it has left, which Leaflet draws as the empty path `M0 0`. A frame that never comes — a loaded CI
+ *  runner throttling `requestAnimationFrame` is the ordinary way — drops the view change on the
+ *  floor entirely, and nothing retries it. Refusing the animation takes the synchronous path
+ *  instead: the view, the tiles and the markers all move before the call returns. */
 function fit(instance: L.Map, located: ShortlistEntry[]): boolean {
   if (located.length === 0) return false;
   instance.invalidateSize();
@@ -77,6 +89,7 @@ function fit(instance: L.Map, located: ShortlistEntry[]): boolean {
   instance.fitBounds(L.latLngBounds(located.map((e) => [e.lat!, e.lon!] as [number, number])), {
     padding: [40, 40],
     maxZoom: 15,
+    animate: false,
   });
   return true;
 }
