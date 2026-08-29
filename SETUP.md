@@ -176,15 +176,14 @@ other. It was also tied to a moving part: Supabase issues both a legacy JWT and 
 service key and injects whichever is current as `SUPABASE_SERVICE_ROLE_KEY`, so the vault's copy and
 the function's copy stopped being the same string with nothing on either side to show it — every
 scheduled run came back 401 while a hand-rolled call with the other key returned 200 on the same
-deployment. The token below is ours, means one thing, and is not tied to the platform's key rotation
+deployment. The token above is ours, means one thing, and is not tied to the platform's key rotation
 at all. It cannot go in `Authorization` or `apikey` because the gateway validates those as project
 keys, which is what the publishable key is for; the token travels in `X-Backfill-Token`.
 
 **Upgrading an existing deployment:** add the two new secrets, confirm a run works, then drop the
-old one — `delete from vault.secrets where name = 'travel_service_role_key';`. Nothing removes it for
-you: a
-migration that deletes a secret it did not create destroys a working deployment if it is ever re-run
-mid-rollout.
+old one — `delete from vault.secrets where name = 'travel_service_role_key';`. Nothing removes it
+for you: a migration that deletes a secret it did not create destroys a working deployment if it is
+ever re-run mid-rollout.
 
 To check it, on the database connection in AGENTS.md:
 
