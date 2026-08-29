@@ -891,12 +891,26 @@ export async function getStationPoint(name: string): Promise<StationInfo | null 
     : { lat: data.lat, lon: data.lon, lines: (data.lines ?? []) as string[] };
 }
 
+/** The columns of `property_analysis` that become facts — every one `toAnalysis` reads, and no
+ *  other. Named rather than `*`, because the row also carries `captions` (one per photo) and `raw`
+ *  (the model's whole reply), which nothing on either surface reads and which weigh more than
+ *  everything else on the row put together. Embedded into the shortlist for four hundred flats,
+ *  `*` made that one request 2.8 MB and ten seconds — the page's entire time-to-first-card. */
+const ANALYSIS_COLUMNS =
+  'rightmove_id, status, model, analysed_at, image_count, has_floorplan, floorplan_sqft, ' +
+  'floorplan_sqft_source, floorplan_confidence, floorplan_legible, bedrooms, bathrooms, ' +
+  'biggest_room_label, biggest_room_sqft, biggest_room_confidence, has_bathtub, bathtub_confidence, ' +
+  'has_outdoor_space, outdoor_kind, outdoor_sqft, outdoor_is_estimate, outdoor_confidence, ' +
+  'has_dishwasher, dishwasher_confidence, laundry, laundry_confidence, natural_light, ' +
+  'natural_light_confidence, sleeping_separation, sleeping_separation_confidence, ' +
+  'utilities_included, utilities_confidence, is_house_share, house_share_confidence, summary';
+
 export async function getAnalysis(rightmoveId: string): Promise<Analysis | null> {
   // A claimed-but-unfinished row, or a failed one, is not an analysis — returning it would
   // render a panel full of nulls that looks like a confident "nothing found".
   const { data, error } = await db()
     .from('property_analysis')
-    .select('*')
+    .select(ANALYSIS_COLUMNS)
     .eq('rightmove_id', rightmoveId)
     .eq('status', 'done')
     .maybeSingle();
@@ -998,7 +1012,9 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
   const { data, error } = await db()
     .from('property')
     .select(
-      'rightmove_id, url, display_address, postcode, price, bedrooms, bathrooms, floor_area_sqft, floor_area_source, floorplan_url, image_urls, furnish_type, listing_update, nearest_stations, last_seen_at, latitude, longitude, postcode_lat, postcode_lon, verdict(*), property_stage(*), property_analysis(*), project_property!inner(project_id, last_seen_at)',
+      'rightmove_id, url, display_address, postcode, price, bedrooms, bathrooms, floor_area_sqft, floor_area_source, floorplan_url, image_urls, furnish_type, listing_update, nearest_stations, last_seen_at, latitude, longitude, postcode_lat, postcode_lon, verdict(*), property_stage(*), ' +
+        // Named columns, not `*` — see `ANALYSIS_COLUMNS` for the two this leaves behind and why.
+        `property_analysis(${ANALYSIS_COLUMNS}), project_property!inner(project_id, last_seen_at)`,
     )
     .eq('project_property.project_id', projectId)
     // Scoped for exactly the reason the verdict embed below is, and with the same consequence if it
