@@ -45,6 +45,16 @@ export function Gallery({
   // Only worth swiping through more than one photo, and `step` would be a no-op anyway.
   const swipeable = images.length > 1;
 
+  /** The photos either side, which are on screen the moment a swipe starts.
+   *
+   *  A drag used to move the current photo alone across an empty backdrop: the gallery took the
+   *  gesture and gave back no sign of what was coming, so a swipe was a guess that something was
+   *  over there. Since `step` wraps, there is always a photo on both sides — the ends of the list
+   *  are not ends — so both are always drawn and neither has to be a special case. With two photos
+   *  they are the same photo, which is what wrapping means and reads correctly either way. */
+  const before = swipeable ? (at - 1 + images.length) % images.length : null;
+  const after = swipeable ? (at + 1) % images.length : null;
+
   /** Pointer events rather than touch events: one set of handlers covers a finger, a stylus and a
    *  mouse dragged across the photo, and the panel's gallery opens inside a shadow root where the
    *  fewer listeners the better. The pointer is captured so a finger that leaves the image mid-swipe
@@ -138,32 +148,54 @@ export function Gallery({
         ‹
       </button>
 
-      {/* Stop propagation on the image itself so clicking the photo doesn't dismiss it — only
-          clicking the backdrop around it does. That is also what makes the swipe below safe: a
-          drag ends in a click on whatever it started on, and a swipe across the photo must not be
-          read as a tap on the backdrop asking to leave. */}
-      <img
-        className={drag === null ? 'lightbox-image' : 'lightbox-image lightbox-dragging'}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        // A gesture the browser takes over ends as a cancel and never as an up. Its own handler,
-        // not this one: without any handler the drag would stick and the photo would sit held
-        // mid-swipe, and with `onPointerUp` here it would advance on a gesture that was abandoned.
-        onPointerCancel={onPointerCancel}
-        // Follows the finger, and springs back when the swipe falls short — the drag is the only
-        // thing that says the gesture is understood before it is finished. Damped rather than
-        // one-to-one so the photo cannot be dragged clean off the screen and left there.
-        style={drag === null ? undefined : { transform: `translateX(${drag * 0.6}px)` }}
-        src={images[at]}
-        alt=""
-        // The browser's own image drag starts about thirty pixels into a mouse swipe and takes the
-        // pointer stream with it — no more moves, no `pointerup`, and the photo left sitting where
-        // the finger stopped. Nothing here wants a draggable image; the CSS above stops the
-        // long-press menu, and this stops the drag.
-        draggable={false}
+      {/* Three slides a viewport wide each, the middle one centred, so the neighbours sit exactly
+          off either edge until a drag brings them in. Moving the whole track rather than the photo
+          is the entire point: a swipe now shows what it is swiping to.
+
+          Stop propagation here so clicking a photo doesn't dismiss the gallery — only the backdrop
+          around it does. On the track rather than on each image, because a neighbour is on screen
+          and clickable the moment a drag begins, and a tap that lands on one must not be read as a
+          tap on the backdrop asking to leave. */}
+      <div
+        className={drag === null ? 'lightbox-track' : 'lightbox-track lightbox-dragging'}
+        // One-to-one with the finger now, where a lone photo was damped to keep it from being
+        // dragged off the screen and left there. The damping was what stopped the neighbours ever
+        // lining up with the gesture; the track cannot be stranded, because a released swipe either
+        // completes or springs back.
+        //
+        // When it completes there is no separate animation: `at` moves on and `drag` clears in the
+        // same commit, so the transition below runs from the offset the finger left to zero while
+        // the middle slide already holds the new photo — which draws it arriving from the side the
+        // swipe came from, and is why finishing needs no state of its own.
+        style={drag === null ? undefined : { transform: `translateX(${drag}px)` }}
         onClick={(e) => e.stopPropagation()}
-      />
+      >
+        <div className="lightbox-slide">
+          {before !== null && <img className="lightbox-image" src={images[before]} alt="" draggable={false} />}
+        </div>
+        <div className="lightbox-slide">
+          <img
+            className="lightbox-image"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            // A gesture the browser takes over ends as a cancel and never as an up. Its own handler,
+            // not this one: without any handler the drag would stick and the photo would sit held
+            // mid-swipe, and with `onPointerUp` here it would advance on a gesture that was abandoned.
+            onPointerCancel={onPointerCancel}
+            src={images[at]}
+            alt=""
+            // The browser's own image drag starts about thirty pixels into a mouse swipe and takes
+            // the pointer stream with it — no more moves, no `pointerup`, and the photo left sitting
+            // where the finger stopped. Nothing here wants a draggable image; the CSS stops the
+            // long-press menu, and this stops the drag.
+            draggable={false}
+          />
+        </div>
+        <div className="lightbox-slide">
+          {after !== null && <img className="lightbox-image" src={images[after]} alt="" draggable={false} />}
+        </div>
+      </div>
 
       <button
         className="lightbox-step lightbox-next"

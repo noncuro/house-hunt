@@ -239,7 +239,16 @@ function HuntName({
   if (projects.length < 2) {
     return (
       <h1 className="shell-hunt">
-        <InlineName value={project.name} label="this house hunt" busy={busy} onSave={onRename} />
+        {/* `inline-name` is what reveals the pencil: it is drawn at `opacity: 0` and brought back by
+            `.inline-name:hover`. Without the class that rule can never match, so the only way to
+            reach the rename was to tab to a button nothing had ever drawn. */}
+        <InlineName
+          className="inline-name"
+          value={project.name}
+          label="this house hunt"
+          busy={busy}
+          onSave={onRename}
+        />
       </h1>
     );
   }
@@ -273,8 +282,22 @@ function HuntName({
                 {p.id === project.id && <Icon name="tick" size={13} />}
               </button>
             ))}
+            {/* Labelled, because this is the hunt you are already in and the rows above it are
+                hunts you can switch to. Unlabelled it was the active hunt's name a second time,
+                under a divider, in a list of names that are all buttons — which reads as a
+                duplicate of the row two lines up rather than as the control that renames it. The
+                pencil was no help either: it is drawn at `opacity: 0` and revealed by
+                `.inline-name:hover`, and the class that rule needs was not passed, so at rest there
+                was nothing here but the name. */}
             <div className="menu-foot">
-              <InlineName value={project.name} label="this house hunt" busy={busy} onSave={onRename} />
+              <span className="menu-foot-label">Rename this hunt</span>
+              <InlineName
+                className="inline-name"
+                value={project.name}
+                label="this house hunt"
+                busy={busy}
+                onSave={onRename}
+              />
             </div>
           </>
         )}
