@@ -153,6 +153,25 @@ export type LocationResult =
   | { status: 'rate-limited'; used: number; limit: number; retryAfterSeconds: number }
   | { status: 'failed'; message: string };
 
+/** What came back from asking the server to read one listing URL — the phone's way of adding a
+ *  flat, where there is no extension to read the page from.
+ *
+ *  Five outcomes rather than a listing-or-throw, because four of them are things to *say* and only
+ *  one is a fault. "That is not a Rightmove address" is a typo; "the agent has taken it down" is a
+ *  fact about the flat and often the answer somebody wanted; a rate limit is a wait. Collapsing
+ *  those into one error message is how a paste that failed for an obvious reason looks like a bug in
+ *  the app. `unreadable` is the one that is ours: the page loaded and we could not decode it, which
+ *  means Rightmove has changed something and the extension is about to break too. */
+export type AddListingResult =
+  | { status: 'added'; rightmoveId: string; displayAddress: string }
+  /** Already in this hunt. Recording it again is harmless — `record_property` is an upsert — so
+   *  this is a distinct answer rather than a refusal: the flat is there, and the caller opens it. */
+  | { status: 'already-here'; rightmoveId: string; displayAddress: string }
+  | { status: 'not-a-listing' }
+  | { status: 'withdrawn'; rightmoveId: string }
+  | { status: 'rate-limited'; used: number; limit: number; retryAfterSeconds: number }
+  | { status: 'failed'; message: string };
+
 /** Month-to-date spend against both caps. Both are checked, so the binding one is whichever is
  *  hit first; the view shows both rather than picking (design D9). */
 export interface SpendScope {

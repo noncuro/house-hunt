@@ -31,8 +31,13 @@ const SHARED = resolve(ROOT, 'supabase/functions/_shared');
 //  facts the panel already renders, and a second copy inside the model is exactly the thing the
 //  one-fact-one-renderer rule exists to prevent. `sweep.ts` and `hubs.ts` come with it because it
 //  imports their types.
+//  `listing.ts` joined when the website learned to add a flat from a pasted URL: the `listing`
+//  function reads the same `__PAGE_MODEL` out of fetched HTML that the content script reads off a
+//  live page, and a second copy of that decode is the one fork this repo can least afford — see the
+//  file's own header.
 const FILES = [
   'analysis.ts',
+  'listing.ts',
   'png.ts',
   'tfl.ts',
   'postcode.ts',

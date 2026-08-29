@@ -216,6 +216,16 @@
   opacity: 0.7;
 }
 
+/* And not at all where there is no key to press. The `keys` prop already means "triage binds 1, 2
+   and 3 on this screen" (see `Verdict.tsx`), which is true of the screen and not of the device —
+   so a phone, where triage is worked by thumb, would draw three keycaps naming shortcuts that
+   cannot be typed. Same query and same argument as `.keys-only` in the website's `style.css`. */
+@media (hover: none) and (pointer: coarse) {
+  .rm-rate-key {
+    display: none;
+  }
+}
+
 /* A rating that has been clicked but not yet acknowledged by the database. It reads as pressed
    straight away — waiting on a round trip to respond to a click feels broken — and the stripe
    says the other laptop hasn't seen it yet. */

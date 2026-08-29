@@ -45,6 +45,50 @@ const LONDON: [number, number] = [51.5074, -0.1278];
  *  `fitBounds`, staying there. */
 const lastView = new Map<string, { center: L.LatLngLiteral; zoom: number }>();
 
+/** Frame these flats, and say whether it counted.
+ *
+ *  It refuses a container with no size: Leaflet will happily fit bounds into a 0×0 map and the
+ *  result is a view of nowhere. The boolean is for a caller that wants to know whether anything
+ *  happened; the observer below simply calls it again on the next resize, because a size Leaflet
+ *  measured a frame ago is not evidence that the layout has finished — see `chosen`.
+ *
+ *  `invalidateSize()` first, because `Map.getSize()` is a cache rather than a measurement: Leaflet
+ *  measures the container while the map is being built and then never again until it is told to
+ *  look. Without this, the guard below means "the container had no size whenever Leaflet last
+ *  looked", which for a map built one tick too early is a judgement it can never revise — it would
+ *  answer 0×0 for the rest of its life and refuse to frame anything, forever. One forced layout
+ *  buys the guard the only version of the question worth asking. The pan `invalidateSize` does on
+ *  the way is irrelevant: `fitBounds` sets the view outright a line later.
+ *
+ *  That is insurance rather than a diagnosis, and it is worth saying so, because three attempts on
+ *  this branch went looking for a map that was framed at the wrong moment and the browser check
+ *  stayed red through all of them. What it turned out to be is below. The container measured
+ *  740x800 and the renderer's viewBox agreed with it: Leaflet knew its size perfectly, and every
+ *  pin was still the empty path.
+ *
+ *  `animate: false` is the fix. Framing the pins is not a gesture — it is where the map starts, and nobody is watching it
+ *  arrive — so the animation buys nothing, and what it costs is a view change that does not happen
+ *  when this function returns. Leaflet's animated zoom schedules itself in a
+ *  `requestAnimationFrame` and closes itself with a 250ms timer, and `setView` reports success the
+ *  moment it has scheduled that: for a quarter of a second afterwards the map is at the old view
+ *  with the tile layer holding back its new tiles and every marker still projected against the zoom
+ *  it has left, which Leaflet draws as the empty path `M0 0`. A frame that never comes — a loaded CI
+ *  runner throttling `requestAnimationFrame` is the ordinary way — drops the view change on the
+ *  floor entirely, and nothing retries it. Refusing the animation takes the synchronous path
+ *  instead: the view, the tiles and the markers all move before the call returns. */
+function fit(instance: L.Map, located: ShortlistEntry[]): boolean {
+  if (located.length === 0) return false;
+  instance.invalidateSize();
+  const { x, y } = instance.getSize();
+  if (x === 0 || y === 0) return false;
+  instance.fitBounds(L.latLngBounds(located.map((e) => [e.lat!, e.lon!] as [number, number])), {
+    padding: [40, 40],
+    maxZoom: 15,
+    animate: false,
+  });
+  return true;
+}
+
 export function ShortlistMap({
   projectId,
   entries,
@@ -84,6 +128,17 @@ export function ShortlistMap({
   const map = useRef<L.Map | null>(null);
   const markers = useRef(new Map<string, L.CircleMarker>());
   const firstRun = useRef(true);
+  /** Whether the view on screen is one the reader chose — by panning, by zooming, or by having
+   *  left the map here last time. Nothing may re-frame over it.
+   *
+   *  Deliberately *not* "have the pins been framed once", which is what stood here through three
+   *  attempts at the browser check and was never the right question. A fit that ran is not evidence
+   *  that the fit was right, so a flag set by one turns the first success into the last: whatever
+   *  the map is showing at that moment is what it shows from then on, and the only thing that could
+   *  have corrected it has been switched off. A pan is the one thing a re-frame must not overwrite,
+   *  and it is the only thing, so it is what this asks about — leaving the observer below free to
+   *  re-frame as often as the layout changes, which costs nothing when the view is already right. */
+  const chosen = useRef(false);
 
   const [ownAt, setOwnAt] = useState<string | null>(null);
   const controlled = selected !== undefined;
@@ -140,6 +195,11 @@ export function ShortlistMap({
     instance.on('moveend', () => {
       lastView.set(projectId, { center: instance.getCenter(), zoom: instance.getZoom() });
     });
+    // A mouse pan is the reader taking the view. Registered here, where there is certainly an
+    // instance to register on, rather than beside the wheel and pinch listeners it belongs with.
+    instance.on('dragstart', () => {
+      chosen.current = true;
+    });
 
     const pins = markers.current;
     return () => {
@@ -189,13 +249,82 @@ export function ShortlistMap({
     // removed.
     const restored = firstRun.current && lastView.has(projectId);
     firstRun.current = false;
-    if (located.length > 0 && !restored) {
-      instance.fitBounds(L.latLngBounds(located.map((e) => [e.lat!, e.lon!] as [number, number])), {
-        padding: [40, 40],
-        maxZoom: 15,
-      });
+    if (restored) {
+      // Where you left it, deliberately unfitted — and nothing below should undo that. A view you
+      // left is a view you chose, so it counts the same as a pan.
+      //
+      // `firstRun` is cleared above rather than held back until a run has pins. Holding it back
+      // reads better — it would keep a restored view when the flats arrive a frame late — and it
+      // makes `restored` a condition that never becomes false, so with an empty first run the pins
+      // are never framed at all. That is #55; it is not fixable here without the harness.
+      chosen.current = true;
+      return;
     }
+    fit(instance, located);
   }, [located, projectId]);
+
+  /** Re-measure when the container's size changes, and re-frame until the reader takes over.
+   *
+   *  `invalidateSize` is Leaflet's own answer to a container that was not its current size when the
+   *  map was made — the map is told to look again. A `ResizeObserver` rather than a one-off timer
+   *  because there is no single moment that is safe: the pane beside the map opens and closes, the
+   *  window is resized, and the first measurement can land before the layout it is measuring.
+   *
+   *  The re-frame is the half that matters, and it repeats on purpose. Fitting once and stopping
+   *  sounds tidier and is wrong: it makes the first fit final whether or not it was any good, on a
+   *  container that may still be settling. Each resize is another chance to be right, and it costs
+   *  nothing to take when the view is already correct.
+   *
+   *  `invalidateSize` is called here as well as inside `fit()`, which is not redundant: when the
+   *  reader has taken the view, `fit()` is not called at all, and a map whose pane has just been
+   *  resized still has to be told to look again or it draws the new shape at the old size.
+   *
+   *  What stops it is `chosen` — the reader having panned, zoomed, or arrived on a view they left
+   *  here before. That is the thing a re-frame must never overwrite, and it is a narrower and more
+   *  honest test than "has this run once".
+   *
+   *  Which gestures count is the fiddly part, and all three of these are load-bearing. `zoomstart`
+   *  and `movestart` are out: `fitBounds` fires both itself, so either would stop the repair on its
+   *  own first success — the trap in a different shape. `dragstart` is Leaflet's own and comes only
+   *  from `Map.Drag`, so it is safe, but it is a mouse pan and nothing else: pinch-zoom runs through
+   *  `Map.TouchZoom`, which calls `_moveStart` and fires neither, and there is no `wheel` on touch.
+   *  So a phone needs the two-finger `touchstart` too, or a reader who pinches and then rotates the
+   *  phone has their view taken off them by the resize that follows. */
+  const latest = useRef(located);
+  latest.current = located;
+  useEffect(() => {
+    const element = host.current;
+    if (!element) return;
+
+    const take = () => {
+      chosen.current = true;
+    };
+    const pinch = (event: TouchEvent) => {
+      if (event.touches.length > 1) take();
+    };
+    element.addEventListener('wheel', take, { passive: true });
+    element.addEventListener('touchstart', pinch, { passive: true });
+
+    // `map.current` is read inside the callback rather than captured here. The map is built in an
+    // effect above and so is normally in place by now, but "normally" is the word that made the
+    // rest of this comment necessary: a null there would mean no observer at all, and no repair.
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            const instance = map.current;
+            if (!instance) return;
+            instance.invalidateSize();
+            if (!chosen.current) fit(instance, latest.current);
+          });
+    observer?.observe(element);
+
+    return () => {
+      observer?.disconnect();
+      element.removeEventListener('wheel', take);
+      element.removeEventListener('touchstart', pinch);
+    };
+  }, []);
 
   // The pin under the docked card, panned to and highlighted. `panTo` rather than `setView` on
   // purpose: walking the pins must not change the zoom you chose.
@@ -308,7 +437,12 @@ export function ShortlistMap({
             </>
           ) : (
             <p className="dim map-side-empty">
-              Pick a pin and the flat shows up here. <kbd>←</kbd> <kbd>→</kbd> walk them west to east.
+              Pick a pin and the flat shows up here.{' '}
+              {/* The clause rather than the keycaps: hiding the two `kbd`s alone would leave
+                  "walk them west to east" hanging off the end of the sentence before it. */}
+              <span className="keys-only">
+                <kbd>←</kbd> <kbd>→</kbd> walk them west to east.
+              </span>
             </p>
           )}
         </aside>

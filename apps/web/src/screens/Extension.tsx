@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from '@house-hunt/ui';
 import { signInExtension, type ExtensionState } from '@/lib/bridge';
 import { EXPECTED_EXTENSION_VERSION, extensionBehind } from '@/lib/extension-version';
+import { useCanHoldExtension } from '@/lib/platform';
 import { keys, useExtension } from '@/lib/queries';
 
 /** Whether the Rightmove half of this is installed and signed in, and the one way to fix it if not.
@@ -39,6 +40,14 @@ export function ExtensionNotice({
   onInstall?: () => void;
 }) {
   const client = useQueryClient();
+  // Where no extension can be installed, there is nothing here worth saying. Every sentence below
+  // is about a Chrome extension: absent, signed out, out of date, on the wrong account. On a phone
+  // the true one is "absent", permanently and unfixably — Chrome for Android loads no extensions
+  // and iOS loads no Chrome extensions at all — so the banner would be a standing note about a
+  // thing that cannot be done, above the list somebody opened the app to read, with a button to a
+  // page of `chrome://extensions` steps. The phone's own way of putting a flat in the hunt is the
+  // Add button in the header, which is always there and does not need explaining here.
+  const extensionPossible = useCanHoldExtension();
   // One probe for the page. This and the Install screen each ran their own, each racing the
   // handshake's own two-second deadline, so the banner could say "not installed" directly above
   // Install's green "already installed (v0.3.1)" — the same question, asked twice, answered
@@ -56,7 +65,7 @@ export function ExtensionNotice({
   // extension…" above the shortlist is half a second of noise about something almost always fine —
   // but the space it might need is held from the first paint. Returning nothing here is what made
   // the page jump when the answer arrived, which is the whole point of the slot.
-  if (!state || dismissed) return <div className="notice-slot" />;
+  if (!extensionPossible || !state || dismissed) return <div className="notice-slot" />;
 
   // Staleness is orthogonal to sign-in — an out-of-date extension can be signed in, signed out, or
   // on the wrong account — so it renders as its own banner above whatever else this component has to

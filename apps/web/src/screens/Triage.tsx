@@ -488,7 +488,9 @@ export function Triage({
           <div className="triage-pane">
             {current && (
               <>
-                <p className="triage-keys dim">
+                {/* `keys-only`: the whole line is about keys, so on a touchscreen it goes rather
+                    than sitting there naming four that cannot be pressed. */}
+                <p className="triage-keys dim keys-only">
                   <kbd>j</kbd> <kbd>k</kbd> move · <kbd>1</kbd> not our place · <kbd>2</kbd> like it ·{' '}
                   <kbd>3</kbd> love it · <kbd>space</kbd> photos
                 </p>

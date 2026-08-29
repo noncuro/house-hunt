@@ -123,6 +123,7 @@ Roughly in the order the risk deserves.
 | Gap | Why it matters |
 |---|---|
 | **The other writes.** Adding a place, adding a hub, marking off-market, renaming a project, and bulk rating from triage are all asserted up to the button and no further. | These are the actions, and the reads are well covered only because reads are easy to assert. Rating one flat now goes all the way to Postgres, which is the pattern the rest should follow: click it, then read the row. Bulk rating is the deliberate exception — it writes verdicts nobody gave onto every ticked row, so it stops at the buttons being dead until something is ticked. |
+| **The phone half.** Nothing drives the service worker, the offline restore, the share target, or adding a flat by address beyond `check:listing`'s URL cases. | This is the whole of what a phone can do, and every piece of it fails quietly: a worker that caches nothing looks identical online, a restore that never runs looks like a slow load, and a share target that mis-parses lands somebody on the shortlist with no dialog and nothing to read. Most of it is drivable offline and belongs in `smoke:web` — `?add=<url>` must open the dialog prefilled, a paste that is not a listing must say so before the button does anything, `navigator.serviceWorker.ready` must resolve and `caches.match('/')` must find the shell, and the offline notice must appear under `context.setOffline(true)` over a shortlist that is still drawn. The one part that cannot be smoked is the fetch itself: `functions/listing` reaches Rightmove, and no harness here may (`tools/offline.ts`). |
 | **The gallery's gestures.** `smoke` opens it from the panel and asserts it paints over Rightmove; nothing drives the swipe, and nothing opens it on the website at all. | The swipe was checked by hand in a mobile-emulated Chromium driving real touch input through CDP — Playwright's own `touchscreen` only taps — and the cases worth keeping are the ones that are not the happy path: a short drag must not advance *or* dismiss, a cancelled gesture must not advance either, the arrows must still work after a pointer capture, and a tap on the photo must not close it. `smoke:web` could open it from a card's photo strip. |
 | **The Admin tab.** | Never opened by anything. It is admin-only, so the fixture would need an admin — one row in `admin_email`. Users, projects, invites and spend all render there against real queries. |
 | **The extension↔website bridge.** `check:bridge` covers the contract as a pure function; nothing drives the actual handover. | It is how signing in on the website signs the extension in. It fails silently by design (`handOver` swallows), so a break shows up as "the extension is signed out" days later. |
@@ -137,9 +138,13 @@ Roughly in the order the risk deserves.
 
 1. **`check:predict`'s fixture.** The cheapest by far — one command, and it turns an existing green
    tick from a lie into a check.
-2. **The remaining writes**, each driven through the UI and read back from the database, the way
+2. **The phone half of `smoke:web`.** All of it is offline-drivable and none of it exists: the
+   share target opening the dialog prefilled, a bad paste refused before the button, the worker
+   registering and holding the shell, and the offline notice appearing over a shortlist that is
+   still drawn. It is the newest surface and the only one with no browser check at all.
+3. **The remaining writes**, each driven through the UI and read back from the database, the way
    rating a flat now is. Adding a place is the next most valuable: every travel time on every card
    is measured against one.
-3. **An admin fixture**, which is one row and unlocks the whole Admin tab.
-4. **The refusal sentences on the sign-in screen.** The invite fixture already mints codes, so a
+4. **An admin fixture**, which is one row and unlocks the whole Admin tab.
+5. **The refusal sentences on the sign-in screen.** The invite fixture already mints codes, so a
    wrong-code and an already-registered case are a few lines each on top of what joining does.

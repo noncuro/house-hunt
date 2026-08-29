@@ -12,8 +12,9 @@ import {
   resetSweepProgress,
   type HubSweep,
 } from '@house-hunt/core/db';
-import { keys, useHubs, useProjectSettings, useShortlist } from '@/lib/queries';
-import { helloExtension, openTabExtension, type ExtensionState } from '@/lib/bridge';
+import { keys, useExtension, useHubs, useProjectSettings, useShortlist } from '@/lib/queries';
+import { useCanHoldExtension } from '@/lib/platform';
+import { openTabExtension, type ExtensionState } from '@/lib/bridge';
 import {
   abortableSleep,
   runFullSweep,
@@ -194,7 +195,10 @@ function FullSweep({
   ready: boolean;
   onFinished: () => void;
 }) {
-  const extension = useQuery({ queryKey: ['extension'], queryFn: helloExtension });
+  // The shared hook rather than a third `useQuery` on the key `useExtension` owns — see the note
+  // in `Recheck`. This one arrived on `main` while the other two were being folded together, so it
+  // is the same duplication one merge later.
+  const extension = useExtension();
   const client = useQueryClient();
   const [run, setRun] = useState<FullRun | null>(null);
   const controller = useRef<AbortController | null>(null);
@@ -376,7 +380,12 @@ function Finished({ summary, mapNote }: { summary: FullSweepSummary; mapNote: st
  *  which is why this screen is a worklist and a button rather than a feature. */
 function Recheck() {
   const shortlist = useShortlist();
-  const extension = useQuery({ queryKey: ['extension'], queryFn: helloExtension });
+  // `useExtension`, not a `useQuery` of its own on the same key. Two observers of one key with
+  // different options is how the banner and the Install screen came to answer the same question
+  // differently, and these two were doing it again — with no `staleTime`, so a window focus
+  // re-probed, and with no idea that a phone has no extension to probe for.
+  const extension = useExtension();
+  const extensionPossible = useCanHoldExtension();
   const client = useQueryClient();
 
   if (shortlist.isPending) return <p className="working">Working…</p>;
@@ -419,8 +428,9 @@ function Recheck() {
           />
         ) : (
           <p className="dim">
-            Re-checking opens listing pages in the background, which only the extension can do.
-            Install it and sign in there, and this run appears.
+            {extensionPossible
+              ? 'Re-checking opens listing pages in the background, which only the extension can do. Install it and sign in there, and this run appears.'
+              : 'Re-checking opens listing pages in the background, which only the browser extension can do — and no phone can run one. Open this hunt on a computer and the run appears there. The list above is the same either way.'}
           </p>
         )}
       </div>
@@ -524,9 +534,9 @@ function FillIn({
   // A fill-in run opens each listing in a background tab, which is `chrome.tabs.create` over the
   // bridge — the website has no such call. So the run is only offered when the extension answered
   // `hello`. The count below is a plain database read and shows regardless; it is the *opening* that
-  // needs the extension. Held in react-query so flipping between Sweep and the other views does not
-  // re-probe the extension each time.
-  const extension = useQuery({ queryKey: ['extension'], queryFn: helloExtension });
+  // needs the extension. One shared query for the whole page — see the note in `Recheck`.
+  const extension = useExtension();
+  const extensionPossible = useCanHoldExtension();
 
   if (loading) return <p className="working">Working…</p>;
   if (failed) return <p className="error">Could not read what still needs opening.</p>;
@@ -614,9 +624,15 @@ function FillIn({
           // Absent. The listings must load as real Rightmove tabs for the extension to read them,
           // and the browser will not let the website open them in the background — so this needs
           // the extension, and says so rather than offering a button that cannot work.
+          //
+          // "Not installed here" and "cannot be installed here" are different sentences and only
+          // one of them is an instruction. On a phone the first reads as something to go and fix,
+          // and there is nothing to fix — so it names the computer instead, which is where the run
+          // can actually happen.
           <p className="dim">
-            Filling in opens each listing in a background tab, which needs the browser extension —
-            and it is not installed here. Everything else on this page works without it.
+            {extensionPossible
+              ? 'Filling in opens each listing in a background tab, which needs the browser extension — and it is not installed here. Everything else on this page works without it.'
+              : 'Filling in opens each listing in a background tab, which needs the browser extension — and no phone can run one. Open this hunt on a computer to do a run; the count above is the same wherever you read it.'}
           </p>
         )}
       </div>

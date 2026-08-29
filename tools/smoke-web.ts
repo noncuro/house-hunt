@@ -77,6 +77,21 @@ const { url: supabaseUrl, anonKey } = localCredentials();
  *  broken map. */
 const ALLOW = [ORIGIN, supabaseUrl, 'https://tile.openstreetmap.org/'];
 
+/** Every context here, and the one option on it that is not about the viewport.
+ *
+ *  `serviceWorkers: 'block'` because Playwright cannot route a service worker's requests. Every
+ *  guarantee `keepOffline` makes is made with `context.route`, and a worker's own `fetch` goes
+ *  around it — so the moment the website registered one (`public/sw.js`), the rule that no harness
+ *  may reach Rightmove stopped being enforced for every request that worker handles, and the
+ *  report it prints stopped counting them. A guarantee that quietly applies to some requests is
+ *  worse than none, because the line at the end of the run still says nothing got out.
+ *
+ *  It also means these runs assert against the build that was just made rather than against a
+ *  cache-first worker's idea of it. What it costs is honest and written down: nothing here drives
+ *  the offline half at all — see the gap recorded in `docs/coverage.md`. */
+const CONTEXT = { viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' } as const;
+
+
 const problems: string[] = [];
 const note = (problem: string) => problems.push(problem);
 
@@ -156,7 +171,7 @@ try {
   // genuinely signed out and this one has a session planted in it. `signedOutPage` makes them a
   // context each.
   browser = await chromium.launch({ headless: true, args: OFFLINE_ARGS });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const context = await browser.newContext(CONTEXT);
 
   // Before the app's own scripts run, so the client finds a session the moment it is constructed
   // rather than mounting signed-out and repainting.
@@ -701,8 +716,20 @@ async function checkMap({ page }: Stage): Promise<void> {
   // navigate, which threw away the street you were looking at — so the assertion is both halves:
   // the card arrives, and the map is still there beside it.
   const pins = page.locator('.leaflet-interactive');
-  if ((await pins.count()) === 0) note('the map drew no pins for a fixture with located flats');
-  else {
+  const map = await mapState(page);
+  // Printed on a green run as well as a red one. The failure this pins down passed twice and failed
+  // once on the same tree, so the useful line is the one that says what the map measured when it
+  // worked, next to the one that says what it measured when it did not.
+  console.log(`map: ${map.pins} pin(s) — ${map.description}`);
+  if (map.pins === 0) note('the map drew no pins for a fixture with located flats');
+  else if (map.empty > 0) {
+    // Asserted before the click, because a pin Leaflet has drawn as the empty path is in the DOM,
+    // matches every selector a pin matches, and will never take one. Left to the click it arrives
+    // as a thirty-second timeout quoting a `<path>` back, which says nothing about the map that
+    // produced it. The map has just framed every one of these, so a pin that is not on screen is
+    // the map looking at the wrong place rather than that flat sitting off to one side.
+    note(`${map.empty} of ${map.pins} pin(s) drawn as the empty path — ${map.description}`);
+  } else {
     await pins.first().click();
     const dock = page.locator('[data-testid="map-dock"]');
     await dock
@@ -1289,7 +1316,7 @@ async function checkJoining({ browser }: Stage): Promise<void> {
 async function signedOutPage(
   browser: Browser,
 ): Promise<{ page: Page; offline: () => string; close: () => Promise<void> }> {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const context = await browser.newContext(CONTEXT);
   const offline = await keepOffline(context, { allow: ALLOW });
   const page = await context.newPage();
   page.on('pageerror', (e) => note(`pageerror (signed out): ${e.message}`));
@@ -1360,6 +1387,36 @@ async function openLens(page: Page, name: string): Promise<number> {
     await settle(page);
   }
   return said;
+}
+
+/** What the map thinks it is: the container it measures, the extent its renderer believes it has,
+ *  and how many pins it drew as nothing at all.
+ *
+ *  Leaflet draws a marker whose pixel bounds fall outside its renderer's as `d="M0 0"` — a path
+ *  with no geometry, and so an element with no box, which is invisible to a reader and unclickable
+ *  to a harness while remaining present in the DOM. The `viewBox` is the number that separates the
+ *  two ways of getting there: it is written from the renderer's bounds, so a zero extent is Leaflet
+ *  saying it believes it has no room to draw in, which is a container it measured wrongly rather
+ *  than a view framed on the wrong part of London. Both look identical from outside — a map, with
+ *  tiles on it, and no pins.
+ */
+async function mapState(page: Page): Promise<{ pins: number; empty: number; description: string }> {
+  return await page.evaluate(() => {
+    const pins = [...document.querySelectorAll('.leaflet-interactive')];
+    const host = document.querySelector<HTMLElement>('.leaflet-container');
+    const viewBox = document.querySelector('.leaflet-overlay-pane svg')?.getAttribute('viewBox');
+    // The tile's own address says where this map is looking, in `/{z}/{x}/{y}.png`, which no other
+    // readable part of the DOM does — Leaflet keeps the centre and the zoom to itself.
+    const tile = document.querySelector<HTMLImageElement>('.leaflet-tile')?.getAttribute('src');
+    return {
+      pins: pins.length,
+      empty: pins.filter((pin) => pin.getAttribute('d') === 'M0 0').length,
+      description:
+        `the container measures ${host === null ? 'nothing — there is none' : `${host.clientWidth}x${host.clientHeight}`}` +
+        `, the renderer's viewBox is "${viewBox ?? 'none'}"` +
+        ` and it is asking for ${tile ?? 'no tiles at all'}`,
+    };
+  });
 }
 
 /** Wait for the page to stop saying it is working.

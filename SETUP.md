@@ -121,6 +121,11 @@ supabase secrets set OPENAI_API_KEY=... --project-ref <ref>
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected by the platform; don't set them.
 
+`pnpm deploy:function` deploys every function, not only `analyse`. One of them, `listing`, is what
+lets a phone add a flat: it fetches the one listing page somebody pasted or shared and decodes it
+with the same code the extension's content script uses. It needs no secret of its own — but a
+deployment that skips it has a phone whose **Add a flat** button fails, and nothing else wrong.
+
 **It verifies its caller now.** It used to deploy `--no-verify-jwt`, which was defensible when
 there was no auth and the worst a stranger could do was make us re-analyse a flat we had already
 chosen to look at. It is not defensible once calls are charged against somebody's monthly cap:
