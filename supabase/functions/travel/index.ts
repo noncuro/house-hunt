@@ -27,7 +27,7 @@
  *  project data it reads under RLS. This function decides what is cached, what is stale, what to
  *  call TfL for, and what the answer is.
  */
-import { body, HttpError, requireEnv, rest, rpc, SERVICE_KEY, serve } from '../_shared/http.ts';
+import { body, HttpError, requireEnv, rest, rpc, serve } from '../_shared/http.ts';
 import { requireCaller, type Caller } from '../_shared/caller.ts';
 import {
   journeyTime,
@@ -565,18 +565,34 @@ function checkModes(gaps: Gap[]): void {
   }
 }
 
-/** Is this the service role itself calling, rather than a person?
+/** The one credential that means "this is the schedule", and the header it travels in.
  *
- *  Compared against the key rather than decoded, because the question is not "is this a valid JWT"
- *  — `requireCaller` answers that for people — but "is this *our* server-side secret". Constant-time
- *  so a wrong guess leaks nothing about how much of it was right; the cost is a loop over a few
- *  hundred characters. */
-function isServiceRole(request: Request): boolean {
-  const token = /^Bearer\s+(\S+)$/i.exec(request.headers.get('Authorization') ?? '')?.[1];
-  if (token === undefined || !SERVICE_KEY) return false;
-  if (token.length !== SERVICE_KEY.length) return false;
+ *  It was the service-role key in `Authorization`, which worked and was the wrong secret: that key
+ *  opens every table in the database, and the only thing the schedule may do with it is ask for
+ *  `kind: 'backfill'`. One secret doing two jobs is also one neither purpose can rotate alone.
+ *
+ *  Its own header rather than `Authorization`, because that header and `apikey` belong to the
+ *  gateway, which validates them as project keys and rejects a random string before this function is
+ *  reached. The schedule sends the *publishable* key in both — safe, since every table here is
+ *  `to authenticated` and `anon` holds nothing — and this token is what the function decides on.
+ *
+ *  SETUP.md has the rest, including why tying this to the platform's own service key turned out to
+ *  be a way of failing silently. */
+const BACKFILL_TOKEN = Deno.env.get('TRAVEL_BACKFILL_TOKEN');
+const BACKFILL_HEADER = 'x-backfill-token';
+
+/** Is this the scheduled backfill calling, rather than a person?
+ *
+ *  Constant-time so a wrong guess leaks nothing about how much of it was right; the cost is a loop
+ *  over a few dozen characters. An unset token is not a wildcard — with nothing to compare against
+ *  this answers no, and the caller falls through to `requireCaller` and is refused as a person
+ *  would be. */
+function isBackfill(request: Request): boolean {
+  const token = request.headers.get(BACKFILL_HEADER);
+  if (token === null || !BACKFILL_TOKEN) return false;
+  if (token.length !== BACKFILL_TOKEN.length) return false;
   let differences = 0;
-  for (let at = 0; at < token.length; at++) differences |= token.charCodeAt(at) ^ SERVICE_KEY.charCodeAt(at);
+  for (let at = 0; at < token.length; at++) differences |= token.charCodeAt(at) ^ BACKFILL_TOKEN.charCodeAt(at);
   return differences === 0;
 }
 
@@ -694,10 +710,13 @@ serve(async (request) => {
   // round trip is made. Deliberately ahead of `requireCaller`: it is the only caller that is not a
   // person, it holds no session and has no hourly allowance to check, and leaving the order below
   // untouched means an unauthenticated request still gets its 401 before its body is parsed.
-  if (isServiceRole(request)) {
-    const ask = await body<SystemAsk>(request);
-    if (ask.kind !== 'backfill') {
-      throw new HttpError(400, 'bad-request', `the service role asks for backfill, not ${String(ask.kind)}`);
+  if (isBackfill(request)) {
+    // `body` is a cast and nothing more, so a JSON `null` or a bare string would reach the field
+    // access below as a TypeError and leave through the 500 path — a broken request reported as a
+    // broken server, which is the one distinction the reply convention exists to keep.
+    const ask = (await body<SystemAsk>(request)) as SystemAsk | null;
+    if (typeof ask !== 'object' || ask === null || ask.kind !== 'backfill') {
+      throw new HttpError(400, 'bad-request', `the backfill token asks for backfill, not ${String((ask as SystemAsk | null)?.kind)}`);
     }
     return await runBackfill(ask);
   }

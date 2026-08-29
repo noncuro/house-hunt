@@ -132,25 +132,58 @@ chosen to look at. It is not defensible once calls are charged against somebody'
 `analyse` resolves the caller's JWT, checks they are a member of the project they name, checks the
 project has actually opened the listing, and claims against both caps before it spends anything.
 
-## The travel backfill's two secrets (admins only)
+## The travel backfill's three secrets (admins only)
 
 A pg_cron job asks the `travel` function to work the journey backlog down every fifteen minutes.
 The credentials it calls with live in the project's own vault rather than in the repository, so a
-fresh deployment has to put them there once:
+fresh deployment has to put them there once.
 
-```sql
+First generate the token and give it to the function, from a shell:
+
+```bash
+export TRAVEL_BACKFILL_TOKEN="$(openssl rand -hex 32)"
+supabase secrets set TRAVEL_BACKFILL_TOKEN="$TRAVEL_BACKFILL_TOKEN" --project-ref "$SUPABASE_PROJECT_REF"
+```
+
+Then hand the same value to the vault from that shell, so it goes into the database without ever
+being printed — `psql -v` interpolates it and the token stays out of scrollback and shell history:
+
+```bash
+PGPASSWORD="$SUPABASE_DB_PASSWORD" psql -h ... -U "postgres.$SUPABASE_PROJECT_REF" -d postgres \
+  -v tok="$TRAVEL_BACKFILL_TOKEN" -v pub="$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" <<'SQL'
 select vault.create_secret(
   'https://<project-ref>.supabase.co/functions/v1', 'travel_functions_url',
   'Where run_travel_backfill posts. No trailing slash.'
 );
-select vault.create_secret('<service-role key>', 'travel_service_role_key',
-  'What authorises the scheduled backfill as the service role.');
+select vault.create_secret(:'pub', 'travel_publishable_key',
+  'Gets the scheduled call past the gateway. Grants nothing on its own.');
+select vault.create_secret(:'tok', 'travel_backfill_token',
+  'What tells the travel function this is the schedule. Must match the TRAVEL_BACKFILL_TOKEN secret.');
+SQL
 ```
 
-Both names are exactly what `run_travel_backfill` looks for; without either it raises rather than
-returning quietly, which is the whole reason this moved out of GitHub Actions — the workflow it
-replaced needed two repository secrets nobody knew were missing and failed 40 runs out of 40 while
-the app showed a column of dashes that looked like a slow backlog.
+(The connection line is the one in AGENTS.md.)
+
+All three names are exactly what `run_travel_backfill` looks for; missing any of them it raises and
+says which, rather than returning quietly — the whole reason this moved out of GitHub Actions is
+that the workflow it replaced needed two repository secrets nobody knew were missing and failed 40
+runs out of 40 while the app showed a column of dashes that looked like a slow backlog.
+
+**Why three rather than the one service-role key this used to send.** That key opens every table in
+the database and the schedule needs to do exactly one thing with it, so a leak of the thing that
+spends the TfL budget was a leak of everything, and neither purpose could be rotated without the
+other. It was also tied to a moving part: Supabase issues both a legacy JWT and a newer `sb_secret_`
+service key and injects whichever is current as `SUPABASE_SERVICE_ROLE_KEY`, so the vault's copy and
+the function's copy stopped being the same string with nothing on either side to show it — every
+scheduled run came back 401 while a hand-rolled call with the other key returned 200 on the same
+deployment. The token above is ours, means one thing, and is not tied to the platform's key rotation
+at all. It cannot go in `Authorization` or `apikey` because the gateway validates those as project
+keys, which is what the publishable key is for; the token travels in `X-Backfill-Token`.
+
+**Upgrading an existing deployment:** add the two new secrets, confirm a run works, then drop the
+old one — `delete from vault.secrets where name = 'travel_service_role_key';`. Nothing removes it
+for you: a migration that deletes a secret it did not create destroys a working deployment if it is
+ever re-run mid-rollout.
 
 To check it, on the database connection in AGENTS.md:
 
