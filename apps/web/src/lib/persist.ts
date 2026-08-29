@@ -138,10 +138,24 @@ async function write(snapshot: Snapshot): Promise<void> {
  *  restoring after the shell has mounted would restore into queries that had already decided they
  *  had nothing and shown a spinner or an error.
  *
- *  Everything goes in with the timestamp it was written at, never with `now`. A restored shortlist
- *  is therefore stale on arrival and refetches immediately if there is a network — and if there is
- *  not, `dataUpdatedAt` is an honest answer to "how old is this", which is what the offline notice
- *  reads.
+ *  Everything goes in with the timestamp it was written at, never with `now`, so `dataUpdatedAt` is
+ *  an honest answer to "how old is this" — which is what the offline notice reads.
+ *
+ *  And then every restored query is marked stale by hand, because the timestamp does not do it. The
+ *  client's `staleTime` is 30 seconds; a snapshot written twenty seconds ago is inside that, so
+ *  React Query calls it fresh, serves it, and asks nobody. Which is the one thing this file's
+ *  safety argument says it must never do: reload the app half a minute after somebody else rated a
+ *  flat, moved it along the funnel or marked it gone, and you get the answer from before, presented
+ *  as current, with no round trip to correct it and no notice to say so. The auth query has needed
+ *  this since it was written (`staleTime: Infinity`, below) and it is the same need — thirty seconds
+ *  is not infinity, but a shared verdict shown as current when it is not is the same failure at
+ *  either length.
+ *
+ *  Marked, not refetched: nothing below `Providers` has rendered, so there are no observers to
+ *  refetch and this only sets the flag. Each query then re-reads when its own observer mounts,
+ *  which is precisely what every version of this app did before the snapshot existed — the
+ *  difference being that the screen is drawn from the copy while that read is in flight rather than
+ *  showing a spinner, and offline the read fails and the copy stays put under the notice.
  */
 export async function restore(): Promise<void> {
   let snapshot: Snapshot | null = null;
@@ -157,13 +171,10 @@ export async function restore(): Promise<void> {
 
   if (snapshot.auth) {
     queryClient.setQueryData(keys.auth, snapshot.auth, { updatedAt: snapshot.savedAt });
-    // And then marked stale by hand, which the timestamp alone does not do here: `useAuth` is
-    // `staleTime: Infinity` on purpose — being signed out does not quietly become true in the
-    // background, it happens because somebody pressed Sign out — so a restored answer would
-    // otherwise be believed for the whole visit without one round trip. Invalidating makes the
-    // shell draw immediately from the copy and re-ask the moment there is a network, which is the
-    // pair of properties this whole file is for. It refetches when the observer mounts; there are
-    // none yet, since nothing below `Providers` has rendered.
+    // Marked stale like everything else below, and for a longer version of the same reason:
+    // `useAuth` is `staleTime: Infinity` on purpose — being signed out does not quietly become true
+    // in the background, it happens because somebody pressed Sign out — so a restored answer would
+    // otherwise be believed for the whole visit without a single round trip.
     void queryClient.invalidateQueries({ queryKey: keys.auth });
   }
 
@@ -175,6 +186,7 @@ export async function restore(): Promise<void> {
 
   for (const { key, data, updatedAt } of snapshot.queries) {
     queryClient.setQueryData(key, data, { updatedAt });
+    void queryClient.invalidateQueries({ queryKey: key });
   }
 }
 

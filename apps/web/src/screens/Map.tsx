@@ -52,26 +52,21 @@ const lastView = new Map<string, { center: L.LatLngLiteral; zoom: number }>();
  *  happened; the observer below simply calls it again on the next resize, because a size Leaflet
  *  measured a frame ago is not evidence that the layout has finished — see `chosen`.
  *
- *  The `invalidateSize()` is the load-bearing line, and it is here rather than at the call sites
- *  because it is this function's own question that needs it. `Map.getSize()` is a cache, not a
- *  measurement: Leaflet measures the container once, while the map is being built, and then never
- *  again until `invalidateSize()` tells it to look. So every version of this before now decided
- *  whether the container had a size by reading a number that could be arbitrarily old — and the
- *  oldest one available is the one taken at construction, which is exactly the moment this whole
- *  problem is about. A map built against a container Leaflet measured as 0×0 answers `getSize()`
- *  with 0×0 for the rest of its life, so the guard below refuses forever, the view stays at the
- *  default centre, the tile layer asks for the two tiles a zero-sized viewport needs, and the
- *  renderer's bounds are a degenerate box that no marker can intersect — which is drawn as the
- *  empty path `M0 0`. Nothing about that looks like a broken map from the outside: it is a map,
- *  with tiles on it, and no pins.
+ *  `invalidateSize()` first, because `Map.getSize()` is a cache rather than a measurement: Leaflet
+ *  measures the container while the map is being built and then never again until it is told to
+ *  look. Without this, the guard below means "the container had no size whenever Leaflet last
+ *  looked", which for a map built one tick too early is a judgement it can never revise — it would
+ *  answer 0×0 for the rest of its life and refuse to frame anything, forever. One forced layout
+ *  buys the guard the only version of the question worth asking. The pan `invalidateSize` does on
+ *  the way is irrelevant: `fitBounds` sets the view outright a line later.
  *
- *  Asking Leaflet to re-measure first costs one forced layout and makes the guard mean what it
- *  says — "this container has no size *now*" rather than "it had none whenever Leaflet last
- *  looked". The pan `invalidateSize` does on the way is irrelevant here: `fitBounds` below sets the
- *  view outright a line later.
+ *  That is insurance rather than a diagnosis, and it is worth saying so, because three attempts on
+ *  this branch went looking for a map that was framed at the wrong moment and the browser check
+ *  stayed red through all of them. What it turned out to be is below. The container measured
+ *  740x800 and the renderer's viewBox agreed with it: Leaflet knew its size perfectly, and every
+ *  pin was still the empty path.
  *
- *  `animate: false` is the other half, and it is the half that was actually breaking the browser
- *  check. Framing the pins is not a gesture — it is where the map starts, and nobody is watching it
+ *  `animate: false` is the fix. Framing the pins is not a gesture — it is where the map starts, and nobody is watching it
  *  arrive — so the animation buys nothing, and what it costs is a view change that does not happen
  *  when this function returns. Leaflet's animated zoom schedules itself in a
  *  `requestAnimationFrame` and closes itself with a 250ms timer, and `setView` reports success the
