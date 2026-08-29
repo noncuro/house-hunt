@@ -258,6 +258,17 @@ const THE_WHOLE_FLAT =
 const ADJACENT = 16;
 const CONTEXT = 60;
 
+/** Where adjacency stops. A full stop, semicolon or bang followed by a space or the end of the
+ *  text — never one inside a number, which is why the space is required: "1,258.5 sq ft" must not
+ *  read as two sentences.
+ *
+ *  The window either side of a match is about what the number is *called*, and a noun in the next
+ *  sentence does not name it. Without this, "Total floor area 1,200 sq ft. Garden 500 sq ft." loses
+ *  both numbers — the total is vetoed by the garden that follows it, the garden is vetoed by
+ *  itself — and the flat is drawn with no size at all, which is the one outcome worse than the
+ *  garden: a stated total, printed nowhere. */
+const SENTENCE_BREAK = /[.;!?](?:\s|$)/;
+
 /** Pull "1,234 sq ft" / "115 sqm" / "115 m2" out of prose.
  *
  *  Prefers a match that names itself as the whole flat ("extending to 1,258 sq ft", "gross
@@ -285,10 +296,12 @@ export function parseAreaFromText(html: string): number | null {
 
     const at = m.index ?? 0;
     const end = at + m[0]!.length;
-    // What the number is called, read from right beside it. "1,200 sq ft garden" is a garden
-    // whatever the rest of the sentence says.
-    const adjacent = text.slice(Math.max(0, at - ADJACENT), end + ADJACENT);
-    if (NOT_THE_FLAT.test(adjacent)) continue;
+    // What the number is called, read from right beside it and no further than the sentence it is
+    // in. "1,200 sq ft garden" is a garden whatever the rest of the sentence says; a garden in the
+    // *next* sentence is a different number's business — see `SENTENCE_BREAK`.
+    const before = text.slice(Math.max(0, at - ADJACENT), at).split(SENTENCE_BREAK).at(-1)!;
+    const after = text.slice(end, end + ADJACENT).split(SENTENCE_BREAK)[0]!;
+    if (NOT_THE_FLAT.test(before + m[0]! + after)) continue;
 
     if (THE_WHOLE_FLAT.test(text.slice(Math.max(0, at - CONTEXT), end + CONTEXT))) {
       // Several stated totals should agree; if they don't, the larger is the whole property.

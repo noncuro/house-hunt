@@ -10,6 +10,11 @@ const cases: Array<[string, number | null]> = [
   ['800 sq ft of internal accommodation with a 1,200 sq ft garden', 800],
   ['A 1,200 sq ft garden behind the house', null],
   ['Extending to 1,258 sq ft, with a 400 sq ft roof terrace', 1258],
+  // A sentence ends adjacency. Read across the full stop, the stated total is vetoed by the garden
+  // that follows it and the garden is vetoed by itself, so the flat comes back with no size at all.
+  ['Total floor area 1,200 sq ft. Garden 500 sq ft.', 1200],
+  // And the same in the other direction, which the trailing window alone would still get wrong.
+  ['Garden. Total 1,200 sq ft', 1200],
   // Nothing names itself, so the largest that isn't obviously something else still wins.
   ['Two floors, 640 sq ft and 500 sq ft', 640],
   // Descriptions list room-by-room sizes; the total is what we want, so we take the largest.
