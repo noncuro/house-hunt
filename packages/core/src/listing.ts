@@ -258,16 +258,31 @@ const THE_WHOLE_FLAT =
 const ADJACENT = 16;
 const CONTEXT = 60;
 
-/** Where adjacency stops. A full stop, semicolon or bang followed by a space or the end of the
- *  text — never one inside a number, which is why the space is required: "1,258.5 sq ft" must not
- *  read as two sentences.
+/** Where adjacency stops: `. ; ! ?`, then space, then a capital letter.
  *
  *  The window either side of a match is about what the number is *called*, and a noun in the next
- *  sentence does not name it. Without this, "Total floor area 1,200 sq ft. Garden 500 sq ft." loses
- *  both numbers — the total is vetoed by the garden that follows it, the garden is vetoed by
- *  itself — and the flat is drawn with no size at all, which is the one outcome worse than the
- *  garden: a stated total, printed nowhere. */
-const SENTENCE_BREAK = /[.;!?](?:\s|$)/;
+ *  sentence does not name it. Without any break at all, "Total floor area 1,200 sq ft. Garden 500
+ *  sq ft." loses both numbers — the total vetoed by the garden that follows it, the garden vetoed
+ *  by itself — and the flat is drawn with no size, which is a stated total printed nowhere.
+ *
+ *  Every part of that pattern is holding off a way of getting this wrong, and the capital letter is
+ *  the one that matters. A dot after a space is not the only dot in this text: the unit pattern
+ *  deliberately accepts "sq." and "ft.", so "1,200 sq. ft. garden" ends its match at `ft` and is
+ *  followed by exactly the ". " a sentence ends with. Break there and the trailing window is empty,
+ *  the garden is never seen, and the parser hands back the garden as the flat — which is the one
+ *  case this whole veto was written for, and the one `check:area` has always led with, merely
+ *  spelled with the abbreviation. An abbreviation is followed by the rest of its phrase in lower
+ *  case; a sentence is followed by a capital. That is the whole difference and it is the only
+ *  signal in the text that carries it.
+ *
+ *  The space keeps a decimal out of it — "1,258.5 sq ft" is one sentence — and the capital rules out
+ *  a figure as well, so "Rear garden. 800 sq ft" keeps the garden in reach of the 800 rather than
+ *  reading the full stop as permission to forget it.
+ *
+ *  Where it errs it errs towards the veto: a sentence genuinely beginning in lower case keeps the
+ *  neighbouring noun in the window and the number is dropped. That is the direction this file
+ *  chooses everywhere — "a size that is confidently wrong is worse than no size at all". */
+const SENTENCE_BREAK = /[.;!?]\s+(?=[A-Z])/;
 
 /** Pull "1,234 sq ft" / "115 sqm" / "115 m2" out of prose.
  *

@@ -15,6 +15,17 @@ const cases: Array<[string, number | null]> = [
   ['Total floor area 1,200 sq ft. Garden 500 sq ft.', 1200],
   // And the same in the other direction, which the trailing window alone would still get wrong.
   ['Garden. Total 1,200 sq ft', 1200],
+  // The abbreviation, which is why a sentence break needs the capital letter after it. The unit
+  // pattern accepts "sq." and "ft.", so each of these puts a ". " directly after the match — the
+  // same two characters that end a sentence. Read as one, the trailing window empties, nothing sees
+  // the garden, and the third line hands back the garden as the flat: the case this file leads with,
+  // merely spelled differently.
+  ['A 1,200 sq. ft. garden behind the house', null],
+  ['A 1,200 sq ft. garden behind the house', null],
+  ['800 sq. ft. of internal accommodation with a 1,200 sq. ft. garden', 800],
+  // A figure is not a capital either, so the full stop does not put the garden out of reach.
+  ['Garden approx. 1,200 sq ft', null],
+  ['Rear garden. 800 sq ft.', null],
   // Nothing names itself, so the largest that isn't obviously something else still wins.
   ['Two floors, 640 sq ft and 500 sq ft', 640],
   // Descriptions list room-by-room sizes; the total is what we want, so we take the largest.

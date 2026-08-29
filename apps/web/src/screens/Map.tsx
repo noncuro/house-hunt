@@ -131,23 +131,13 @@ export function ShortlistMap({
   /** Whether the view on screen is one the reader chose — by panning, by zooming, or by having
    *  left the map here last time. Nothing may re-frame over it.
    *
-   *  This is deliberately *not* "have the pins been framed once". Leaflet measures its container
-   *  when it is told to and not otherwise, so a fit can succeed against a size that was true for a
-   *  moment and wrong by the time the layout settled — and one that "worked" is then never
-   *  corrected. Ask a map that believes it is 0×0 to fit anything and it computes a nonsense centre
-   *  at the world's zoom, after which every marker is outside the renderer's bounds and drawn as
-   *  the empty path `M0 0`: a map that looks like a map, draws two tiles of ocean, and has no pins
-   *  on it. Framing again on the next resize is what repairs that, so the only thing that may stop
-   *  it is the reader having taken over.
-   *
-   *  Not hypothetical, and not theory either: `smoke:web` passed twice and failed once on a tree
-   *  where this was `fitted` — the same commit, byte for byte — because the two cases are a race.
-   *  A container measured at exactly 0×0 is refused by `fit()` and repaired on the next resize; one
-   *  measured mid-layout at some other wrong size is fitted, marked done, and never repaired,
-   *  because `invalidateSize` corrects the size without touching the view. The shortlist now
-   *  restores from IndexedDB before the first render (`lib/persist.ts`), so this mounts with its
-   *  flats already in hand rather than a frame or two later, which is what made the race close
-   *  enough to lose. */
+   *  Deliberately *not* "have the pins been framed once", which is what stood here through three
+   *  attempts at the browser check and was never the right question. A fit that ran is not evidence
+   *  that the fit was right, so a flag set by one turns the first success into the last: whatever
+   *  the map is showing at that moment is what it shows from then on, and the only thing that could
+   *  have corrected it has been switched off. A pan is the one thing a re-frame must not overwrite,
+   *  and it is the only thing, so it is what this asks about — leaving the observer below free to
+   *  re-frame as often as the layout changes, which costs nothing when the view is already right. */
   const chosen = useRef(false);
 
   const [ownAt, setOwnAt] = useState<string | null>(null);
@@ -281,10 +271,13 @@ export function ShortlistMap({
    *  window is resized, and the first measurement can land before the layout it is measuring.
    *
    *  The re-frame is the half that matters, and it repeats on purpose. Fitting once and stopping
-   *  sounds tidier and is wrong: `getSize()` is whatever Leaflet last measured, so a fit can
-   *  succeed against a size that was true for one frame, leave every pin outside the view, and mark
-   *  itself done. Each resize is another chance to be right about a container that is still
-   *  settling.
+   *  sounds tidier and is wrong: it makes the first fit final whether or not it was any good, on a
+   *  container that may still be settling. Each resize is another chance to be right, and it costs
+   *  nothing to take when the view is already correct.
+   *
+   *  `invalidateSize` is called here as well as inside `fit()`, which is not redundant: when the
+   *  reader has taken the view, `fit()` is not called at all, and a map whose pane has just been
+   *  resized still has to be told to look again or it draws the new shape at the old size.
    *
    *  What stops it is `chosen` — the reader having panned, zoomed, or arrived on a view they left
    *  here before. That is the thing a re-frame must never overwrite, and it is a narrower and more
