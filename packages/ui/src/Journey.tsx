@@ -28,11 +28,21 @@ export interface TravelVerdict {
   best: TravelTime | null;
   /** A mode we asked about and never got an answer for — worth a retry. */
   transient: TravelTime | null;
-  /** Asked and settled: there is no such journey. Settled, not missing. */
+  /** Asked and settled, for the place as a whole: no mode gets you there. Settled, not missing. */
   noRoute: boolean;
   /** What settled it, in the words of whoever settled it. Null when the row does not say — which
    *  is every row written before the reason was stored. */
   noRouteReason: string | null;
+  /** Each mode's own row, for a view asking about one column rather than about the place.
+   *
+   *  Everything above answers "how do I get there", which is the question the panel and the cards
+   *  ask, and which one usable mode answers for the whole place. The compare table has a column per
+   *  mode and asks a narrower one, and reading the place-level answer there loses exactly the fact
+   *  it is asking for: a place with a good train time and a cycling leg TfL settled as impossible
+   *  has `noRoute: false`, so the cycling column read "not worked out yet" over a question that had
+   *  been answered — a settled negative redrawn as a gap, which is the distinction this whole file
+   *  exists to keep. */
+  byMode: Partial<Record<TravelMode, TravelTime>>;
   /** Nothing has been computed for this pairing at all. */
   unknown: boolean;
 }
@@ -96,12 +106,15 @@ export function readTravel(rows: TravelTime[] | undefined): TravelVerdict {
   const best = usable.length === 0 ? null : usable.reduce((a, b) => (b.seconds < a.seconds ? b : a));
   const transient = all.find((t) => t.error && t.transient) ?? null;
   const settled = usable.length === 0 ? (all.find((t) => t.error && !t.transient) ?? null) : null;
+  const byMode: Partial<Record<TravelMode, TravelTime>> = {};
+  for (const t of all) byMode[t.mode] = t;
   return {
     usable,
     best,
     transient,
     noRoute: settled !== null,
     noRouteReason: settled?.error ?? null,
+    byMode,
     unknown: all.length === 0,
   };
 }
