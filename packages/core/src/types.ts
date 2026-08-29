@@ -208,21 +208,36 @@ export const TRAVEL_MODES: TravelMode[] = ['walking', 'cycling', 'transit'];
  *  numbers that matter. */
 export const WALKING_LIMIT_SECONDS = 60 * 60;
 
-/** A brisk walk, in miles per hour. Only ever used to turn the limit above into a distance — it is
- *  not a pace anything is estimated at, because TfL's own number is better than any pace we would
- *  pick. Deliberately fast: it decides how far away a leg has to be before we stop asking, and
- *  overestimating the walker is what keeps that refusal true for everybody. */
-const BRISK_WALK_MPH = 3;
+/** The fastest pace a journey planner could conceivably be walking somebody at, in miles per hour.
+ *
+ *  Not an estimate of how fast people walk, and nothing is ever estimated with it — TfL's own
+ *  number is better than any pace we would pick. It exists only to turn the limit above into a
+ *  distance, and for that it has to be an *upper bound* rather than a typical figure, because the
+ *  refusal it feeds is allowed to be wrong in only one direction. Refusing a walk TfL would also
+ *  have called over the hour costs nothing, since the view draws a dash either way; refusing one
+ *  TfL would have called under it hides a trip somebody could actually make, which is this whole
+ *  idea's own failure mode inverted.
+ *
+ *  Three miles an hour was the first answer and was not sound, because it is a typical pace and the
+ *  bound has to hold against TfL rather than against a person. TfL's planner takes a `walkingSpeed`
+ *  of `Slow | Average | Fast` — an enum, with no miles per hour behind it anywhere in the published
+ *  swagger and no documented default — so there is no value we could send that would pin its pace
+ *  to a number we know, and sending one would also change what every cached walking time means for
+ *  no gain in soundness. Five is the bound instead: above a brisk four, above the pedestrian speeds
+ *  the general-purpose routers ship, and around where walking becomes jogging. A planner beating it
+ *  is not planning a walk. */
+const FASTEST_PLAUSIBLE_WALK_MPH = 5;
 
 /** How far away a place has to be, in a straight line, before there is no point asking how long it
  *  takes to walk there.
  *
  *  This is `WALKING_LIMIT_SECONDS` restated as a distance rather than a second opinion about what is
  *  walkable, which is why it is derived rather than typed out. A real route is never shorter than
- *  the straight line, so a destination further off than this cannot be reached on foot inside the
- *  hour — and an answer over the hour is one every view here already discards as not a real option.
- *  Asking TfL for it spends a call on a number that is thrown away on arrival. */
-export const WALKING_LIMIT_MILES = (WALKING_LIMIT_SECONDS / 3600) * BRISK_WALK_MPH;
+ *  the straight line, so at any pace up to `FASTEST_PLAUSIBLE_WALK_MPH` a destination further off
+ *  than this cannot be reached on foot inside the hour — and an answer over the hour is one every
+ *  view here already discards as not a real option. Asking TfL for it spends a call on a number that
+ *  is thrown away on arrival. */
+export const WALKING_LIMIT_MILES = (WALKING_LIMIT_SECONDS / 3600) * FASTEST_PLAUSIBLE_WALK_MPH;
 
 export interface TravelTime {
   placeId: string;

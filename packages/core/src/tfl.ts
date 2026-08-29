@@ -1,5 +1,5 @@
 import { logInfo, logWarn } from './log';
-import type { TravelMode } from './types';
+import { WALKING_LIMIT_MILES, type TravelMode } from './types';
 
 const BASE = 'https://api.tfl.gov.uk/journey/journeyresults';
 
@@ -333,6 +333,25 @@ export function nextWeekdayMorning(now = new Date()): { date: string; time: stri
  *  anything about the flat changing. A station opens, a route is added, a postcode that TfL's
  *  geocoder did not know last month it now knows. So they expire, and positives do not. */
 export const NO_ROUTE_RETRY_DAYS = 30;
+
+/** Why a walking leg is not worth asking TfL about, or null when it is.
+ *
+ *  A reason rather than a boolean, for the same purpose `staleTravel` returns one: this decides not
+ *  to spend an API call, and the sentence it returns is the one cached on the row and shown in the
+ *  hover under the dash. "TfL says there is no journey" would be a lie about a call nobody made.
+ *
+ *  Strictly greater than the limit, so a leg sitting exactly on it is still asked — the boundary is
+ *  the last distance that could be walked inside the hour, not the first that could not.
+ *
+ *  `null` miles means the two ends could not both be placed, which asks as it always did: a refusal
+ *  needs a measurement, and a guess at one is how a walkable leg gets cached as a dead end. */
+export function tooFarToWalk(mode: TravelMode, straightLineMiles: number | null): string | null {
+  if (mode !== 'walking' || straightLineMiles === null || straightLineMiles <= WALKING_LIMIT_MILES) return null;
+  return (
+    `${straightLineMiles.toFixed(1)} miles away in a straight line — further than anyone walks in ` +
+    'the hour past which we stop counting it as a way of making the trip'
+  );
+}
 
 /** A cached row we should not use, and why — null when the row is good.
  *
