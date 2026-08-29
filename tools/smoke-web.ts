@@ -716,8 +716,20 @@ async function checkMap({ page }: Stage): Promise<void> {
   // navigate, which threw away the street you were looking at — so the assertion is both halves:
   // the card arrives, and the map is still there beside it.
   const pins = page.locator('.leaflet-interactive');
-  if ((await pins.count()) === 0) note('the map drew no pins for a fixture with located flats');
-  else {
+  const map = await mapState(page);
+  // Printed on a green run as well as a red one. The failure this pins down passed twice and failed
+  // once on the same tree, so the useful line is the one that says what the map measured when it
+  // worked, next to the one that says what it measured when it did not.
+  console.log(`map: ${map.pins} pin(s) — ${map.description}`);
+  if (map.pins === 0) note('the map drew no pins for a fixture with located flats');
+  else if (map.empty > 0) {
+    // Asserted before the click, because a pin Leaflet has drawn as the empty path is in the DOM,
+    // matches every selector a pin matches, and will never take one. Left to the click it arrives
+    // as a thirty-second timeout quoting a `<path>` back, which says nothing about the map that
+    // produced it. The map has just framed every one of these, so a pin that is not on screen is
+    // the map looking at the wrong place rather than that flat sitting off to one side.
+    note(`${map.empty} of ${map.pins} pin(s) drawn as the empty path — ${map.description}`);
+  } else {
     await pins.first().click();
     const dock = page.locator('[data-testid="map-dock"]');
     await dock
@@ -1375,6 +1387,32 @@ async function openLens(page: Page, name: string): Promise<number> {
     await settle(page);
   }
   return said;
+}
+
+/** What the map thinks it is: the container it measures, the extent its renderer believes it has,
+ *  and how many pins it drew as nothing at all.
+ *
+ *  Leaflet draws a marker whose pixel bounds fall outside its renderer's as `d="M0 0"` — a path
+ *  with no geometry, and so an element with no box, which is invisible to a reader and unclickable
+ *  to a harness while remaining present in the DOM. The `viewBox` is the number that separates the
+ *  two ways of getting there: it is written from the renderer's bounds, so a zero extent is Leaflet
+ *  saying it believes it has no room to draw in, which is a container it measured wrongly rather
+ *  than a view framed on the wrong part of London. Both look identical from outside — a map, with
+ *  tiles on it, and no pins.
+ */
+async function mapState(page: Page): Promise<{ pins: number; empty: number; description: string }> {
+  return await page.evaluate(() => {
+    const pins = [...document.querySelectorAll('.leaflet-interactive')];
+    const host = document.querySelector<HTMLElement>('.leaflet-container');
+    const viewBox = document.querySelector('.leaflet-overlay-pane svg')?.getAttribute('viewBox');
+    return {
+      pins: pins.length,
+      empty: pins.filter((pin) => pin.getAttribute('d') === 'M0 0').length,
+      description:
+        `the container measures ${host === null ? 'nothing — there is none' : `${host.clientWidth}x${host.clientHeight}`}` +
+        ` and the renderer's viewBox is "${viewBox ?? 'none'}"`,
+    };
+  });
 }
 
 /** Wait for the page to stop saying it is working.
