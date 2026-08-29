@@ -413,7 +413,7 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
     case 'sweep:pending':
       return await pendingSightings();
 
-    case 'tab:open':
+    case 'tab:open': {
       // Rightmove only. The URL comes from a content script, and a content script is running in a
       // page whose scripts we do not control; a worker that opened whatever it was handed would
       // be a redirector for anything that got a message into it.
@@ -440,6 +440,7 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
           .catch((e) => logWarn('sweep', 'could not schedule the tab to close', { error: describe(e) }));
       }
       return null;
+    }
   }
 }
 

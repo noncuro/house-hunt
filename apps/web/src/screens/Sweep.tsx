@@ -133,9 +133,11 @@ export function Sweep() {
   );
 }
 
-/** Installed and answering, whichever way it is signed in. The runs below need the extension for
- *  one thing only — opening a background tab — and a signed-out one can still do that; what it
- *  cannot do is record anything, which the full run finds out and says (`PageNotRecorded`). */
+/** Installed and answering, whichever way it is signed in. The fill-in and re-check runs need the
+ *  extension for one thing only — opening a background tab — and a signed-out one can still do
+ *  that; the listing's own panel then says it is signed out. The full run is gated harder, on
+ *  `signed-in`: it *waits* for each search page to be recorded, and a signed-out panel records
+ *  nothing, so the button would start a minute of silence ending in `PageNotRecorded`. */
 function extensionPresent(state: ExtensionState | undefined): boolean {
   return state?.status === 'signed-in' || state?.status === 'signed-out';
 }
@@ -238,8 +240,11 @@ function FullSweep({
       .then(async (summary) => {
         if (!current()) return;
         // Pins first, then the repaint — the other order refetches the shortlist into the cache
-        // with the null/fuzzed positions the geocode is about to replace.
-        const mapNote = summary.filledIn > 0 || summary.rechecked > 0 ? await placePins() : null;
+        // with the null/fuzzed positions the geocode is about to replace. Not after Stop, though:
+        // the geocode cannot be interrupted, and Stop promised to take effect at once. The
+        // page-load backfill places those pins next time.
+        const opened = summary.filledIn > 0 || summary.rechecked > 0;
+        const mapNote = opened && !summary.stopped ? await placePins() : null;
         if (!current()) return;
         invalidateAfterRun(client);
         onFinished();
@@ -276,6 +281,8 @@ function FullSweep({
   }
 
   const searchable = hubs.filter((hub) => toSweepHub(hub).rightmove !== null && hub.sweepRadiusMiles !== null);
+  // The same test `sweepSearchUrl` makes: a saved-but-empty set of filters is no filters.
+  const noCriteria = criteria === null || Object.keys(criteria).length === 0;
   const intervalMs = loadIntervalMs();
 
   return (
@@ -291,17 +298,17 @@ function FullSweep({
       {run?.state === 'failed' && <p className="error">{run.message}</p>}
       {/* Nothing while the extension question is outstanding — the button either appears or the
           reason it cannot does, but not a flicker between them. */}
-      {extension.isPending || !ready ? null : extensionPresent(extension.data) ? (
+      {extension.isPending || !ready ? null : extension.data?.status === 'signed-in' ? (
         <button
           type="button"
           className="rm-open-go"
           data-testid="full-sweep-go"
-          disabled={searchable.length === 0 || criteria === null}
+          disabled={searchable.length === 0 || noCriteria}
           onClick={start}
         >
           <span>Sweep everything</span>
           <small>
-            {criteria === null
+            {noCriteria
               ? 'nothing to search for yet — set the Rightmove filters on Your Hunt'
               : searchable.length === 0
                 ? 'no place is searchable yet — tick "search around" on Your Hunt → Places'
@@ -313,6 +320,11 @@ function FullSweep({
         <p className="error">
           The extension is installed but did not answer, so a sweep cannot open tabs —{' '}
           {extension.data.message}
+        </p>
+      ) : extension.data?.status === 'signed-out' ? (
+        <p className="dim">
+          The extension is installed but signed out, and a signed-out extension records nothing.
+          Sign in there — signing in here again does it — and this run appears.
         </p>
       ) : (
         <p className="dim">
