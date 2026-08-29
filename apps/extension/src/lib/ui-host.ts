@@ -1,4 +1,5 @@
 import type { UiHost } from '@house-hunt/ui';
+import { listingUrl } from '@house-hunt/core';
 import { send } from './messages';
 
 /** What the shared components need, done the way an extension does it.
@@ -21,10 +22,7 @@ export const extensionHost: UiHost = {
   },
 
   async openListing(rightmoveId) {
-    const reply = await send({
-      type: 'tab:open',
-      url: `https://www.rightmove.co.uk/properties/${rightmoveId}`,
-    });
+    const reply = await send({ type: 'tab:open', url: listingUrl(rightmoveId) });
     if (!reply.ok) throw new Error(reply.error);
   },
 };

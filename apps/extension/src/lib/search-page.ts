@@ -1,4 +1,4 @@
-import type { SearchCard } from '@house-hunt/core';
+import { listingUrl, type SearchCard } from '@house-hunt/core';
 export type { SearchCard };
 
 /** Reading a Rightmove search-results page.
@@ -122,7 +122,7 @@ function toCard(raw: any): SearchCard | null {
     // Their own `propertyUrl` carries a `#/?channel=RES_LET` fragment that the listing page does
     // not need and that would make the stored URL differ from the one `property` already holds
     // for the same flat. Build the canonical form instead.
-    url: `https://www.rightmove.co.uk/properties/${rightmoveId}`,
+    url: listingUrl(rightmoveId),
     displayAddress: raw.displayAddress ?? '',
     price: raw.price?.displayPrices?.[0]?.displayPrice ?? null,
     bedrooms: numberOrNull(raw.bedrooms),

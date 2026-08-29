@@ -87,7 +87,17 @@ const ANALYSIS_FUNCTION = `${import.meta.env.WXT_SUPABASE_URL}/functions/v1/anal
  *  evict this worker between opening the tab and closing it, and a timer dies with the worker while
  *  an alarm wakes it. A dropped timer would leak exactly the tab this is meant to reap. */
 const SWEEP_TAB_TTL_MINUTES = 0.5;
+/** A search page opened by the unattended sweep gets longer. The run finds out that the page was
+ *  recorded by reading `hub_sweep` back, and waits up to a minute for it (`RECORD_TIMEOUT_MS` on
+ *  the website); a tab reaped at thirty seconds mid-load would turn a slow page into a run that
+ *  stops and reports a page that "never recorded". Ninety seconds outlives that wait. */
+const SEARCH_TAB_TTL_MINUTES = 1.5;
 const CLOSE_SWEEP_TAB_ALARM = 'close-sweep-tab:';
+/** What `tab:open` agrees to open — a listing, or a rental search page, and nothing else.
+ *  Anchored on the host and the path, with the id delimited, so neither a URL that merely
+ *  *mentions* a listing in its query nor `/properties/123anything` passes. */
+const LISTING_URL = /^https:\/\/www\.rightmove\.co\.uk\/properties\/\d+(?:[/?#]|$)/;
+const SEARCH_URL = /^https:\/\/www\.rightmove\.co\.uk\/property-to-rent\/find\.html\?/;
 
 
 export default defineBackground(() => {
@@ -403,12 +413,19 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
     case 'sweep:pending':
       return await pendingSightings();
 
-    case 'tab:open':
+    case 'tab:open': {
       // Rightmove only. The URL comes from a content script, and a content script is running in a
       // page whose scripts we do not control; a worker that opened whatever it was handed would
       // be a redirector for anything that got a message into it.
-      if (!/^https:\/\/www\.rightmove\.co\.uk\/properties\/\d+/.test(request.url)) {
-        throw new Error(`refusing to open ${request.url} — only Rightmove listings`);
+      //
+      // Two shapes and no more: a listing, and a rental search (`find.html`, the one page the sweep
+      // panel runs on). The second is what lets the website's unattended sweep page through a
+      // neighbourhood's results the way a person would — each page is a real navigation in a real
+      // background tab, recorded by the same panel that records a page you opened yourself. Nothing
+      // here fetches a search; see the standing rule in AGENTS.md.
+      const isSearch = SEARCH_URL.test(request.url);
+      if (!isSearch && !LISTING_URL.test(request.url)) {
+        throw new Error(`refusing to open ${request.url} — only Rightmove listings and rental searches`);
       }
       const tab = await chrome.tabs.create({ url: request.url, active: false });
       // Schedule its own closing. Keyed by tab id so each tab reaps exactly itself, and only when the
@@ -417,10 +434,13 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       // that outlives its window, which is far better than killing a working tab or stopping the run.
       if (tab.id !== undefined) {
         await chrome.alarms
-          .create(`${CLOSE_SWEEP_TAB_ALARM}${tab.id}`, { delayInMinutes: SWEEP_TAB_TTL_MINUTES })
+          .create(`${CLOSE_SWEEP_TAB_ALARM}${tab.id}`, {
+            delayInMinutes: isSearch ? SEARCH_TAB_TTL_MINUTES : SWEEP_TAB_TTL_MINUTES,
+          })
           .catch((e) => logWarn('sweep', 'could not schedule the tab to close', { error: describe(e) }));
       }
       return null;
+    }
   }
 }
 

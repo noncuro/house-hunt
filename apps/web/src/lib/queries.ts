@@ -286,9 +286,20 @@ export function useCachedTravel(postcodes: Array<string | null>) {
  *  to match it — and printing "no route", which is a claim about geography rather than about the
  *  fetch never having happened. */
 export function useTravel(postcode: string | null, placesKey: string) {
+  const client = useQueryClient();
   return useQuery<TravelTime[]>({
     queryKey: ['travel-live', postcode, placesKey],
-    queryFn: () => travelTimes(postcode!),
+    queryFn: async () => {
+      const times = await travelTimes(postcode!);
+      // Tell the cache-only readers. A leg resolved here is written to `travel_time` at the far end,
+      // and `useCachedTravel` — what triage's filter and the compare table read — holds whatever the
+      // cache said when their screen mounted. The detail pane opens *over* triage, so the screen
+      // never remounts: the pane showed "28 min" while the filter under it kept the same flat as
+      // "journey not measured", and a flat over the bar stayed in a pile it should have left. One
+      // cache read per resolved flat is the price, and it is a read of a table, not a call to TfL.
+      void client.invalidateQueries({ queryKey: ['travel'] });
+      return times;
+    },
     enabled: Boolean(postcode),
     // Resolving costs real calls at the far end, so do not re-ask because a window regained focus.
     refetchOnWindowFocus: false,

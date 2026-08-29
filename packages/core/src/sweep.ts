@@ -301,6 +301,11 @@ export function rightmoveSearchStart(place: {
   return `https://www.rightmove.co.uk/property-to-rent/search.html?${parameters.toString()}`;
 }
 
+/** A listing's page, from its id. The one URL both apps build, so it is built in one place. */
+export function listingUrl(rightmoveId: string): string {
+  return `https://www.rightmove.co.uk/properties/${rightmoveId}`;
+}
+
 /** Rightmove's own page size. Only used to turn a page number into the `index` it wants. */
 export const RESULTS_PER_PAGE = 24;
 

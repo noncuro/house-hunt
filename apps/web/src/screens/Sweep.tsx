@@ -1,12 +1,25 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Opener } from '@house-hunt/ui';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { Opener, loadIntervalMs } from '@house-hunt/ui';
 import { toSweepHub, recheckTargets, RECHECK_AFTER_DAYS } from '@house-hunt/core';
-import { listHubSweeps, locateProperties, pendingSightings, type HubSweep } from '@house-hunt/core/db';
+import {
+  getShortlist,
+  listHubSweeps,
+  locateProperties,
+  pendingSightings,
+  resetSweepProgress,
+  type HubSweep,
+} from '@house-hunt/core/db';
 import { keys, useHubs, useProjectSettings, useShortlist } from '@/lib/queries';
-import { helloExtension } from '@/lib/bridge';
+import { helloExtension, openTabExtension, type ExtensionState } from '@/lib/bridge';
+import {
+  abortableSleep,
+  runFullSweep,
+  type FullSweepProgress,
+  type FullSweepSummary,
+} from '@/lib/full-sweep';
 import type { Place, SweepCriteria } from '@house-hunt/core';
 import { sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
 
@@ -60,6 +73,14 @@ export function Sweep() {
 
   return (
     <section className="sweep">
+      <h2 className="sweep-fill-heading">Everything</h2>
+      <FullSweep
+        hubs={projectHubs}
+        criteria={criteria}
+        ready={hubs.isSuccess && settings.isSuccess}
+        onFinished={() => void pending.refetch()}
+      />
+
       <h2 className="sweep-fill-heading">Scan</h2>
       <p className="dim">
         Each link opens Rightmove's own search around one of your places, filtered to what has
@@ -112,6 +133,235 @@ export function Sweep() {
   );
 }
 
+/** Installed and answering, whichever way it is signed in. The fill-in and re-check runs need the
+ *  extension for one thing only — opening a background tab — and a signed-out one can still do
+ *  that; the listing's own panel then says it is signed out. The full run is gated harder, on
+ *  `signed-in`: it *waits* for each search page to be recorded, and a signed-out panel records
+ *  nothing, so the button would start a minute of silence ending in `PageNotRecorded`. */
+function extensionPresent(state: ExtensionState | undefined): boolean {
+  return state?.status === 'signed-in' || state?.status === 'signed-out';
+}
+
+/** What every run rewrites, refetched. A run touches property rows, price history, the off-market
+ *  set and sweep progress, and each is on screen somewhere; refetching the lot is cheaper to
+ *  reason about than naming which of them a given listing happened to touch. */
+function invalidateAfterRun(client: QueryClient): void {
+  for (const key of [keys.shortlist, keys.offMarket, keys.prices, ['sweeps'], ['pending']]) {
+    void client.invalidateQueries({ queryKey: key });
+  }
+}
+
+/** Fill in map positions for the flats a run just opened. Opening records a postcode but never
+ *  geocodes it, and the once-per-page-load backfill will not revisit these rows while this tab
+ *  stays mounted — so do it here, or their pins would not appear until a hard reload.
+ *
+ *  Best-effort, but not silent. An empty catch discarded the reason entirely: the pins simply
+ *  would not appear, and nothing on screen or in the console connected that to a lookup that
+ *  failed. Returns the note to show, which stays out of the run's error because the run itself
+ *  succeeded — colouring a finished sweep red for a missing pin says the wrong thing. */
+async function placePins(): Promise<string | null> {
+  try {
+    await locateProperties();
+    return null;
+  } catch (e: unknown) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.warn('[sweep] filling in map positions failed', e);
+    return `Map pins for this run could not be placed — ${why}. They will be placed next time this page loads.`;
+  }
+}
+
+type FullRun =
+  | { state: 'running'; progress: FullSweepProgress | null }
+  | { state: 'finished'; summary: FullSweepSummary; mapNote: string | null }
+  | { state: 'failed'; message: string };
+
+/** The whole sweep from one button — see `runFullSweep` for what it does and in what order.
+ *
+ *  The three sections below it are unchanged and still work on their own; this is them in
+ *  sequence, unattended, at the pace the opener is set to. Offered only when the extension is
+ *  here, for the same reason as the fill-in run: every page is a background tab, and only the
+ *  extension can open one. */
+function FullSweep({
+  hubs,
+  criteria,
+  ready,
+  onFinished,
+}: {
+  hubs: Place[];
+  criteria: SweepCriteria | null;
+  /** Whether the places and criteria have been read. A button offered before then would start a
+   *  run over an empty list and report "nothing to scan" about a hunt with five places. */
+  ready: boolean;
+  onFinished: () => void;
+}) {
+  const extension = useQuery({ queryKey: ['extension'], queryFn: helloExtension });
+  const client = useQueryClient();
+  const [run, setRun] = useState<FullRun | null>(null);
+  const controller = useRef<AbortController | null>(null);
+
+  // Leaving the screen stops the run: the tabs already opened are recorded and the rest are still
+  // here next time, exactly as the fill-in run's note promises. Nulled as well as aborted, so the
+  // handlers below can tell a run that ended from one that was walked away from.
+  useEffect(
+    () => () => {
+      controller.current?.abort();
+      controller.current = null;
+    },
+    [],
+  );
+
+  const start = () => {
+    const abort = new AbortController();
+    controller.current = abort;
+    // Whether this run is still the one on screen. False after an unmount, or after Stop and a
+    // second press — either way the state below belongs to somebody else now.
+    const current = () => controller.current === abort;
+    setRun({ state: 'running', progress: null });
+    void runFullSweep({
+      hubs,
+      criteria,
+      intervalMs: loadIntervalMs(),
+      signal: abort.signal,
+      onProgress: (progress) => setRun({ state: 'running', progress }),
+      deps: {
+        openTab: async (url) => {
+          const reply = await openTabExtension(url);
+          if (!reply) throw new Error('the extension did not answer');
+          if (reply.kind === 'error') throw new Error(reply.message);
+        },
+        listSweeps: listHubSweeps,
+        resetSweep: resetSweepProgress,
+        pending: pendingSightings,
+        shortlist: getShortlist,
+        sleep: abortableSleep,
+        now: () => new Date(),
+      },
+    })
+      .then(async (summary) => {
+        if (!current()) return;
+        // Pins first, then the repaint — the other order refetches the shortlist into the cache
+        // with the null/fuzzed positions the geocode is about to replace. Not after Stop, though:
+        // the geocode cannot be interrupted, and Stop promised to take effect at once. The
+        // page-load backfill places those pins next time.
+        const opened = summary.filledIn > 0 || summary.rechecked > 0;
+        const mapNote = opened && !summary.stopped ? await placePins() : null;
+        if (!current()) return;
+        invalidateAfterRun(client);
+        onFinished();
+        controller.current = null;
+        setRun({ state: 'finished', summary, mapNote });
+      })
+      .catch((e: unknown) => {
+        if (!current()) return;
+        // What did land is on screen somewhere, even when the run stopped on an error.
+        invalidateAfterRun(client);
+        controller.current = null;
+        setRun({ state: 'failed', message: e instanceof Error ? e.message : String(e) });
+      });
+  };
+
+  if (run?.state === 'running') {
+    const p = run.progress;
+    return (
+      <div className="rm-open-run" data-testid="full-sweep-running">
+        <div className="rm-open-run-head">
+          <span>
+            {p ? PHASE_LABEL[p.phase] : 'Reading what has been swept…'}
+            {p && p.total !== null ? ` · ${Math.min(p.done + 1, p.total)} of ${p.total}` : ''}
+          </span>
+          <button type="button" className="rm-open-stop" onClick={() => controller.current?.abort()}>
+            Stop
+          </button>
+        </div>
+        {/* Indeterminate until page 1 of a place is in — the total is not known before then. */}
+        {p && p.total !== null ? <progress value={p.done} max={p.total} /> : <progress />}
+        <div className="rm-open-at">{p?.label ?? ''}</div>
+      </div>
+    );
+  }
+
+  const searchable = hubs.filter((hub) => toSweepHub(hub).rightmove !== null && hub.sweepRadiusMiles !== null);
+  // The same test `sweepSearchUrl` makes: a saved-but-empty set of filters is no filters.
+  const noCriteria = criteria === null || Object.keys(criteria).length === 0;
+  const intervalMs = loadIntervalMs();
+
+  return (
+    <div className="sweep-fill">
+      <p className="dim">
+        One press does the lot, in order: scan every place below page by page, open every listing
+        the scan turned up, then reopen every place in the funnel that is due a re-check. Each page
+        is a background tab through the extension, one every {Math.round(intervalMs / 1000)}s — the
+        pace is the one set under <em>Fill in</em>. It runs while this tab is open, and stopping
+        loses nothing: what was opened is recorded, and the rest is still here next time.
+      </p>
+      {run?.state === 'finished' && <Finished summary={run.summary} mapNote={run.mapNote} />}
+      {run?.state === 'failed' && <p className="error">{run.message}</p>}
+      {/* Nothing while the extension question is outstanding — the button either appears or the
+          reason it cannot does, but not a flicker between them. */}
+      {extension.isPending || !ready ? null : extension.data?.status === 'signed-in' ? (
+        <button
+          type="button"
+          className="rm-open-go"
+          data-testid="full-sweep-go"
+          disabled={searchable.length === 0 || noCriteria}
+          onClick={start}
+        >
+          <span>Sweep everything</span>
+          <small>
+            {noCriteria
+              ? 'nothing to search for yet — set the Rightmove filters on Your Hunt'
+              : searchable.length === 0
+                ? 'no place is searchable yet — tick "search around" on Your Hunt → Places'
+                : `${searchable.length} ${searchable.length === 1 ? 'place' : 'places'} to scan, then ` +
+                  'everything scanned and everything due · unattended · stoppable'}
+          </small>
+        </button>
+      ) : extension.data?.status === 'broken' ? (
+        <p className="error">
+          The extension is installed but did not answer, so a sweep cannot open tabs —{' '}
+          {extension.data.message}
+        </p>
+      ) : extension.data?.status === 'signed-out' ? (
+        <p className="dim">
+          The extension is installed but signed out, and a signed-out extension records nothing.
+          Sign in there — signing in here again does it — and this run appears.
+        </p>
+      ) : (
+        <p className="dim">
+          A full sweep opens Rightmove pages in the background, which only the extension can do.
+          Install it and sign in there, and this run appears.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const PHASE_LABEL: Record<FullSweepProgress['phase'], string> = {
+  scan: 'Scanning',
+  fill: 'Filling in',
+  recheck: 'Re-checking',
+};
+
+/** What a run did, in the terms the three sections underneath use, so the numbers can be read
+ *  against them. Skipped places are named with their reason — the same three reasons the per-place
+ *  rows give — rather than folded into a count. */
+function Finished({ summary, mapNote }: { summary: FullSweepSummary; mapNote: string | null }) {
+  const s = summary;
+  return (
+    <>
+      <p className="dim" data-testid="full-sweep-finished">
+        {s.stopped ? 'Stopped. ' : 'Done. '}
+        Scanned {s.pagesScanned} {s.pagesScanned === 1 ? 'page' : 'pages'} across {s.hubsScanned}{' '}
+        {s.hubsScanned === 1 ? 'place' : 'places'}, opened {s.filledIn} new{' '}
+        {s.filledIn === 1 ? 'listing' : 'listings'}, re-checked {s.rechecked}.
+        {s.hubsSkipped.length > 0 &&
+          ` Not scanned: ${s.hubsSkipped.map((h) => `${h.hub} (${h.why})`).join('; ')}.`}
+      </p>
+      {mapNote && <p className="dim">{mapNote}</p>}
+    </>
+  );
+}
+
 /** Going back over what we already have, which is the half of a sweep that was missing.
  *
  *  Everything above finds flats we have never seen. Nothing found out whether the ones we *had*
@@ -133,7 +383,7 @@ function Recheck() {
   if (shortlist.isError) return <p className="error">Could not read the shortlist.</p>;
 
   const targets = recheckTargets(shortlist.data ?? []);
-  const present = extension.data?.status === 'signed-in' || extension.data?.status === 'signed-out';
+  const present = extensionPresent(extension.data);
 
   if (targets.length === 0) {
     return (
@@ -165,14 +415,7 @@ function Recheck() {
               label: row.displayAddress || row.rightmoveId,
             }))}
             what="that may have changed"
-            onFinished={() => {
-              // The run rewrites property rows, price history and the off-market set, and every one
-              // of those is on screen somewhere else. Refetching the lot is cheaper to reason about
-              // than naming which of them a given listing happened to touch.
-              void client.invalidateQueries({ queryKey: keys.shortlist });
-              void client.invalidateQueries({ queryKey: keys.offMarket });
-              void client.invalidateQueries({ queryKey: keys.prices });
-            }}
+            onFinished={() => invalidateAfterRun(client)}
           />
         ) : (
           <p className="dim">
@@ -298,7 +541,7 @@ function FillIn({
       {error && <p className="error">{error}</p>}
       {/* Under the error and dimmer than it: the run worked, only the pins are missing, and
           the page-load backfill places them next time. */}
-      {mapNote && <p className="dim">{mapNote}. They will be placed next time this page loads.</p>}
+      {mapNote && <p className="dim">{mapNote}</p>}
     </>
   );
 
@@ -316,7 +559,7 @@ function FillIn({
   const byHub = new Map<string, number>();
   for (const row of pending) byHub.set(row.hub, (byHub.get(row.hub) ?? 0) + 1);
 
-  const present = extension.data?.status === 'signed-in' || extension.data?.status === 'signed-out';
+  const present = extensionPresent(extension.data);
 
   return (
     <>
@@ -346,26 +589,12 @@ function FillIn({
                 // during the run drop out here; the rest follow as it lands and the window-focus
                 // refetch re-runs this.
                 refresh();
-                // Then fill in map positions for the flats this run just opened. Opening records a
-                // postcode but never geocodes it, and the once-per-page-load backfill will not
-                // revisit these rows while this tab stays mounted — so do it here, or their pins
-                // would not appear until a hard reload. Best-effort: a geocoding hiccup must not
-                // stop the repaint below.
-                //
-                // Best-effort, but not silent. An empty catch discarded the reason entirely: the
-                // pins simply would not appear, and nothing on screen or in the console connected
-                // that to a lookup that failed. It stays out of `error` because the run itself
-                // succeeded — colouring a finished sweep red for a missing pin says the wrong thing.
-                await locateProperties().catch((e: unknown) => {
-                  const why = e instanceof Error ? e.message : String(e);
-                  console.warn('[sweep] filling in map positions failed', e);
-                  setMapNote(`Map pins for this run could not be placed — ${why}`);
-                });
-                // Repaint the shortlist and map regardless of the geocode's outcome: the run opened
-                // (and usually geocoded) listings, and even a geocode that threw after writing some
-                // coordinates has left the shortlist holding stale null/fuzzed positions. Same
-                // invalidation `useLocateProperties` does for the page-load backfill.
-                await client.invalidateQueries({ queryKey: keys.shortlist });
+                // Then the pins for what this run opened (`placePins` says why here rather than
+                // the page-load backfill), and a repaint regardless of the geocode's outcome: even
+                // a geocode that threw after writing some coordinates has left the shortlist
+                // holding stale null/fuzzed positions.
+                setMapNote(await placePins());
+                invalidateAfterRun(client);
               }}
               onError={setError}
             />

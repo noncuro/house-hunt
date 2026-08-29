@@ -25,7 +25,7 @@ function clampIntervalMs(ms: number): number {
 
 /** Remembered per browser so a pace you settled on survives a reload — read defensively because a
  *  hand-edited or stale value must fall back to the default rather than opening forty tabs at once. */
-function loadIntervalMs(): number {
+export function loadIntervalMs(): number {
   if (typeof window === 'undefined') return OPEN_INTERVAL_MS;
   const raw = Number(window.localStorage.getItem(INTERVAL_KEY));
   return Number.isFinite(raw) && raw > 0 ? clampIntervalMs(raw) : OPEN_INTERVAL_MS;
