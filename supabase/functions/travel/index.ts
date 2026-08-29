@@ -34,12 +34,14 @@ import {
   resolveStation,
   staleTravel,
   TflError,
+  tooFarToWalk,
   TRAVEL_BASIS,
   walkTo,
   type StationInfo,
 } from '../_shared/tfl.ts';
 import { lookupPostcode } from '../_shared/postcode.ts';
 import { TRAVEL_MODES, type JourneyOption, type TravelMode } from '../_shared/types.ts';
+import { distanceMiles } from '../_shared/hubs.ts';
 
 requireEnv({
   SUPABASE_URL: Deno.env.get('SUPABASE_URL'),
@@ -234,6 +236,9 @@ interface TravelRow {
   changes: number | null;
   journeys: JourneyOption[] | null;
   no_route: boolean;
+  /** Why there is no number, where the row knows. Null on anything written before the column
+   *  existed, which is honestly "no more than `no_route` says". */
+  reason: string | null;
   basis: string | null;
   computed_at: string;
 }
@@ -241,7 +246,7 @@ interface TravelRow {
 async function cachedJourneys(origin: string): Promise<Map<string, TravelRow>> {
   const rows = await rest<TravelRow[]>(
     `travel_time?origin_postcode=eq.${encodeURIComponent(origin)}` +
-      '&select=dest_postcode,mode,seconds,changes,journeys,no_route,basis,computed_at',
+      '&select=dest_postcode,mode,seconds,changes,journeys,no_route,reason,basis,computed_at',
   );
   return new Map(rows.map((r) => [`${r.dest_postcode}:${r.mode}`, r]));
 }
@@ -254,11 +259,36 @@ interface LegOutcome {
   options?: JourneyOption[];
   /** Present when the leg could not be answered with a duration. */
   error?: string;
-  /** True when TfL settled the question — there is no such journey — and the negative has been
-   *  cached. False means try again later. Only meaningful alongside `error`. */
+  /** True when the question is settled — there is no such journey. False means try again later.
+   *  Only meaningful alongside `error`.
+   *
+   *  Deliberately *not* "and it was cached". Whether the negative was stored is `cacheWriteFailure`
+   *  below, and folding the two together makes a broken write look like an outage to whoever is
+   *  waiting: a walk refused on distance would come back to the browser as `transient`, drawn as
+   *  "TfL did not answer", naming TfL for a call nobody made. The two facts are read by different
+   *  callers — this one decides what to tell the person, that one decides whether the backlog has
+   *  finished with the leg — so they stay two fields. */
   settled: boolean;
+  /** True once a request has actually left for TfL. A leg refused on distance never asks, and
+   *  counting it as a call would spend a caller's per-minute allowance on the call we saved. */
+  askedTfl: boolean;
   /** Set when the answer was right and storing it was not. */
   cacheWriteFailure?: string;
+}
+
+/** How far apart the two ends of a leg are in a straight line, or null where either could not be
+ *  placed. Only the walking refusal reads it, and null there asks as it always did.
+ *
+ *  One function because the two callers differ only in where the coordinates come from — the
+ *  backfill is handed both by `travel_gaps`, the interactive path looks the origin up — and a
+ *  null-check written twice is a null-check that ends up written two different ways. */
+function apartMiles(
+  from: { lat: number | null; lon: number | null } | null,
+  to: { lat?: number | null; lon?: number | null },
+): number | null {
+  if (from === null || from.lat === null || from.lon === null) return null;
+  if (to.lat === null || to.lat === undefined || to.lon === null || to.lon === undefined) return null;
+  return distanceMiles({ lat: from.lat, lon: from.lon }, { lat: to.lat, lon: to.lon });
 }
 
 /** One leg: ask TfL, cache whatever comes back, and report what happened.
@@ -267,9 +297,24 @@ interface LegOutcome {
  *  at, and the backlog working through the ones nobody has opened. They differ entirely in what they
  *  do with the outcome, and not at all in how a leg is resolved, which is the half carrying the
  *  cache-write rules that took a deploy to get right. */
-async function resolveLeg(origin: string, destPostcode: string, to: string, mode: TravelMode): Promise<LegOutcome> {
-  const outcome: LegOutcome = { seconds: null, changes: null, settled: false };
+async function resolveLeg(
+  origin: string,
+  destPostcode: string,
+  to: string,
+  mode: TravelMode,
+  /** How far apart the two ends are in a straight line, where both are known. Only the walking
+   *  refusal below reads it; null means "we could not measure", which asks as it always did. */
+  straightLineMiles: number | null = null,
+): Promise<LegOutcome> {
+  const outcome: LegOutcome = { seconds: null, changes: null, settled: false, askedTfl: false };
   try {
+    // Settled without asking, and settled honestly — `tooFarToWalk` holds both the rule and the
+    // sentence. Thrown as a non-transient `TflError` rather than handled separately so it goes down
+    // the one path a settled negative already has: cached as `no_route`, counted as one, and shown
+    // in its own words in the hover where the dash is.
+    const refusal = tooFarToWalk(mode, straightLineMiles);
+    if (refusal) throw new TflError(refusal, false);
+    outcome.askedTfl = true;
     // No `now` argument: `journeyTime` pins transit to the next weekday 09:00 itself, and this is
     // the only place that calls it, so the basis is a property of the system rather than of whoever
     // asked (design D4). Through the queue so one request's fifteen legs, and a grid's worth of
@@ -312,6 +357,10 @@ async function resolveLeg(origin: string, destPostcode: string, to: string, mode
         p_no_route: true,
         p_journeys: null,
         p_basis: TRAVEL_BASIS[mode],
+        // What settled it, in words, so the dash this becomes on screen says the true thing rather
+        // than the one sentence every no-route row used to be given — which credits TfL for
+        // verdicts, like the walking refusal above, that TfL was never asked for.
+        p_reason: outcome.error,
       }).catch((err) => {
         outcome.cacheWriteFailure = `cache_travel no-route ${origin} -> ${destPostcode} ${mode}: ${err}`;
       });
@@ -320,12 +369,41 @@ async function resolveLeg(origin: string, destPostcode: string, to: string, mode
   }
 }
 
+/** The cached row that answers this leg, or null when it has to be resolved.
+ *
+ *  Not every cached row answers the question now being asked. `staleTravel` holds the rules — a
+ *  number measured on a different basis, a no-route old enough to be worth re-asking, a transit row
+ *  from before the leg breakdown was stored — and each fills itself in on the next visit rather than
+ *  needing a migration. Written once because two things now ask it: the leg itself, and whether the
+ *  origin is worth placing at all. */
+function answeredBy(cache: Map<string, TravelRow>, destPostcode: string, mode: TravelMode): TravelRow | null {
+  const row = cache.get(`${destPostcode}:${mode}`);
+  if (row === undefined) return null;
+  return staleTravel(toCached(row), mode) === null ? row : null;
+}
+
 async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journeys' }>) {
   const origin = ask.origin.trim();
   if (!origin) throw new HttpError(400, 'bad-request', 'a journey needs an origin postcode');
   if (ask.destinations.length === 0) return { answers: [] as JourneyAnswer[] };
 
   const cache = ask.refresh ? new Map<string, TravelRow>() : await cachedJourneys(origin);
+
+  // Where the flat is, for the walking refusal — which needs a point at each end, and gets the
+  // origin as a postcode string, because a postcode is the right thing to route from and the wrong
+  // thing to measure with. The backfill has the point handed to it by `travel_gaps`; here nobody
+  // has asked for it, so it is looked up rather than taken off Rightmove's own map pin, which is
+  // deliberately fuzzed.
+  //
+  // Only when a walking leg is actually going to be resolved. A grid on the website mounts one
+  // request per flat and most of them are answered entirely from the cache, so placing the origin
+  // unconditionally would add a postcodes.io round trip per flat to a page load that needed none.
+  // A postcode that will not resolve leaves this null, and the leg is asked exactly as it was.
+  const placingOrigin =
+    ask.modes.includes('walking') &&
+    ask.destinations.some((d) => answeredBy(cache, d.postcode, 'walking') === null);
+  const originPoint = placingOrigin ? (await lookupPostcode(origin)).point : null;
+
   let made = 0;
   // Collected rather than thrown: the answers are already correct and the caller should get them.
   // Reported at the end, because "we resolved fifteen legs and cached none of them" is a broken
@@ -335,20 +413,17 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
   const answers = await Promise.all(
     ask.destinations.flatMap((destination) =>
       ask.modes.map(async (mode): Promise<JourneyAnswer> => {
-        const row = cache.get(`${destination.postcode}:${mode}`);
-        // Not every cached row answers the question now being asked. `staleTravel` holds the rules
-        // — a number measured on a different basis, a no-route old enough to be worth re-asking, a
-        // transit row from before the leg breakdown was stored — and each fills itself in on the
-        // next visit rather than needing a migration.
-        const stale = row === undefined ? null : staleTravel(toCached(row), mode);
-        if (row && stale === null) {
+        const row = answeredBy(cache, destination.postcode, mode);
+        if (row) {
           if (row.no_route) {
             return {
               destPostcode: destination.postcode,
               mode,
               seconds: 0,
               changes: null,
-              error: 'TfL found no journey for this mode',
+              // The row's own words where it has them; the old sentence only where it does not,
+              // which is a row written before reasons were stored and genuinely knows no more.
+              error: row.reason ?? 'TfL found no journey for this mode',
               transient: false,
               cached: true,
             };
@@ -369,8 +444,9 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
             ? `${destination.lat},${destination.lon}`
             : destination.postcode;
 
-        made++;
-        const leg = await resolveLeg(origin, destination.postcode, to, mode);
+        const leg = await resolveLeg(origin, destination.postcode, to, mode, apartMiles(originPoint, destination));
+        // After the fact rather than before it, so a refusal is not billed as a call.
+        if (leg.askedTfl) made++;
         if (leg.cacheWriteFailure) cacheWriteFailures.push(leg.cacheWriteFailure);
         if (leg.error) {
           return {
@@ -401,8 +477,14 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
   // all fifteen answered or all fifteen threw. A settled no-route carries `transient: false` and is
   // a real answer, not a fault, so it is not counted here.
   const brokenLegs = answers.filter((a) => a.error && a.transient);
+  // Counted rather than subtracted: legs are now cached, asked, or settled without asking, and
+  // "everything that was not a call was a cache hit" stopped being true the moment the third
+  // category existed.
+  const fromCache = answers.filter((a) => a.cached).length;
+  const refused = answers.length - fromCache - made;
   console.log(
-    `travel ${origin}: ${answers.length} legs, ${answers.length - made} cached, ${made} from TfL` +
+    `travel ${origin}: ${answers.length} legs, ${fromCache} cached, ${made} from TfL` +
+      (refused > 0 ? `, ${refused} too far to walk` : '') +
       (brokenLegs.length > 0 ? `, ${brokenLegs.length} failed` : ''),
   );
   if (brokenLegs.length > 0) {
@@ -532,12 +614,18 @@ const MAX_BACKFILL_CALLS = 200;
  *  reachable. */
 interface SystemAsk {
   kind: 'backfill';
-  /** TfL calls this run may make. Clamped to `MAX_BACKFILL_CALLS`. */
+  /** Legs this run may draw. Clamped to `MAX_BACKFILL_CALLS`.
+   *
+   *  A ceiling on TfL calls rather than an allowance of them: it is passed straight to
+   *  `travel_gaps` as a row limit, and a leg refused on distance uses one without calling anybody.
+   *  So a run's real call count is this number minus its refusals, which the log line prints. */
   budget?: number;
 }
 
 interface Gap {
   origin_postcode: string;
+  origin_lat: number | null;
+  origin_lon: number | null;
   dest_postcode: string;
   dest_lat: number | null;
   dest_lon: number | null;
@@ -622,6 +710,7 @@ async function runBackfill(ask: SystemAsk) {
 
   let routed = 0;
   let noRoute = 0;
+  let refused = 0;
   const failures: string[] = [];
   const cacheWriteFailures: string[] = [];
 
@@ -631,16 +720,24 @@ async function runBackfill(ask: SystemAsk) {
         // Coordinates where the place has them, for the same reason the interactive path prefers
         // them: TfL's geocoder resolved a terminated postcode to a point in the wrong part of London.
         const to = gap.dest_lat !== null && gap.dest_lon !== null ? `${gap.dest_lat},${gap.dest_lon}` : gap.dest_postcode;
-        const leg = await resolveLeg(gap.origin_postcode, gap.dest_postcode, to, gap.mode);
+        const apart = apartMiles({ lat: gap.origin_lat, lon: gap.origin_lon }, { lat: gap.dest_lat, lon: gap.dest_lon });
+        const leg = await resolveLeg(gap.origin_postcode, gap.dest_postcode, to, gap.mode, apart);
         if (leg.cacheWriteFailure) cacheWriteFailures.push(leg.cacheWriteFailure);
 
-        if (leg.error && !leg.settled) {
-          failures.push(`${gap.origin_postcode} -> ${gap.dest_postcode} ${gap.mode}: ${leg.error}`);
+        // Unfinished, and it is the *storing* that decides that rather than the answer. A leg whose
+        // answer was not written leaves no row however good the answer was, so `travel_gaps` derives
+        // it again on the next run and on every run after it — and counting it as done here is what
+        // turned a broken write into a leg the backlog re-answered forever, logging it each time and
+        // clearing the backoff it should have been recording. Backing off is also what stops one
+        // broken write spending the whole budget on the same handful of legs.
+        const unfinished = leg.cacheWriteFailure ?? (leg.error && !leg.settled ? leg.error : undefined);
+        if (unfinished) {
+          failures.push(`${gap.origin_postcode} -> ${gap.dest_postcode} ${gap.mode}: ${unfinished}`);
           await rpc('record_travel_failure', {
             p_origin_postcode: gap.origin_postcode,
             p_dest_postcode: gap.dest_postcode,
             p_mode: gap.mode,
-            p_error: leg.error,
+            p_error: unfinished,
           }).catch((e) => {
             // A backoff that cannot be written means this pair returns in the next run and fails
             // again — wasteful rather than wrong, and invisible unless it is said out loud.
@@ -649,11 +746,16 @@ async function runBackfill(ask: SystemAsk) {
           return;
         }
 
-        // Answered, one way or the other: a duration, or TfL settling that there is no such journey.
-        // Both are cached, so both leave the gap set, and any backoff standing against the pair has
-        // served its purpose.
-        if (leg.settled) noRoute++;
-        else routed++;
+        // Answered, one way or another: a duration, TfL settling that there is no such journey, or
+        // the leg refused here before anybody was asked. All three are cached, so all three leave
+        // the gap set, and any backoff standing against the pair has served its purpose.
+        //
+        // The refusals are counted apart from TfL's verdicts because they are not TfL's verdicts —
+        // the same objection the reason column exists to answer, and the number that says whether a
+        // run's budget is going on journeys or on legs it declined to ask about.
+        if (!leg.settled) routed++;
+        else if (leg.askedTfl) noRoute++;
+        else refused++;
         // Unconditionally, though the delete is usually a no-op: the gap row was read before the
         // call and cannot say what happened during it. Two overlapping runs can draw the same leg,
         // and if one fails and writes a backoff while the other succeeds, skipping the clear on the
@@ -672,7 +774,7 @@ async function runBackfill(ask: SystemAsk) {
 
   console.log(
     `travel backfill: ${gaps.length} attempted, ${routed} routed, ${noRoute} no-route, ` +
-      `${failures.length} failed, ${outstanding} outstanding before this run`,
+      `${refused} too far to walk, ${failures.length} failed, ${outstanding} outstanding before this run`,
   );
   if (failures.length > 0) {
     const line = `${failures.length} of ${gaps.length} backfilled legs failed:\n  ${failures.slice(0, 5).join('\n  ')}`;
@@ -699,6 +801,7 @@ function toCached(row: TravelRow) {
     changes: row.changes,
     options: row.journeys,
     noRoute: row.no_route,
+    reason: row.reason,
     basis: row.basis,
     computedAt: row.computed_at,
   };

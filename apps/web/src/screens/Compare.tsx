@@ -827,10 +827,21 @@ function travelColumn(place: Place, mode: TravelMode | null): Column {
     render: (e, travel) => {
       const { verdict, winner } = pick(e, place.id, mode, travel);
       if (!winner) {
-        // Three different absences, and calling them all "not worked out" would be a lie in two
-        // of the three cases.
+        // Four different absences, and calling them all "not worked out" would be a lie in three
+        // of the four cases.
+        //
+        // A named column asks about one mode, so it answers from that mode's own row before
+        // anything else. Everything below it answers for the *place*, and a place with a usable
+        // train time is not "no route" — which is how a cycling column whose leg had been settled
+        // came to read "not worked out yet" over a question that was decided.
+        //
+        // A settled row is shown in its own words, because not every settled negative is TfL's:
+        // "too far to walk" is a different fact from "TfL could not route it" to whoever is reading
+        // the column.
+        const row = mode ? verdict.byMode[mode] : undefined;
+        if (row?.error) return dash(row.transient ? 'TfL did not answer — open this place to retry.' : row.error);
         if (mode && verdict.usable.length > 0) return dash(`No ${mode} time — open this place to fetch it.`);
-        if (verdict.noRoute) return dash('No journey between these two points.');
+        if (verdict.noRoute) return dash(verdict.noRoute);
         if (verdict.transient) return dash('TfL did not answer — open this place to retry.');
         return dash('Not worked out yet — open this place to fetch it.');
       }

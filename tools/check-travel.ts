@@ -11,10 +11,11 @@
  *  divergence — it sees the modes a run happens to return, and a mode with no outstanding gaps
  *  legitimately returns nothing — so a mode added here and forgotten in the migration is never
  *  backfilled, forever, with every check green. Comparing the two texts is the only way to see it. */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { NO_ROUTE_RETRY_DAYS, TRAVEL_BASIS, nextWeekdayMorning, staleTravel, stationCore, stationMatches } from '../packages/core/src/tfl';
-import { TRAVEL_MODES } from '../packages/core/src/types';
+import { NO_ROUTE_RETRY_DAYS, TRAVEL_BASIS, nextWeekdayMorning, staleTravel, stationCore, stationMatches, tooFarToWalk } from '../packages/core/src/tfl';
+import { distanceMiles } from '../packages/core/src/hubs';
+import { TRAVEL_MODES, WALKING_LIMIT_MILES, WALKING_LIMIT_SECONDS } from '../packages/core/src/types';
 
 let failures = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -35,6 +36,18 @@ function refetched(name: string, actual: string | null) {
   if (actual !== null) return console.log(`  ok   ${name} (${actual})`);
   failures++;
   console.log(`  FAIL ${name}\n       expected a reason to refetch, got none`);
+}
+
+function asked(name: string, actual: string | null) {
+  if (actual === null) return console.log(`  ok   ${name}`);
+  failures++;
+  console.log(`  FAIL ${name}\n       expected the leg to be asked\n       got a refusal: "${actual}"`);
+}
+
+function refused(name: string, actual: string | null) {
+  if (actual !== null) return console.log(`  ok   ${name} (${actual})`);
+  failures++;
+  console.log(`  FAIL ${name}\n       expected a refusal, got none`);
 }
 
 const NOW = new Date('2026-08-09T12:00:00Z');
@@ -136,6 +149,60 @@ usable(
   staleTravel(row({ noRoute: true, options: undefined, computedAt: 'not a date' }), 'transit', NOW),
 );
 
+console.log('tooFarToWalk');
+/* The one refusal in this system that is made without asking anybody.
+ *
+ * A straight line is a lower bound on any real route, so refusing on it is a claim about *every*
+ * walk between the two points — and it is allowed to be wrong in one direction only. Refusing a
+ * walk TfL would also have called over the hour costs nothing, because every view draws an
+ * over-the-hour walk as a dash whatever number comes back; refusing one TfL would have called
+ * under it hides a trip somebody could actually make, which is this idea's own failure mode
+ * inverted and looks exactly like a place with no route to it.
+ *
+ * So the distance is pinned here as a number, not only as a comparison. It is derived from an
+ * assumed pace, and a pace nudged down one line of `types.ts` silently starts refusing journeys
+ * that exist — a boundary in the wrong place still looks like a boundary. */
+check('the limit is five miles', WALKING_LIMIT_MILES, 5);
+// Redundant against the line above today, and deliberately so: that one pins this year's number and
+// would be *updated* by anybody changing it, which is no check at all against the change that
+// matters. This one pins the property instead, against a figure that is not the one under test —
+// four miles an hour is a brisk walk and already faster than the pedestrian speeds journey planners
+// route at — so a pace quietly lowered back towards a typical walker fails here even after the
+// number above has been dutifully corrected to match.
+check(
+  'the limit is no shorter than a brisk walker covers in the hour',
+  WALKING_LIMIT_MILES >= 4 * (WALKING_LIMIT_SECONDS / 3600),
+  true,
+);
+
+// The boundary itself. Exactly on the limit is the last distance that could be walked inside the
+// hour, so it is asked; the refusal starts past it.
+asked('a walk exactly on the limit is asked', tooFarToWalk('walking', WALKING_LIMIT_MILES));
+refused('a walk past the limit is not', tooFarToWalk('walking', WALKING_LIMIT_MILES + 0.01));
+// Only walking. A cycle or a train across London is an ordinary journey, and refusing either on
+// this distance would delete a column of real numbers.
+asked('a cycle right across London is asked', tooFarToWalk('cycling', 20));
+asked('and so is a train', tooFarToWalk('transit', 20));
+// A refusal needs a measurement. Where one end could not be placed there is nothing to compare,
+// and guessing is how a walkable leg gets cached as a dead end.
+asked('a leg with nothing to measure is asked', tooFarToWalk('walking', null));
+// The sentence is cached on the row and shown in the hover under the dash, so it has to say the
+// distance rather than leave a bare "no journey" that reads as TfL's verdict.
+check('the refusal says how far', tooFarToWalk('walking', 7.25)?.startsWith('7.3 miles'), true);
+
+// And the whole chain the function actually runs: two points, a great-circle distance, a verdict.
+const TRAFALGAR = { lat: 51.508, lon: -0.1281 };
+const CANARY_WHARF = { lat: 51.5054, lon: -0.0235 };
+const HEATHROW_T5 = { lat: 51.47, lon: -0.49 };
+asked(
+  'central London to Canary Wharf is a walk worth asking about',
+  tooFarToWalk('walking', distanceMiles(TRAFALGAR, CANARY_WHARF)),
+);
+refused(
+  'central London to Heathrow is not',
+  tooFarToWalk('walking', distanceMiles(TRAFALGAR, HEATHROW_T5)),
+);
+
 /** The modes `travel_gaps` unnests, or a sentence saying why they could not be read.
  *
  *  Deliberately fussy about finding exactly one literal in exactly one place. Taking the first
@@ -169,9 +236,26 @@ function modes(name: string, sql: string, expected: string[] | string) {
   check(name, 'modes' in found ? found.modes : found.problem, expected);
 }
 
-console.log('travel_gaps modes');
-const MIGRATION = 'supabase/migrations/20260815160000_travel_backfill.sql';
-const migration = readFileSync(resolve(import.meta.dirname, '..', MIGRATION), 'utf8');
+/** The migration that *currently* defines `travel_gaps`, found rather than named.
+ *
+ *  Migrations are applied in filename order and each `create function` supersedes the one before,
+ *  so the definition that runs is the one in the last file to write it. Naming that file by hand
+ *  is a check that goes stale silently: the next migration to redefine the function leaves this
+ *  reading a definition the database no longer has, green, about SQL that no longer runs — which
+ *  is precisely the failure the mode comparison exists to catch, one level up. */
+function latestTravelGapsMigration(): { path: string; sql: string } {
+  const dir = resolve(import.meta.dirname, '..', 'supabase/migrations');
+  const defines = readdirSync(dir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+    .filter((f) => /create\s+(?:or\s+replace\s+)?function\s+public\.travel_gaps\b/i.test(readFileSync(resolve(dir, f), 'utf8')));
+  const last = defines.at(-1);
+  if (last === undefined) throw new Error('no migration creates public.travel_gaps — did it move?');
+  return { path: `supabase/migrations/${last}`, sql: readFileSync(resolve(dir, last), 'utf8') };
+}
+
+const { path: MIGRATION, sql: migration } = latestTravelGapsMigration();
+console.log(`travel_gaps modes (${MIGRATION})`);
 modes('the migration routes exactly the modes TRAVEL_MODES names', migration, [...TRAVEL_MODES].sort());
 
 /** The migration with one edit made, refusing to make it ambiguously.
