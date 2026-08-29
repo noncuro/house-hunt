@@ -841,7 +841,7 @@ function travelColumn(place: Place, mode: TravelMode | null): Column {
         const row = mode ? verdict.byMode[mode] : undefined;
         if (row?.error) return dash(row.transient ? 'TfL did not answer — open this place to retry.' : row.error);
         if (mode && verdict.usable.length > 0) return dash(`No ${mode} time — open this place to fetch it.`);
-        if (verdict.noRoute) return dash(verdict.noRouteReason ?? 'No journey between these two points.');
+        if (verdict.noRoute) return dash(verdict.noRoute);
         if (verdict.transient) return dash('TfL did not answer — open this place to retry.');
         return dash('Not worked out yet — open this place to fetch it.');
       }

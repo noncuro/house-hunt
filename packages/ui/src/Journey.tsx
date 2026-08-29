@@ -28,11 +28,14 @@ export interface TravelVerdict {
   best: TravelTime | null;
   /** A mode we asked about and never got an answer for — worth a retry. */
   transient: TravelTime | null;
-  /** Asked and settled, for the place as a whole: no mode gets you there. Settled, not missing. */
-  noRoute: boolean;
-  /** What settled it, in the words of whoever settled it. Null when the row does not say — which
-   *  is every row written before the reason was stored. */
-  noRouteReason: string | null;
+  /** Asked and settled, for the place as a whole — no mode gets you there — in the words of
+   *  whoever settled it, and null when nothing settled it. Settled, not missing.
+   *
+   *  The words rather than a flag with a sentence beside it. This is only ever taken from a row
+   *  that carries an error, so "settled, but we cannot say why" is a state that cannot arise, and a
+   *  fallback sentence for it would be a default that reads as care and never runs — while quietly
+   *  being the only place a reader could look to find out what the sentence is. */
+  noRoute: string | null;
   /** Each mode's own row, for a view asking about one column rather than about the place.
    *
    *  Everything above answers "how do I get there", which is the question the panel and the cards
@@ -112,8 +115,7 @@ export function readTravel(rows: TravelTime[] | undefined): TravelVerdict {
     usable,
     best,
     transient,
-    noRoute: settled !== null,
-    noRouteReason: settled?.error ?? null,
+    noRoute: settled?.error ?? null,
     byMode,
     unknown: all.length === 0,
   };

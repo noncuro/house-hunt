@@ -259,14 +259,15 @@ interface LegOutcome {
   options?: JourneyOption[];
   /** Present when the leg could not be answered with a duration. */
   error?: string;
-  /** True when the question is settled — there is no such journey — **and** the negative has been
-   *  cached. False means try again later. Only meaningful alongside `error`.
+  /** True when the question is settled — there is no such journey. False means try again later.
+   *  Only meaningful alongside `error`.
    *
-   *  The two halves are one flag on purpose. A settled negative that was not written leaves no row,
-   *  so `travel_gaps` derives the leg again on the next run and every run after it; calling that
-   *  settled turned a broken cache write into a leg the backfill re-answered and failed to store
-   *  forever, logging it each time and backing off from nothing. Unsettled, it takes the path a
-   *  failure already has — a recorded backoff, and a retry later. */
+   *  Deliberately *not* "and it was cached". Whether the negative was stored is `cacheWriteFailure`
+   *  below, and folding the two together makes a broken write look like an outage to whoever is
+   *  waiting: a walk refused on distance would come back to the browser as `transient`, drawn as
+   *  "TfL did not answer", naming TfL for a call nobody made. The two facts are read by different
+   *  callers — this one decides what to tell the person, that one decides whether the backlog has
+   *  finished with the leg — so they stay two fields. */
   settled: boolean;
   /** True once a request has actually left for TfL. A leg refused on distance never asks, and
    *  counting it as a call would spend a caller's per-minute allowance on the call we saved. */
@@ -362,9 +363,6 @@ async function resolveLeg(
         p_reason: outcome.error,
       }).catch((err) => {
         outcome.cacheWriteFailure = `cache_travel no-route ${origin} -> ${destPostcode} ${mode}: ${err}`;
-        // Not settled after all — see the flag's own note. Nothing was stored, so nothing is
-        // remembered, and saying otherwise is what makes the leg permanent unfinished work.
-        outcome.settled = false;
       });
     }
     return outcome;
@@ -447,9 +445,7 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
             : destination.postcode;
 
         const leg = await resolveLeg(origin, destination.postcode, to, mode, apartMiles(originPoint, destination));
-        // After the fact, and only for a leg that really left for TfL: a leg refused on distance
-        // costs nothing, and charging it to the caller's per-minute allowance would spend the call
-        // this exists to save.
+        // After the fact rather than before it, so a refusal is not billed as a call.
         if (leg.askedTfl) made++;
         if (leg.cacheWriteFailure) cacheWriteFailures.push(leg.cacheWriteFailure);
         if (leg.error) {
@@ -618,7 +614,11 @@ const MAX_BACKFILL_CALLS = 200;
  *  reachable. */
 interface SystemAsk {
   kind: 'backfill';
-  /** TfL calls this run may make. Clamped to `MAX_BACKFILL_CALLS`. */
+  /** Legs this run may draw. Clamped to `MAX_BACKFILL_CALLS`.
+   *
+   *  A ceiling on TfL calls rather than an allowance of them: it is passed straight to
+   *  `travel_gaps` as a row limit, and a leg refused on distance uses one without calling anybody.
+   *  So a run's real call count is this number minus its refusals, which the log line prints. */
   budget?: number;
 }
 
@@ -710,6 +710,7 @@ async function runBackfill(ask: SystemAsk) {
 
   let routed = 0;
   let noRoute = 0;
+  let refused = 0;
   const failures: string[] = [];
   const cacheWriteFailures: string[] = [];
 
@@ -723,13 +724,20 @@ async function runBackfill(ask: SystemAsk) {
         const leg = await resolveLeg(gap.origin_postcode, gap.dest_postcode, to, gap.mode, apart);
         if (leg.cacheWriteFailure) cacheWriteFailures.push(leg.cacheWriteFailure);
 
-        if (leg.error && !leg.settled) {
-          failures.push(`${gap.origin_postcode} -> ${gap.dest_postcode} ${gap.mode}: ${leg.error}`);
+        // Unfinished, and it is the *storing* that decides that rather than the answer. A leg whose
+        // answer was not written leaves no row however good the answer was, so `travel_gaps` derives
+        // it again on the next run and on every run after it — and counting it as done here is what
+        // turned a broken write into a leg the backlog re-answered forever, logging it each time and
+        // clearing the backoff it should have been recording. Backing off is also what stops one
+        // broken write spending the whole budget on the same handful of legs.
+        const unfinished = leg.cacheWriteFailure ?? (leg.error && !leg.settled ? leg.error : undefined);
+        if (unfinished) {
+          failures.push(`${gap.origin_postcode} -> ${gap.dest_postcode} ${gap.mode}: ${unfinished}`);
           await rpc('record_travel_failure', {
             p_origin_postcode: gap.origin_postcode,
             p_dest_postcode: gap.dest_postcode,
             p_mode: gap.mode,
-            p_error: leg.error,
+            p_error: unfinished,
           }).catch((e) => {
             // A backoff that cannot be written means this pair returns in the next run and fails
             // again — wasteful rather than wrong, and invisible unless it is said out loud.
@@ -738,11 +746,16 @@ async function runBackfill(ask: SystemAsk) {
           return;
         }
 
-        // Answered, one way or the other: a duration, or TfL settling that there is no such journey.
-        // Both are cached, so both leave the gap set, and any backoff standing against the pair has
-        // served its purpose.
-        if (leg.settled) noRoute++;
-        else routed++;
+        // Answered, one way or another: a duration, TfL settling that there is no such journey, or
+        // the leg refused here before anybody was asked. All three are cached, so all three leave
+        // the gap set, and any backoff standing against the pair has served its purpose.
+        //
+        // The refusals are counted apart from TfL's verdicts because they are not TfL's verdicts —
+        // the same objection the reason column exists to answer, and the number that says whether a
+        // run's budget is going on journeys or on legs it declined to ask about.
+        if (!leg.settled) routed++;
+        else if (leg.askedTfl) noRoute++;
+        else refused++;
         // Unconditionally, though the delete is usually a no-op: the gap row was read before the
         // call and cannot say what happened during it. Two overlapping runs can draw the same leg,
         // and if one fails and writes a backoff while the other succeeds, skipping the clear on the
@@ -761,7 +774,7 @@ async function runBackfill(ask: SystemAsk) {
 
   console.log(
     `travel backfill: ${gaps.length} attempted, ${routed} routed, ${noRoute} no-route, ` +
-      `${failures.length} failed, ${outstanding} outstanding before this run`,
+      `${refused} too far to walk, ${failures.length} failed, ${outstanding} outstanding before this run`,
   );
   if (failures.length > 0) {
     const line = `${failures.length} of ${gaps.length} backfilled legs failed:\n  ${failures.slice(0, 5).join('\n  ')}`;

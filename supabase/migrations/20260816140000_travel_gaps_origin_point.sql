@@ -91,14 +91,20 @@ begin
        and (ps.stage is null or ps.stage <> 'archived')
        and (tb.next_attempt_at is null or tb.next_attempt_at <= now())
      -- `distinct on` needs the ordering to start with its own expressions; everything after them
-     -- decides which row wins. `pl.id` only picks *which* of two places at one postcode lends its
-     -- coordinates, and they are the same point either way. The two after it matter more than they
-     -- look: two different flats can share a postcode, and they are different rows here with
-     -- different points, so without a rule the origin point is whichever one the planner reached
-     -- first — a fuzzed pin from one flat standing in for the exact postcode point another flat
-     -- already had. `pick.rank` prefers the exact point; `p.rightmove_id` makes the rest of the
-     -- choice repeatable rather than merely arbitrary.
-     order by trim(p.postcode), trim(pl.postcode), m.mode, pl.id, pick.rank nulls last, p.rightmove_id
+     -- decides which row wins, and the order of *those* is the whole guarantee.
+     --
+     -- `pick.rank` comes first because a group is not one flat's rows. `place` is joined on
+     -- `project_id`, so two projects each holding a flat at the same postcode and a place at the
+     -- same postcode land in one group with different `pl.id`s and different properties. Sorting on
+     -- `pl.id` before the rank hands the group to whichever project happens to hold the lower place
+     -- id — which is exactly how one flat's fuzzed pin comes to stand in for the exact postcode
+     -- point another flat already had, the case this migration exists to prevent.
+     --
+     -- `p.rightmove_id` then makes the choice between equally-ranked properties repeatable rather
+     -- than merely arbitrary. `pl.id` is last and decides only *which* of two places at one postcode
+     -- lends its coordinates, which is the one tie here that does not matter: they are the same
+     -- point either way.
+     order by trim(p.postcode), trim(pl.postcode), m.mode, pick.rank nulls last, p.rightmove_id, pl.id
   )
   -- Qualified with the CTE name throughout: the `returns table` columns are parameters in scope
   -- here, and an unqualified `mode` would be ambiguous against them.

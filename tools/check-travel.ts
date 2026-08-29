@@ -163,9 +163,12 @@ console.log('tooFarToWalk');
  * assumed pace, and a pace nudged down one line of `types.ts` silently starts refusing journeys
  * that exist — a boundary in the wrong place still looks like a boundary. */
 check('the limit is five miles', WALKING_LIMIT_MILES, 5);
-// Stated against a figure that is not the one under test: four miles an hour is a brisk walk and
-// already faster than the pedestrian speeds journey planners route at, so whatever pace the limit
-// is derived from, it has to reach at least as far as that walker gets inside the hour.
+// Redundant against the line above today, and deliberately so: that one pins this year's number and
+// would be *updated* by anybody changing it, which is no check at all against the change that
+// matters. This one pins the property instead, against a figure that is not the one under test —
+// four miles an hour is a brisk walk and already faster than the pedestrian speeds journey planners
+// route at — so a pace quietly lowered back towards a typical walker fails here even after the
+// number above has been dutifully corrected to match.
 check(
   'the limit is no shorter than a brisk walker covers in the hour',
   WALKING_LIMIT_MILES >= 4 * (WALKING_LIMIT_SECONDS / 3600),
