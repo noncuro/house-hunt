@@ -42,7 +42,14 @@
   left: -100vw;
   width: 300vw;
   display: flex;
-  transition: transform 160ms ease-out;
+  /* Longer than the 160ms this was when a drag moved one photo a few dozen pixels. The same
+     transition now does two jobs at very different distances — springing a short swipe back, and
+     carrying a finished one a whole screen — and a full width crossed in 160ms is a flash rather
+     than a movement, which reads as the photo teleporting into place. Eased out, so the extra time
+     is spent decelerating at the end where it looks like weight, and a 45px spring-back still
+     settles at once. One duration rather than one per job: two would have to be kept in step with
+     a threshold deciding between them, for a difference only visible side by side. */
+  transition: transform 220ms ease-out;
 }
 
 .lightbox-slide {
