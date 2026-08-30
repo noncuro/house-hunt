@@ -178,9 +178,10 @@ const LISTING_A = 'rlscheck-a';
 const LISTING_B = 'rlscheck-b';
 /** Deliberately never seeded: the case where no `property` row and no link exist yet. */
 const LISTING_NEW = 'rlscheck-new';
-/** A flat only project B has opened. Its whole purpose is that A is *not* linked to it at
- *  setup, which is what makes "the stale write still made the link" an assertion rather than a
- *  restatement of the fixture. */
+/** A flat no project has opened. Its whole purpose is that nothing links it at setup, which is
+ *  what makes "the stale write still made the link" an assertion rather than a restatement of
+ *  the fixture — and it is linked to nobody rather than to B so that the counts of B's rows,
+ *  which prove A's delete attempts changed nothing, stay the numbers they were. */
 const LISTING_STALE = 'rlscheck-stale';
 const EMAIL_A = 'rls-check-a@example.test';
 const EMAIL_B = 'rls-check-b@example.test';
@@ -288,7 +289,6 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
   must('linking the listings', (await admin.from('project_property').insert([
     { project_id: PROJECT_A, rightmove_id: LISTING_A },
     { project_id: PROJECT_B, rightmove_id: LISTING_B },
-    { project_id: PROJECT_B, rightmove_id: LISTING_STALE },
   ])).error);
 
   must('seeding shared facts', (await admin.from('property_analysis').insert([
@@ -609,7 +609,7 @@ async function main() {
   is('...and the newer price is still on the row', (await admin.from('property').select('price').eq('rightmove_id', LISTING_A).single()).data?.price, '£2,000 pcm');
   // Refusing the numbers is not refusing the visit: this project did open the flat.
   //
-  // On a listing A has never opened, because the version of this that used LISTING_A proved
+  // On a listing nothing has opened, because the version of this that used LISTING_A proved
   // nothing: setup links that one to A already, so the count was 1 before the call and 1 after,
   // whether or not `record_property` made a link at all.
   const staleUnseen = await rpc(a, 'record_property', {
@@ -628,8 +628,8 @@ async function main() {
     .filter((id): id is string => typeof id === 'string');
   is(
     '...and the flat is now linked to the project that just looked at it',
-    linkedTo.sort().join(','),
-    [PROJECT_A, PROJECT_B].sort().join(','),
+    linkedTo.join(','),
+    PROJECT_A,
   );
 
   const fresh = await rpc(a, 'record_property', {
