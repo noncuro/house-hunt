@@ -136,10 +136,10 @@ project with that integration connected has a working key already, under a name 
 Without either, the failure is a 500 at the moment somebody presses the button. `docs/vercel-migration.md`
 says why these are moving.
 
-`pnpm deploy:function` deploys every function, not only `analyse`. One of them, `listing`, is what
-lets a phone add a flat: it fetches the one listing page somebody pasted or shared and decodes it
-with the same code the extension's content script uses. It needs no secret of its own — but a
-deployment that skips it has a phone whose **Add a flat** button fails, and nothing else wrong.
+`pnpm deploy:function` deploys every function, not only `analyse`. What lets a phone add a flat is no
+longer among them: `listing` is a route on the website now (`apps/web/src/app/api/listing/`), so it
+ships with a Vercel deploy and needs the secret key above rather than a function deploy. A phone
+whose **Add a flat** button fails is therefore a website problem, not a missed `deploy:function`.
 
 **It verifies its caller now.** It used to deploy `--no-verify-jwt`, which was defensible when
 there was no auth and the worst a stranger could do was make us re-analyse a flat we had already

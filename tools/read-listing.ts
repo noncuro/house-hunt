@@ -7,7 +7,7 @@
  *  and the symptom would be the panel hanging on "Working…" with everything apparently seeded.
  *
  *  The brace-matcher itself is no longer here — `packages/core/src/listing.ts` owns it, along with
- *  the decode and the field read, because the `listing` Edge Function does exactly this to a page it
+ *  the decode and the field read, because the `listing` route does exactly this to a page it
  *  has just fetched. All that is left here is `readFileSync`, which is the one thing Deno-clean core
  *  cannot have.
  */

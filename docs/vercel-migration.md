@@ -113,17 +113,24 @@ most common bug in this project when it is forgotten.
    explicit refusal for a non-`http(s)` origin so the extension gets a sentence rather than a 404
    that parses as nothing.
 
-2. **`listing`.** Also browser-only — `packages/core/src/db/supabase.ts:412` inside
-   `addListingByUrl`, from `apps/web/src/screens/AddFlat.tsx`. Second because it is the same shape
-   as `predict` with one new ingredient: it makes an outbound fetch to Rightmove, so it proves the
-   pattern for `resolve-location` and `analyse` without any CORS work.
-   *Hazards.* The no-crawl block at `supabase/functions/listing/index.ts:12-36` is the whole
-   permission this function has and must be carried over verbatim, not summarised. It writes its
-   `api_usage` row *before* the fetch (`index.ts:92`), which is what makes the 60/hour limit
-   (`index.ts:56`) survive a crash; keep the order. The hardcoded desktop `USER_AGENT`
-   (`index.ts:46-47`) moves as-is. `AbortSignal.timeout` is fine on Node. `refusalFrom`
-   (`packages/core/src/db/supabase.ts:1644`) reads the body off a `FunctionsHttpError.context` and
-   will need the `fetch` equivalent — see "The client side" below.
+2. **`listing` — done.** Also browser-only — `addListingByUrl` in
+   `packages/core/src/db/supabase.ts`, from `apps/web/src/screens/AddFlat.tsx`. Second because it
+   was the same shape as `predict` with one new ingredient: an outbound fetch to Rightmove, which
+   proves the pattern for `resolve-location` and `analyse` without any CORS work. The no-crawl
+   block moved verbatim to `apps/web/src/app/api/listing/route.ts`, the `api_usage` row is still
+   written *before* the fetch, and the desktop `USER_AGENT` and 60/hour limit are unchanged. One
+   thing was added rather than carried: `cache: 'no-store'` on the Rightmove fetch, because Next
+   caches `fetch` in server code by default and the Edge runtime did not — without it this route
+   would answer `read` about a flat that had since been withdrawn, which is the one wrong answer it
+   can give.
+
+   It also produced `callRoute` (`packages/core/src/db/route.ts`), which is the client half of
+   every remaining step: the relative URL, the bearer, the refusal that makes a route unreachable
+   from the extension, and the body-reading that replaces `refusalFrom`. `retrainModel` had the
+   only copy of that shape and now uses it too. What `callRoute` still lacks is the `apiOrigin`
+   escape hatch described under "The client side" — it refuses a non-`http(s)` origin outright,
+   which is right for the two website-only routes and is exactly what the first extension caller
+   has to change.
 
 3. **`invite`, `resolve-location`, `password`, `analyse`.** Each has an extension caller, so each
    costs the same extra work and they can be done in any order among themselves; taking them as one

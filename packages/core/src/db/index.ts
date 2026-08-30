@@ -6,5 +6,6 @@
  *  `tools/check-one-client.ts` checks it. */
 export * from './client';
 export * from './session';
+export * from './route';
 export * from './supabase';
 export * from './travel';

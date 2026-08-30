@@ -6,7 +6,7 @@
  *  the product is a desktop feature and the app on a phone is a viewer of what somebody else added.
  *
  *  What comes back is a `Listing` and nothing else. The caller records it under their own project
- *  with `record_property`, exactly as the extension does — this function holds no project, writes no
+ *  with `record_property`, exactly as the extension does — this route holds no project, writes no
  *  property, and is not a way to reach one. It reads a page and decodes it.
  *
  *  ---------------------------------------------------------------------------------------------
@@ -14,8 +14,9 @@
  *  FOR IT EITHER.
  *
  *  `AGENTS.md`: *read pages the user opened; never crawl*. Read the block at the top of
- *  `resolve-location/index.ts` — the argument is the same one and it is the reason both of these
- *  are allowed to exist. The shape of the request is what keeps it inside the rule:
+ *  `supabase/functions/resolve-location/index.ts` — the argument is the same one and it is the
+ *  reason both of these are allowed to exist. The shape of the request is what keeps it inside the
+ *  rule:
  *
  *    - **one** request, for **one** listing, per invocation. Never a list, never a loop.
  *    - **initiated by a person** who has just pasted or shared that exact URL, in the moment they
@@ -35,24 +36,38 @@
  *  from us.
  *  ---------------------------------------------------------------------------------------------
  *
- *  Deploy:
- *    supabase functions deploy listing --project-ref <ref>
+ *  Moved off the Supabase Edge runtime by `docs/vercel-migration.md`; the checklist there is what
+ *  this file was ported against.
  */
-import { requireActiveProject, requireCaller } from '../_shared/caller.ts';
-import { body, eq, HttpError, requireEnv, rest, SERVICE_KEY, serve, SUPABASE_URL } from '../_shared/http.ts';
-import { listingFromHtml, ListingWithdrawn, rightmoveListingId } from '../_shared/listing.ts';
-import { listingUrl } from '../_shared/sweep.ts';
+import { listingFromHtml, ListingWithdrawn, listingUrl, rightmoveListingId } from '@house-hunt/core';
+import { requireActiveProject } from '@/server/caller';
+import { authedRoute, jsonBody } from '@/server/handler';
+import { eq, HttpError, rest } from '@/server/supabase';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+
+/** Node, not Edge. Nothing here needs Node specifically; it is the same choice `predict` made, so
+ *  that every route on this deployment fails and logs the same way rather than two ways. */
+export const runtime = 'nodejs';
+
+/** Seconds. The work is one outbound request under a 15-second deadline plus two PostgREST calls,
+ *  so this is roughly four times the worst case that can still return an answer — a ceiling for the
+ *  platform to kill a wedged invocation on, not a budget anything spends. */
+export const maxDuration = 60;
+
+/** Never prerendered, never cached: it reads a live page and writes a usage row. */
+export const dynamic = 'force-dynamic';
 
 /** Sixty an hour per person. Adding flats by hand on a phone is a bursty activity — an evening
  *  working through a saved-links list is real — so this is well above what a person does and far
  *  below anything that would read as traffic. The extension's own capture does not pass through
  *  here at all, so this limit is only ever met by hand-adding.
  *
- *  Counted the same way `resolve-location` counts its own, and for the same reason: an isolate is
- *  recycled without warning, so a limit held in memory is a limit that stops existing. */
+ *  Counted out of `api_usage` rather than held in memory, and that is not a detail of the old
+ *  runtime that stopped mattering on this one: a Vercel function instance is recycled without
+ *  warning and several may serve the same person at once, so a counter in a module variable is a
+ *  limit that silently stops existing. The row is the limit. */
 const LIMIT_PER_HOUR = 60;
 const KIND = 'fetch_listing';
 
@@ -64,16 +79,24 @@ const KIND = 'fetch_listing';
  *  page's real cost and well below anything a person will sit through with "Reading…" on screen. */
 const FETCH_MS = 15_000;
 
-serve(async (request) => {
-  requireEnv({ SUPABASE_URL, SERVICE_KEY });
+type Result =
+  | { status: 'read'; listing: unknown }
+  /** The agent has taken it down. A fact about the flat rather than a failure of ours, so it comes
+   *  back 200 with a name the interface can explain — the reply convention in `@/server/handler`. */
+  | { status: 'withdrawn'; rightmoveId: string }
+  /** Rightmove served a page with no model in it. Distinct from `withdrawn`, which is a page shape
+   *  we understand: this is the one that means Rightmove has changed something and the extension is
+   *  about to break too, so it must not be dressed up as "that flat is gone". */
+  | { status: 'unreadable'; rightmoveId: string; message: string }
+  | { status: 'rate-limited'; used: number; limit: number; retry_after_seconds: number };
 
-  const caller = await requireCaller(request);
+export const POST = authedRoute(async (request, caller): Promise<Result> => {
   // Adding a flat is only meaningful inside a hunt, and the usage row this writes is charged to
   // one. Neither is a permission check on the property itself: what the caller may write is decided
   // by `record_property` when they record what comes back.
   const projectId = await requireActiveProject(caller);
 
-  const { url } = await body<{ url?: string }>(request);
+  const { url } = await jsonBody<{ url?: string }>(request);
   const id = rightmoveListingId(url ?? '');
   if (!id) {
     throw new HttpError(
@@ -85,7 +108,7 @@ serve(async (request) => {
 
   const used = await recentFetches(caller.userId);
   if (used >= LIMIT_PER_HOUR) {
-    return { status: 'rate-limited', used, limit: LIMIT_PER_HOUR, retry_after_seconds: 3600 } as const;
+    return { status: 'rate-limited', used, limit: LIMIT_PER_HOUR, retry_after_seconds: 3600 };
   }
   // Before the request goes out, so a fetch that fails still spends its slot — charged after, every
   // failure would be free and the limit unreachable by retrying.
@@ -93,16 +116,6 @@ serve(async (request) => {
 
   return await read(id);
 });
-
-type Result =
-  | { status: 'read'; listing: unknown }
-  /** The agent has taken it down. A fact about the flat rather than a failure of ours, so it comes
-   *  back 200 with a name the interface can explain — the reply convention in `_shared/http.ts`. */
-  | { status: 'withdrawn'; rightmoveId: string }
-  /** Rightmove served a page with no model in it. Distinct from `withdrawn`, which is a page shape
-   *  we understand: this is the one that means Rightmove has changed something and the extension is
-   *  about to break too, so it must not be dressed up as "that flat is gone". */
-  | { status: 'unreadable'; rightmoveId: string; message: string };
 
 async function read(id: string): Promise<Result> {
   const url = listingUrl(id);
@@ -119,6 +132,10 @@ async function read(id: string): Promise<Result> {
     response = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT },
       signal: AbortSignal.timeout(FETCH_MS),
+      // Next caches `fetch` in server code by default, and a cached listing page is this route
+      // answering about a flat as it was rather than as it is — including answering `read` for one
+      // that has since been withdrawn.
+      cache: 'no-store',
     });
     // A withdrawn listing answers 404 with a full page that still carries a (hollowed-out) model,
     // so the status alone is not the answer — `listingFromHtml` below is what tells the two apart,

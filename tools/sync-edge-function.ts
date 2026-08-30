@@ -26,24 +26,18 @@ const SHARED = resolve(ROOT, 'supabase/functions/_shared');
  *  the functions share with each other (`http.ts`, `caller.ts`) — those have no original to drift
  *  from and are edited in place, which is why the GENERATED header below is the way to tell which
  *  is which. */
-//  `facts.ts` joined when the verdict model started reading the hunt's stated preferences: the
-//  amenity predicates that decide whether a flat is missing a must-have, and `resolveSize`, are
-//  facts the panel already renders, and a second copy inside the model is exactly the thing the
-//  one-fact-one-renderer rule exists to prevent. `sweep.ts` and `hubs.ts` come with it because it
-//  imports their types.
-//  `listing.ts` joined when the website learned to add a flat from a pasted URL: the `listing`
-//  function reads the same `__PAGE_MODEL` out of fetched HTML that the content script reads off a
-//  live page, and a second copy of that decode is the one fork this repo can least afford — see the
-//  file's own header.
+//  The list shrinks as functions move to `apps/web/src/app/api/` (`docs/vercel-migration.md`), and a
+//  file is dropped the moment no remaining function imports it — `facts.ts`, `sweep.ts`,
+//  `listing.ts` and `predict.ts` went with the `predict` and `listing` routes. A generated copy no
+//  function reads is not harmless: it is a second version of a module that still compiles, still
+//  passes `--check`, and is the obvious thing for somebody to edit.
+//  `hubs.ts` stays because `travel` reads it, and `types.ts` and `postcode.ts` because it imports
+//  them.
 const FILES = [
   'analysis.ts',
-  'listing.ts',
   'png.ts',
   'tfl.ts',
   'postcode.ts',
-  'predict.ts',
-  'facts.ts',
-  'sweep.ts',
   'hubs.ts',
   'log.ts',
   'types.ts',
