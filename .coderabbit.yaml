@@ -102,9 +102,17 @@ reviews:
     - path: "supabase/functions/**"
       instructions: |
         Edge Functions are outside tsc and oxlint — `pnpm check:functions`
-        (deno check) is the only typecheck they get. Files under `_shared/`
-        are copies of packages/core and must match their source exactly; flag
-        an edit made to the copy instead of the source.
+        (deno check) is the only typecheck they get.
+
+        Most files under `_shared/` are generated copies of packages/core and
+        must match their source exactly; flag an edit made to the copy instead
+        of the source. Three are NOT copies and have no source to move a change
+        to: `_shared/http.ts`, `_shared/caller.ts` and `_shared/code.ts` are
+        hand-written and are edited in place. The generated ones carry a
+        `// GENERATED` header and are exactly the names in `FILES` in
+        tools/sync-edge-function.ts; if a file is not in that list, it is the
+        original. Do not ask for a change to those three to be relocated to
+        packages/core.
         The `travel` function is the sole writer of the travel cache. CORS
         depends on WEB_APP_ORIGIN being set; a missing env var here reads as a
         page that spins forever, so flag new env reads that default silently.
