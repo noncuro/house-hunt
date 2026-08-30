@@ -181,5 +181,17 @@ reviews:
     - "!pnpm-lock.yaml"
     - "!apps/extension/.output/**"
 
+# CodeRabbit does not pick these up on its own — the resolved config on the
+# first PR reported `code_guidelines.filePatterns: []`, so the only thing
+# carrying AGENTS.md into a review was the prose pointer in
+# `reviews.instructions`. Naming the files here is what actually ingests them,
+# and is why the path_instructions above can stay a summary rather than a copy.
+knowledge_base:
+  code_guidelines:
+    filePatterns:
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "docs/coverage.md"
+
 chat:
   auto_reply: true
