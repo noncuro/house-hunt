@@ -1,4 +1,5 @@
 import './journey.css';
+import type { ReactNode } from 'react';
 import { Hint } from './Hint';
 import { Icon } from './Icon';
 import { BUS_COLOUR, FALLBACK_LINE_COLOUR, LINE_COLOURS, textOn, travelDestinations, TRAVEL_MODES } from '@house-hunt/core';
@@ -281,16 +282,39 @@ export function mapsUrl(postcode: string | null, place: Place, mode: TravelMode)
  *  was asked and says there is no such journey; TfL was asked and did not answer; nobody has asked
  *  yet; or the answer exists and is not a real option (an hour and a half on foot). Only the second
  *  is worth retrying and only the third will fill itself in, and a blank cell says none of that. */
+
+/** One line of the grid, handed to `actions` so the caller decides what goes at the end of it. */
+export interface TravelRow {
+  place: Place;
+  /** Every row we hold for this place — all three modes, failures included. */
+  times: TravelTime[];
+  /** Those rows read (`readTravel`). `transient` is what says a retry is worth offering. */
+  verdict: TravelVerdict;
+}
+
 export function TravelGrid({
   places,
   travel,
   postcode,
+  heading = (
+    <>
+      Travel · <TransitBasis />
+    </>
+  ),
+  actions,
 }: {
   places: Place[];
   /** Every travel row we hold for this flat's postcode. Null while they are still being read —
    *  which is not the same as an empty list, and must not draw a grid of dashes. */
   travel: TravelTime[] | null;
   postcode: string | null;
+  /** What sits above the place column. Defaults to the label the shortlist has always drawn; pass
+   *  `null` where the surrounding section heading already says it, as the panel's does. The cell
+   *  is still emitted either way — see the auto-placement note on the head row. */
+  heading?: ReactNode;
+  /** A trailing cell per line — the panel's retry and Maps buttons. Absent means no fifth column
+   *  exists at all, which is what keeps the website's grid exactly the width it is today. */
+  actions?: (row: TravelRow) => ReactNode;
 }) {
   // Routing is postcode to postcode, so a place without one has no journey rather than a failed
   // one — see `travelDestinations`.
@@ -312,16 +336,19 @@ export function TravelGrid({
   if (travel === null) return <div className="rm-empty rm-working">Working…</div>;
 
   return (
-    <div className="rm-travel">
+    <div className={actions ? 'rm-travel rm-travel-wide' : 'rm-travel'}>
       <div className="rm-travel-head">
-        <span className="rm-travel-label">
-          Travel · <TransitBasis />
-        </span>
+        <span className="rm-travel-label">{heading}</span>
         {TRAVEL_MODES.map((mode) => (
           <span className="rm-travel-mode" key={mode}>
             <ModeIcon mode={mode} label />
           </span>
         ))}
+        {/* The rows are `display: contents`, so every child is auto-placed into the parent grid
+            in document order. With a fifth column declared, a four-cell head would put the first
+            place label in the head row's fifth cell — a one-off-looking layout glitch that is
+            actually a rule — so the head emits a matching empty trailing cell. */}
+        {actions && <span className="rm-travel-mode" aria-hidden="true" />}
       </div>
 
       {destinations.map((place) => {
@@ -338,6 +365,7 @@ export function TravelGrid({
                 fastest={verdict.best?.mode === mode}
               />
             ))}
+            {actions && <span className="rm-travel-acts">{actions({ place, times: rows, verdict })}</span>}
           </div>
         );
       })}
@@ -382,11 +410,21 @@ function TravelCell({
     return <Dash why={`The ${MODE_LABEL[mode]} lookup came back with no duration at all.`} />;
   }
 
-  return (
-    <span className={fastest ? 'rm-travel-time rm-travel-best' : 'rm-travel-time'}>
-      {formatDuration(row.seconds)}
-    </span>
-  );
+  // Only transit has a route worth explaining — walking and cycling are one leg, and "you walk,
+  // for 15 minutes" is not worth a hover. The condition is the data, not a flag: `options` is
+  // populated on both surfaces because both go through the same `travelTimes`, so a boolean prop
+  // would be a second, weaker condition on top of a sufficient one. The class goes on the `Hint`
+  // itself, not a nested span — `Hint` forwards it onto its own element, and that element has to
+  // stay the grid item.
+  const className = fastest ? 'rm-travel-time rm-travel-best' : 'rm-travel-time';
+  if (mode === 'transit' && row.options && row.options.length > 0) {
+    return (
+      <Hint className={className} underline={false} text={<Routes options={row.options} />}>
+        {formatDuration(row.seconds)}
+      </Hint>
+    );
+  }
+  return <span className={className}>{formatDuration(row.seconds)}</span>;
 }
 
 function Dash({ why }: { why: string }) {

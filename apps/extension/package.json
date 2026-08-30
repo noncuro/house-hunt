@@ -1,7 +1,7 @@
 {
   "name": "@house-hunt/ext",
   "private": true,
-  "version": "0.5.6",
+  "version": "0.5.7",
   "type": "module",
   "//": "The Rightmove overlay. Content scripts, the background worker that serves them, and the session. Everything else moved to apps/web.",
   "scripts": {

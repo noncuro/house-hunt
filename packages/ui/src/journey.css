@@ -119,6 +119,22 @@
   display: contents;
 }
 
+/* A fifth column only where a caller supplies one — a modifier rather than always present, because
+   an empty `auto` column still costs a `column-gap` down the right-hand edge. The gap drops to
+   `--s2` here on a width budget: the panel is ~292px of content, and at `--s3` the four gaps left
+   the place name ~73px before its ellipsis. */
+.rm-travel-wide {
+  grid-template-columns: minmax(0, 1fr) repeat(3, minmax(3.2em, auto)) auto;
+  column-gap: var(--s2);
+}
+
+.rm-travel-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  justify-self: end;
+}
+
 /* The heading names the basis once. Repeating "weekday 09:00" on every transit number is how it
    became three lines of body text above the numbers in the first place. */
 .rm-travel-label {
