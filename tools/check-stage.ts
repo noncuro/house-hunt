@@ -13,6 +13,7 @@ import {
   ARCHIVE_REASONS,
   FILTER_LABEL,
   FIRST_STAGE,
+  FUNNEL_LATEST_FIRST,
   STAGES,
   STAGE_FILTERS,
   archiveMeta,
@@ -69,6 +70,20 @@ check('a stage from a newer build sorts last', stageRank('teleported' as Stage),
 check('and reads as itself rather than as a blank', stageMeta('teleported' as Stage).label, 'teleported');
 check('liking a place enters it at the first step', FIRST_STAGE, ORDER[0]);
 
+// The order the cards pile themselves up in when the screen is showing what is in play. Spelled
+// out for the same reason `ORDER` is: it is derived from `STAGES`, so deriving the expectation too
+// would let a reordering agree with itself.
+check(
+  'the piles run from the offer back to the shortlist',
+  FUNNEL_LATEST_FIRST,
+  ['offer_made', 'viewed', 'viewing_booked', 'enquired', 'shortlisted'],
+);
+check(
+  'and archived is not one of them — it is where a flat stops',
+  FUNNEL_LATEST_FIRST.includes('archived'),
+  false,
+);
+
 // ------------------------------------------------------------------------------------------- //
 console.log('\nan archive says why');
 
@@ -116,6 +131,17 @@ check(
   shortlist.filter((e) => matchesStage(e.stage, 'viewed')).length,
   2,
 );
+// What Places opens on. The fixture has one shortlisted, two viewed and one archived, so this is
+// three — and the number is the point: a screen showing one step of the funnel showed one of those
+// three, and dropped each flat as soon as somebody moved it along.
+check(
+  '"in play" is every step of the funnel except the end of it',
+  shortlist.filter((e) => matchesStage(e.stage, 'live')).length,
+  3,
+);
+check('an archived flat has stopped, so it is not in play', matchesStage(stageAt('archived', 'gone'), 'live'), false);
+check('and a flat nobody has liked was never in it', matchesStage(null, 'live'), false);
+check('the count agrees with the filter', counts.live, 3);
 check(
   '"not in the funnel" is the flats with no stage at all',
   shortlist.filter((e) => matchesStage(e.stage, 'none')).length,
