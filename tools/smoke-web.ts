@@ -33,6 +33,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Locator, type Page } from 'playwright';
 import {
   createInvite,
+  dropMembership,
   offMarketReason,
   setOffMarketDirectly,
   FIXTURE_EMAIL,
@@ -1329,6 +1330,33 @@ async function checkJoining({ browser }: Stage): Promise<void> {
     }
     console.log('joining: invited, redeemed, signed in, and in the house hunt');
     await page.screenshot({ path: resolve(SHOTS, 'web-joined.png'), fullPage: true });
+
+    // The other door, which for an account on a phone that stays signed in for months is the only
+    // one: they already exist and are already signed in, and the owner invites them (back, or to a
+    // second hunt). No code and no sign-in may be required — the invite becomes a membership on the
+    // spot, and the hunt is simply there on their next load. It used to mint a code and wait for a
+    // sign-in that never came, which is issue #98.
+    await dropMembership(REDEEM_EMAIL);
+    const again = await createInvite(fixture.session, REDEEM_EMAIL);
+    if (again.status !== 'added') {
+      note(`re-inviting the existing account answered "${again.status}", not "added"`);
+    } else if (again.code) {
+      note('adding an existing account still minted an invite code, which nobody can use');
+    } else {
+      // The same signed-in page, reloaded — the arrival the bug report describes. Nothing here
+      // signs in again, so what this asserts is that a plain load consumes nothing and still
+      // finds the membership the invite already wrote.
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForApp(page);
+      await settle(page);
+      const shown = await page.locator('[data-testid="shell"]').innerText().catch(() => '');
+      if (!shown.includes('Smoke fixture hunt')) {
+        note('added to the hunt in the database, but a reload did not put it on their screen');
+        await page.screenshot({ path: resolve(SHOTS, 'web-readd-failed.png'), fullPage: true });
+      } else {
+        console.log('joining: an existing account was added outright, there on the next load');
+      }
+    }
     console.log(offline());
   } finally {
     await close();

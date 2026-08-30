@@ -175,7 +175,11 @@ const LATE = 'rls-check-late@example.test';
 /** Invited into project B and never signing in, so somebody else calling consume_invites has an
  *  invite in front of them that is not theirs. */
 const OUTSIDER = 'rls-check-outsider@example.test';
-const EXTRA_USERS = [INVITEE, PLATFORM, LATE, OUTSIDER];
+/** Already holding an account when invited — the case that used to mint a code nobody needed. */
+const EXISTING = 'rls-check-existing@example.test';
+/** An account with a pending invite stranded by the era when nothing added existing accounts. */
+const STRANDED = 'rls-check-stranded@example.test';
+const EXTRA_USERS = [INVITEE, PLATFORM, LATE, OUTSIDER, EXISTING, STRANDED];
 const PASSWORD = 'rls-check-password-9f3a';
 
 async function tearDown() {
@@ -743,6 +747,43 @@ async function main() {
   is('...leaving the membership at the ceiling', await count('project_member', 'project_id', PROJECT_A), 2);
   const stillWaiting = (await admin.from('invite').select('status').eq('email', LATE).eq('project_id', PROJECT_A).single()).data;
   is('...with the invite still pending rather than thrown away', stillWaiting?.status, 'pending');
+
+  // ----------------------------------------------------------------------------------------- //
+  console.log('\ninviting an address that already has an account, which used to mint a useless code');
+
+  // The invited person has an account and a phone that stays signed in for months, so "consumed on
+  // next sign-in" was consumed never: the owner got a code nobody needed and the invitee's screen
+  // never changed. create_invite writes the membership itself now and answers `added`; the first
+  // assertion here is the membership row, which is the fact the bug withheld.
+  must('making room for a direct add', (await rpc(admin, 'admin_set_max_members', { p_project_id: PROJECT_A, p_max: 4 })).error);
+  const existingId = await createUser(EXISTING);
+  const added = await rpc(admin, 'create_invite', { p_email: EXISTING, p_project_id: PROJECT_A, p_invited_by: userA });
+  const addedResult = added.data as
+    | { status?: string; members?: number; invite?: { status?: string; code_hash?: string | null } }
+    | null;
+  is('inviting an existing account adds them on the spot', addedResult?.status, 'added');
+  is('...counting them among the members in the answer', addedResult?.members, 3);
+  is('...as a member row that actually exists', await count('project_member', 'project_id', PROJECT_A), 3);
+  is('...with the invite recorded as accepted, so the list reads the same either way', addedResult?.invite?.status, 'accepted');
+  is('...and no code behind it', addedResult?.invite?.code_hash ?? null, null);
+  const existingProfile = await admin.from('profile').select('active_project_id').eq('id', existingId).single();
+  is('...landed in the hunt they were added to', existingProfile.data?.active_project_id, PROJECT_A);
+
+  const addedTwice = await rpc(admin, 'create_invite', { p_email: EXISTING, p_project_id: PROJECT_A, p_invited_by: userA });
+  is('adding them again says they are already here', (addedTwice.data as { status?: string } | null)?.status, 'already-a-member');
+
+  // The rows the bug left behind: a pending invite for an address that already had an account,
+  // waiting for a sign-in that was never going to happen. Re-inviting them — which is what an owner
+  // does when the first invite visibly did nothing — takes that row up instead of reporting it.
+  must('planting the stranded pending invite', (await admin.from('invite')
+    .insert({ email: STRANDED, project_id: PROJECT_A, invited_by: userA })).error);
+  await createUser(STRANDED);
+  const rescued = await rpc(admin, 'create_invite', { p_email: STRANDED, p_project_id: PROJECT_A, p_invited_by: userA });
+  is('re-inviting them consumes the stranded invite', (rescued.data as { status?: string } | null)?.status, 'added');
+  is('...one membership, not two', await count('project_member', 'project_id', PROJECT_A), 4);
+  is('...and no second invite row', await count('invite', 'email', STRANDED), 1);
+  const strandedRow = (await admin.from('invite').select('status').eq('email', STRANDED).single()).data;
+  is('...the planted one now reads accepted', strandedRow?.status, 'accepted');
 
   // A platform invite carries no project and promises one.
   must('planting a platform invite', (await admin.from('invite')
