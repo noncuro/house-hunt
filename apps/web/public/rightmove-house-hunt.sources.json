@@ -1,7 +1,7 @@
 {
-  "version": "0.5.14",
+  "version": "0.5.15",
   "files": {
-    "apps/extension/package.json": "0ca2925c4684950b2384f3389fc7444ab829ee6081c3e4c84024101611aa84eb",
+    "apps/extension/package.json": "149d3f42a8e7f06cf67ee12aff0cf45658752591ce8248a52e7ea35c0868fa3e",
     "apps/extension/public/icon/128.png": "4cc10de2d8a0d3434361911b368afed44613def5bfab2efaf7e3bb0ab05dca95",
     "apps/extension/public/icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "apps/extension/public/icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
@@ -42,7 +42,7 @@
     "packages/core/src/facts.ts": "a558a38e641e12cec406dd3c15954bc226156f7c15b53ac04c3e6350dd488b5d",
     "packages/core/src/filter.ts": "a1d72aed7b77a45251765c37f87d0e69479a662cd5f837da79d6dfe0f7fc1b0e",
     "packages/core/src/hubs.ts": "357b3b9c3ceca578e8d3ac33a190af04a14972117eaba7e335f233b4a03b61c8",
-    "packages/core/src/index.ts": "cda137575e721da7f93dc11fc42b14e38a3adbdaf90e82f3feab9986c02cda66",
+    "packages/core/src/index.ts": "2cb14f58db7ae1dc84efbf887709b6131d702196c838c440e25fbc34db1878ed",
     "packages/core/src/listing.ts": "8f32ee059e991e9863ba69bd851476a3a2f02ec355fcf94bc13d84f12413caa7",
     "packages/core/src/log.ts": "06ad7dc27687521632590229ea162b7f52694cec2b366c57c929feed2a04cff7",
     "packages/core/src/png.ts": "4fbbdce846a509c93268410b4675b74b10f3634ffffe9f24246e81cf57226ecd",
@@ -54,6 +54,7 @@
     "packages/core/src/stage.ts": "f70e0c89f0798a8d46c0c6d9663c0a1a0a46e35c39703614da0df6d5ddcbb295",
     "packages/core/src/sweep.ts": "d688f1fe2265a4624e84988dd441e6acff9a26cf089ccbab25b1cfc3b0e31801",
     "packages/core/src/tfl.ts": "3b619625ceee1f7e2c88a1c05b8134057d3284e21bc3513d775f8aefaa7983fa",
+    "packages/core/src/travel.ts": "de664ed118c321de5d810c0f0d31957c0cee9ddd68b1950a948b5284b0c79764",
     "packages/core/src/types.ts": "3e846a5a37a59356cdffe18e500f366c2c803398bac24498bfcae49551ccde37",
     "packages/ui/package.json": "8935cd5058b9ea552bf14985d2bb65c016ce417b99e0c49bfb6690969c42b351",
     "packages/ui/src/Amenity.tsx": "9c8e5e902b686c5603931c7b2be44d67fa524187dddcdbaf07efc9ec448b067f",
@@ -64,7 +65,7 @@
     "packages/ui/src/Hint.tsx": "a3f3937e7e49df5f4e3d0de547a76e346a79c4cb26ccafaf459f04e4055bf871",
     "packages/ui/src/Hub.tsx": "361225f5c4120697840a1f161116fa0afd2ecdf0ffe7253cc334675b7ec60312",
     "packages/ui/src/Icon.tsx": "eb25eaeb561c792e3a4782eb2671fa7fd3b0e151b55aff809d944241db00a50f",
-    "packages/ui/src/Journey.tsx": "5213d7c6909e3a0fe7c4b2e168b2919da6ae8c42b9862bfa1f2e9cd811508450",
+    "packages/ui/src/Journey.tsx": "4421dfe29e1807f67737ff5c396e771c591639b88ba274d70ada9e0f9a3c97af",
     "packages/ui/src/OffMarket.tsx": "50197197d553a053b5f4f842fed91d9ffc0fbe1bd2a8edd25f02e8269b394094",
     "packages/ui/src/Opener.tsx": "862ac8afea8afc490d9f3b2cad679dc8c2dca082d4073d97949f9a6ea4cd5b63",
     "packages/ui/src/PriceMove.tsx": "53bd0e25c39b8fbdc76030145df324fba400bde8e2461216aa43937bab91ece9",
@@ -106,7 +107,7 @@
     "content-scripts/bridge.js": "6b4b9858ab0959c9ad6247b8ab9000402b13164a3ffa39b9fc6ce14293ed384f",
     "content-scripts/page-model.js": "60744ef487fef54e21f96e61c273414496a1e400da070db2dd0931bb707cffbe",
     "content-scripts/panel.css": "c81940f6c4696967db2e89e676786dc2c0655687e73648d7e360a52a1a172c90",
-    "content-scripts/panel.js": "5c5962ff6efe5d4c0cf3b35e8ad5186506537997713f8d312f1676eaaf9d89ed",
+    "content-scripts/panel.js": "029ca646c5a55b09947af6c5e67b8416f0c9cd8c57b8137f1357b75f61bf0287",
     "content-scripts/search.css": "4525c80e8a1755244659299745b753639d38570718f99416edb74c17f3107f03",
     "content-scripts/search.js": "cd1ad5e7b7aa53e311c1f70e19f6ae584817f301def62b1e3dfea4c00b85fd3f",
     "content-scripts/sweep.css": "745674b3eff217f2778b435dc63e563414e357833aa8e9970b949d0dc11d11a5",
@@ -115,6 +116,6 @@
     "icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
     "icon/48.png": "024a0e6ecf9b4aa36acf9468b400d6eabf030e59d24c29c3a4594f0bfe213343",
-    "manifest.json": "47ac7c5c34c96d0ebe42c8e92ad138aa40fd270063df507f27ec1c64bb21cf0a"
+    "manifest.json": "5d214f7210f234214723693a7ced51d7574898001ee5733e598f411c18575fe8"
   }
 }
