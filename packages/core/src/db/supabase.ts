@@ -623,12 +623,41 @@ export type RetrainResult =
 
 export async function retrainModel(labelMode?: LabelMode): Promise<RetrainResult> {
   await requireSession();
-  const { data, error } = await db().functions.invoke('predict', {
-    body: labelMode ? { labelMode } : {},
-    headers: await functionHeaders(),
+
+  // A route on the website rather than an Edge Function. The fit is the one piece of work Supabase's
+  // hosted runtime could not run: it caps CPU at 2s per request, which the retrain crossed at around
+  // 200 examples — last success at 187, and nothing but "not enough compute resources" thereafter.
+  // `apps/web/src/app/api/predict/route.ts` has the rest of that argument.
+  //
+  // Relative, so it follows whichever origin the page is served from — production, a Vercel preview,
+  // or localhost — rather than becoming a fourth copy of that URL to keep in step. Which is also why
+  // the extension cannot call this: a relative fetch from the background worker resolves against
+  // `chrome-extension://` and would 404 with a body that parses as nothing. Nothing does today —
+  // "Rerun ratings" is a website button — and this refuses rather than leaving that 404 for whoever
+  // tries it next. Moving it back within reach of the extension means giving it an absolute origin,
+  // deliberately, not deleting this check.
+  const origin = globalThis.location?.origin ?? '';
+  if (!/^https?:/.test(origin)) {
+    throw new Error(
+      `retraining runs on the website and cannot be reached from ${origin || 'here'} — open the app to rerun ratings`,
+    );
+  }
+
+  const response = await fetch('/api/predict', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await functionHeaders()) },
+    body: JSON.stringify(labelMode ? { labelMode } : {}),
   });
-  if (error) throw new Error(await refusalFrom(error, 'could not retrain the model'));
-  return data as RetrainResult;
+  // Same convention the Edge Functions answered on, and for the same reason: a refusal carries a
+  // sentence in `error`, and losing it turns something somebody can act on into "it broke".
+  const payload = (await response.json().catch(() => null)) as
+    | (RetrainResult & { error?: string })
+    | null;
+  if (!response.ok) {
+    throw new Error(payload?.error || `could not retrain the model (${response.status})`);
+  }
+  if (!payload) throw new Error('the retrain returned nothing readable');
+  return payload as RetrainResult;
 }
 
 /** The flats this project has withheld from training — off the market, usually. Returned as a list

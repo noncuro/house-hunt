@@ -17,6 +17,7 @@
     "lint": "oxlint",
     "check": "oxlint && pnpm compile",
     "check:one-client": "tsx tools/check-one-client.ts",
+    "check:routes": "tsx tools/check-routes.ts",
     "check:bridge": "tsx tools/check-bridge.ts",
     "check:extractor": "tsx tools/check-extractor.ts",
     "check:withdrawn": "tsx tools/check-withdrawn.ts",
@@ -39,7 +40,7 @@
     "check:rls": "tsx tools/check-rls.ts",
     "check:zip": "tsx tools/check-zip.ts",
     "check:functions": "deno check --unstable supabase/functions/_shared/*.ts supabase/functions/*/index.ts",
-    "check:all": "pnpm check && pnpm check:sync && pnpm check:functions && pnpm check:one-client && pnpm check:bridge && pnpm check:area && pnpm check:facts && pnpm check:filter && pnpm check:listing && pnpm check:platform && pnpm check:hubs && pnpm check:stage && pnpm check:shortlist && pnpm check:sweep && pnpm check:travel && pnpm check:png && pnpm check:analysis && pnpm check:predict && pnpm check:withdrawn && pnpm check:recheck && pnpm check:full-sweep && pnpm check:zip",
+    "check:all": "pnpm check && pnpm check:sync && pnpm check:functions && pnpm check:one-client && pnpm check:routes && pnpm check:bridge && pnpm check:area && pnpm check:facts && pnpm check:filter && pnpm check:listing && pnpm check:platform && pnpm check:hubs && pnpm check:stage && pnpm check:shortlist && pnpm check:sweep && pnpm check:travel && pnpm check:png && pnpm check:analysis && pnpm check:predict && pnpm check:withdrawn && pnpm check:recheck && pnpm check:full-sweep && pnpm check:zip",
     "smoke": "tsx tools/smoke.ts",
     "smoke:search": "tsx tools/smoke-search.ts",
     "smoke:web": "tsx tools/smoke-web.ts",
@@ -51,7 +52,7 @@
     "fixture:search": "tsx tools/fixture-search.ts",
     "sync:function": "tsx tools/sync-edge-function.ts",
     "check:sync": "tsx tools/sync-edge-function.ts --check",
-    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; if [ -n \"$WEB_APP_ORIGIN\" ]; then supabase secrets set WEB_APP_ORIGIN=\"$WEB_APP_ORIGIN\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; else echo \"warning: WEB_APP_ORIGIN unset in .env — unsetting any existing secret so CORS does not keep allowing a stale origin\" >&2; supabase secrets unset WEB_APP_ORIGIN --project-ref \"$SUPABASE_PROJECT_REF\" 2>/dev/null || true; fi; for fn in analyse invite listing resolve-location travel predict; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'"
+    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; if [ -n \"$WEB_APP_ORIGIN\" ]; then supabase secrets set WEB_APP_ORIGIN=\"$WEB_APP_ORIGIN\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; else echo \"warning: WEB_APP_ORIGIN unset in .env — unsetting any existing secret so CORS does not keep allowing a stale origin\" >&2; supabase secrets unset WEB_APP_ORIGIN --project-ref \"$SUPABASE_PROJECT_REF\" 2>/dev/null || true; fi; for fn in analyse invite listing resolve-location travel; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'"
   },
   "devDependencies": {
     "@supabase/supabase-js": "^2.112.2",
