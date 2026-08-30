@@ -489,6 +489,40 @@ encounter, as part of onboarding, then quiet and available on tap forever after.
 tension in principle 11 — a new member gets the sentence, and the person on their four-hundredth
 listing does not pay for it on every screen. We have barely used this and should use it more.
 
+## 17. Ask what the number was measured on
+
+A measurement takes its subject from whatever sits beside it. Put a figure next to a claim about
+something else and the reader joins them, without either being false.
+
+**The case.** A pull request claimed a retrain went from 7,473ms to 1,843ms at 600 training
+examples — a 4x speedup, and the argument for the change. The real fixture holds 379 rows, so a
+600-example measurement could not have come from it. The table was measured on a synthetic corpus
+whose generator labels rows by `i % 4 === 0`, independently of their features. **With no signal in
+the data the optimum is the prior**, so every descent converges almost at once and the new stopping
+rule fires everywhere: a real 2.6x, on data that has nothing to learn. On the actual fixture the
+same change is 0.75-3% fewer steps and no measurable wall clock — and the effect *shrinks* as
+examples grow, so it would not have rescued the 604-example project the change was written to
+rescue.
+
+Nothing was falsified. The correctness claim beside it — output bit-identical to main — was exact
+and about the real fixture. The two sat adjacent and read as one subject.
+
+**So, before a number becomes the reason for a decision, ask which corpus produced it.** And when
+you quote one, say. A figure without its data is a figure about nothing.
+
+The change was merged, on the honest grounds instead: identical output, and a genuine improvement
+at the sparse end where every new hunt starts. That is the right outcome. What would have been
+wrong is leaving a description that read as though the table were the real workload.
+
+**The same discipline, done right, in the same week.** A benchmark of three vision models on this
+repo's own photo task reported: the sample (23 listings, drawn by hash so it is reproducible and
+decorrelated from insertion date), that the prompt was lifted out of the source by script rather
+than transcribed, that the spend was between $1.55 and $3.29 *because two published price tables
+disagree*, and that a 0.8-point gap between two models is two cells out of 253 and should not be
+used to rank them. Each of those is a sentence that stops a reader over-reading the result.
+
+> Cases: PR #61's speedup table; the Luna/Terra/Sol benchmark.
+
 ## Working notes
 
 **Verify by running it, not by reading it.** The floor-area parser's status was settled by executing
