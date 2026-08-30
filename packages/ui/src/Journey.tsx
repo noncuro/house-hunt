@@ -297,7 +297,16 @@ export function TravelGrid({
   const destinations = travelDestinations(places);
 
   if (destinations.length === 0) {
-    return <div className="rm-empty">Nowhere to measure to — add somewhere with a postcode, on the website</div>;
+    // Two reasons for an empty grid, and one sentence for both would send somebody off to add a
+    // postcode when what they did was turn every place off. A blank that names the wrong
+    // cause is the same failure as a blank that names none.
+    return (
+      <div className="rm-empty">
+        {places.some((p) => p.postcode !== null)
+          ? 'No place is timed — turn one on under Your Hunt'
+          : 'Nowhere to measure to — add somewhere with a postcode, on the website'}
+      </div>
+    );
   }
   if (!postcode) return <div className="rm-empty">No postcode on this listing, so nothing can be routed from it</div>;
   if (travel === null) return <div className="rm-empty rm-working">Working…</div>;
