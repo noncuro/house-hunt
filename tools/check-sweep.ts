@@ -557,6 +557,13 @@ check(
 // The three that only say "this is a lettings search" are nobody's choice, so they are neither
 // described nor listed as somebody's extra filter.
 check('what makes it a rental search is not a filter', describeCriteria(RENTAL_SEARCH), { supported: [], other: [] });
+// ...unless a saved value has overridden one of them, in which case it is a filter, it changes what
+// the sweep opens, and the screen has to show it — see `criteriaFingerprint` for the same asymmetry.
+check(
+  'a saved value overriding them is somebody\'s filter and is shown',
+  describeCriteria({ ...RENTAL_SEARCH, channel: 'BUY' }),
+  { supported: [], other: ['channel=BUY'] },
+);
 
 console.log('criteriaFingerprint — what a sweep is a sweep of');
 // Written out rather than computed, and every case below compares against it rather than against
@@ -610,6 +617,16 @@ check('the same search re-pasted in another order keeps its progress', lastSwept
 check('the radius is per place and not part of the search', criteriaFingerprint({ ...CRITERIA, radius: '0.25' }), CRITERIA_STAMP);
 check('nor is the window', criteriaFingerprint({ ...CRITERIA, maxDaysSinceAdded: '1' }), CRITERIA_STAMP);
 check('nor what makes it a lettings search', criteriaFingerprint({ ...RENTAL_SEARCH, ...CRITERIA }), CRITERIA_STAMP);
+// ...but only where it *is* what makes it a lettings search. `sweepSearchUrl` spreads the saved
+// criteria after `RENTAL_SEARCH`, so a saved value under one of those three keys wins and the sweep
+// genuinely opens a different search — a sales one, for `channel=BUY`. Dropping the key on
+// membership alone stamped that identically to the lettings search it replaced, which is #80 again,
+// inside the fix for it: the old date comes back, the window narrows, and everything older than it
+// is stepped over. Nothing hostile required — a Rightmove URL carrying `To Rent` for `To rent`
+// lands in the same place.
+check('a saved value that overrides the lettings constants is part of the search', criteriaFingerprint({ ...CRITERIA, channel: 'BUY' }) === CRITERIA_STAMP, false);
+check('and is carried in the stamp as itself', criteriaFingerprint({ ...CRITERIA, channel: 'BUY' }), '_includeLetAgreed=on&channel=BUY&maxBedrooms=3&maxPrice=6000&minBedrooms=1&minPrice=4000');
+check('a differently-cased duplicate is a different search too', criteriaFingerprint({ ...CRITERIA, rent: 'To Rent' }) === CRITERIA_STAMP, false);
 check('an empty value is no filter', criteriaFingerprint({ ...CRITERIA, furnishTypes: '' }), CRITERIA_STAMP);
 // The stamp is taken off the search page actually recorded, so it has to come back equal to the
 // saved criteria that page was built from — window, radius, location and pager included.
