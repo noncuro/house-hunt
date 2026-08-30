@@ -253,6 +253,12 @@ async function watch(page: Page, running: Locator, started: number): Promise<voi
   const deadline = started + BUDGET_MINUTES * 60_000;
   let last = '';
 
+  // The phase and the count, then what is being opened. Read as two elements rather than as the
+  // whole running block, whose innerText also contains the Stop button — which is how the log came
+  // out as "Scanning Stop London Bridge — page 1".
+  const head = running.locator('.rm-open-run-head span').first();
+  const at = running.locator('.rm-open-at').first();
+
   while (await running.count()) {
     if (Date.now() > deadline) {
       throw new Error(
@@ -262,13 +268,17 @@ async function watch(page: Page, running: Locator, started: number): Promise<voi
           'SWEEP_BUDGET_MINUTES only once you know which.',
       );
     }
-    const line = await running.innerText().catch(() => '');
-    const now = line.replace(/\s+/g, ' ').trim();
+    const phase = (await head.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+    const where = (await at.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+    const now = [phase, where].filter(Boolean).join('  ');
     if (now && now !== last) {
       console.log(`  ${elapsed(started)}  ${now}`);
       last = now;
     }
-    await page.waitForTimeout(5_000);
+    // Polled rather than subscribed, so this is a sample of the run and not a ledger — the summary
+    // at the end is the count that is true. Two seconds because five missed a whole place: the
+    // first hub is scanned within a moment of the run reading its progress, well inside one poll.
+    await page.waitForTimeout(2_000);
   }
 }
 

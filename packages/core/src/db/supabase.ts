@@ -45,7 +45,7 @@ import { locatePostcode, locatePostcodes } from './travel';
 import { MODEL_VERSION, type LabelMode, type Model, type ModelMetrics } from '../predict';
 import type { PricePoint } from '../recheck';
 import type { SearchCard } from '../search-card';
-import { sweepProgress } from '../sweep';
+import { missingFor, sweepProgress } from '../sweep';
 import { type StationInfo } from '../tfl';
 import type { ArchiveReason, PropertyStage, Stage } from '../stage';
 import { toSleepingSeparation } from '../types';
@@ -1200,30 +1200,52 @@ export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<str
   if (rightmoveIds.length === 0) return known;
   const projectId = await activeProjectId();
 
-  const { data, error } = await db()
-    .from('property')
-    .select('rightmove_id, postcode, property_analysis(status), project_property!inner(project_id)')
-    .eq('project_property.project_id', projectId)
-    .in('rightmove_id', rightmoveIds);
-  fail('checking which properties we already have', error);
+  // Asked in batches. Every id goes into the query string, so one request for a project with a
+  // thousand sightings is a URL a server is entitled to refuse outright — and PostgREST caps what
+  // it returns besides, which would answer for some of the ids and say nothing about the rest.
+  // Either way the listings it could not speak for read as "never opened".
+  for (const batch of chunk(rightmoveIds, KNOWLEDGE_BATCH)) {
+    const { data, error } = await db()
+      .from('property')
+      .select('rightmove_id, postcode, image_urls, property_analysis(status), project_property!inner(project_id)')
+      .eq('project_property.project_id', projectId)
+      .in('rightmove_id', batch);
+    fail('checking which properties we already have', error);
 
-  for (const row of (data ?? []) as any[]) {
-    const analyses = Array.isArray(row.property_analysis)
-      ? row.property_analysis
-      : row.property_analysis
-        ? [row.property_analysis]
-        : [];
-    const missing: string[] = [];
-    if (!row.postcode) missing.push('no postcode read from the listing');
-    if (!analyses.some((a: any) => a.status === 'done')) missing.push('photos not analysed yet');
+    for (const row of (data ?? []) as any[]) {
+      const analyses = Array.isArray(row.property_analysis)
+        ? row.property_analysis
+        : row.property_analysis
+          ? [row.property_analysis]
+          : [];
+      const missing = missingFor({
+        postcode: row.postcode ?? null,
+        imageCount: Array.isArray(row.image_urls) ? row.image_urls.length : 0,
+        analysed: analyses.some((a: any) => a.status === 'done'),
+      });
 
-    known.set(row.rightmove_id, {
-      rightmoveId: row.rightmove_id,
-      state: missing.length === 0 ? 'complete' : 'partial',
-      missing,
-    });
+      known.set(row.rightmove_id, {
+        rightmoveId: row.rightmove_id,
+        state: missing.length === 0 ? 'complete' : 'partial',
+        missing,
+      });
+    }
   }
   return known;
+}
+
+/** How many ids to ask about at once. Well inside both the length a URL may be and the number of
+ *  rows PostgREST will return, with room for the project to grow into. */
+const KNOWLEDGE_BATCH = 200;
+
+/** PostgREST answers at most a page at a time, and says so by returning exactly that many rows
+ *  rather than by failing — so a read that does not page is a read that silently stops. */
+const SIGHTING_PAGE = 1000;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
 }
 
 /** One listing we have seen on a search page but do not properly have yet. */
@@ -1252,17 +1274,33 @@ export interface PendingSighting {
  *  because a flat that appeared this morning is the one worth opening before somebody takes it. */
 export async function pendingSightings(): Promise<PendingSighting[]> {
   const projectId = await activeProjectId();
-  const { data, error } = await db()
-    .from('search_sighting')
-    .select('rightmove_id, url, hub, display_address, price, last_seen_at')
-    .eq('project_id', projectId)
-    .order('last_seen_at', { ascending: false });
-  fail('reading what has been swept', error);
+  // Paged, because PostgREST stops at a thousand rows and reports that by handing back a
+  // thousand rows. This project had 1,491 sightings and a worklist that quietly ended at the
+  // thousandth-newest: two listings sighted on the ninth of August sat at rows 1,257 and 1,478,
+  // invisible to the run that was supposed to open them and to the count of what was left. A
+  // truncated list is indistinguishable from a short one, which is the whole objection.
+  //
+  // Ordered by `rightmove_id` as well as by time. The pages are separate requests and a listing
+  // seen in the same second as another can otherwise be handed back on both pages or on neither,
+  // which is a duplicate tab or a silently dropped listing depending on which way it falls.
+  const rows: any[] = [];
+  for (let from = 0; ; from += SIGHTING_PAGE) {
+    const { data, error } = await db()
+      .from('search_sighting')
+      .select('rightmove_id, url, hub, display_address, price, last_seen_at')
+      .eq('project_id', projectId)
+      .order('last_seen_at', { ascending: false })
+      .order('rightmove_id', { ascending: false })
+      .range(from, from + SIGHTING_PAGE - 1);
+    fail('reading what has been swept', error);
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < SIGHTING_PAGE) break;
+  }
 
   // A flat inside more than one hub's radius is sighted once per hub — the radii overlap on
   // purpose — and opening it twice would be twice the tabs for one listing. First sighting wins,
   // which is the newest by the ordering above.
-  const rows = (data ?? []) as any[];
   const distinct = new Map<string, any>();
   for (const row of rows) if (!distinct.has(row.rightmove_id)) distinct.set(row.rightmove_id, row);
 
