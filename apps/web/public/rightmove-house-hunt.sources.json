@@ -36,7 +36,7 @@
     "packages/core/src/db/client.ts": "10abc5e7325de1b8a96afbac96411351b50dab9d29fb2ed4552fa20e58dc8ff6",
     "packages/core/src/db/index.ts": "55d5ed78768a9383c292cdb23c47873ccaf359e7d3164be55b534d123f3d1495",
     "packages/core/src/db/session.ts": "6f9f09a19fcdf9576d37b173c767b6faeccfd8b5e7c69118ed77e7a7171bcc81",
-    "packages/core/src/db/supabase.ts": "660e7e2937b47ef0d2fdf04958bc91970bf8b33940fe1815ce7884908e1a54a0",
+    "packages/core/src/db/supabase.ts": "e407e4262356faa7214f0b3725ef20584aa25bb4efd9856343fa36988ba17b37",
     "packages/core/src/db/travel.ts": "d7c839e3d90850d1a42b5f540299dcaea2079e64da0e754ac75b81628c41debb",
     "packages/core/src/facts.ts": "ef22138b5df89c14468bda9b1b9fa1eb0869bd55187eaeea298735579056db71",
     "packages/core/src/filter.ts": "ad88fb404eddf1d4bd2d13b5cc0a910c0477dd7eef17a1d3bd6739a798575d5d",
@@ -51,7 +51,7 @@
     "packages/core/src/search-card.ts": "95b76d7635021eb683a5a33f2c77933dba287177a5b962a4e696516f4a4c3612",
     "packages/core/src/shortlist.ts": "745addf8b32294386d84d8f9eb0f0464db333c32a6d0e4f2a620571dc05e36c7",
     "packages/core/src/stage.ts": "a3f52b96247cd1b1f99fa20f1a0cfbc6e30bb7dab088f0a3f1fbf2c01aefc83e",
-    "packages/core/src/sweep.ts": "f5b3627262c8af9f7eff55db1ad03ce77058351b899013d52a769ee8d758ef82",
+    "packages/core/src/sweep.ts": "e7ea3814da9b85f5bee414bb0a00af80cc8f148f1d858886ad71e473c9cedd37",
     "packages/core/src/tfl.ts": "b17083920d5b505ae0e67fa6e56113f85d6bf1b82baee64893b0741f170fd342",
     "packages/core/src/types.ts": "3a67053c623b605c434d629ac40d1242ab7604501b289c261cfaa96d34c8d0ab",
     "packages/ui/package.json": "8935cd5058b9ea552bf14985d2bb65c016ce417b99e0c49bfb6690969c42b351",
@@ -101,7 +101,7 @@
     "tsconfig.base.json": "9342b7b7cce5a4f7aeb9515d8d9ba33a9ce5efe8ce7b41545252cb4d852a223e"
   },
   "contents": {
-    "background.js": "a4c5eb751f757a2f4ae7bd1f2d4b1048aa87779221991d9d7d28b4de2e2445d9",
+    "background.js": "342c6386a4e29012977186fed4e47cdb7a14d79160ac3312eed90e4d37af3fc5",
     "content-scripts/bridge.js": "75542b112082c435e7233a7a45aab20efa28b3247e98e404c8cf403f7fe96d8b",
     "content-scripts/page-model.js": "3b7d9f8d0deea41e18de61d898fe95cad74dd74d891f67e5c640813a7be7d5de",
     "content-scripts/panel.css": "1548e94362c6f18fa9db34661ae320656a8af5a2701de4eb85cdff9ce65d4535",
