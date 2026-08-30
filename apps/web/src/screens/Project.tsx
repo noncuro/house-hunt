@@ -29,6 +29,7 @@ import {
   AMENITIES,
   SWEEP_RADII,
   SWEEP_WINDOWS,
+  criteriaFingerprint,
   criteriaFromUrl,
   describeCriteria,
   distanceMiles,
@@ -1145,6 +1146,13 @@ function SearchCriteria({ places, notify }: { places: Place[]; notify: Notify })
   const current = settings.data?.search ?? null;
 
   const apply = (criteria: SweepCriteria | undefined) => {
+    // Whether this is a different search from the one the places were swept under. Each sweep is
+    // stamped with what it searched for (`criteriaFingerprint`), so a changed search starts every
+    // place again from the widest window — nothing here resets anything; the places' rows simply
+    // stop counting as swept for the new search. What is owed is the sentence saying so, because
+    // the sweeps that stop counting are somebody's fortnight of work. Compared as parsed criteria,
+    // not as the pasted string: re-pasting the same search in a different order keeps its progress.
+    const changed = criteriaFingerprint(criteria) !== criteriaFingerprint(current);
     // The whole preferences object, like every other control here: a partial write would drop the
     // amenity wants somebody set thirty seconds ago.
     save.mutate(
@@ -1153,7 +1161,14 @@ function SearchCriteria({ places, notify }: { places: Place[]; notify: Notify })
         onSuccess: () => {
           setPasted('');
           setRejected(false);
-          notify(criteria ? 'Search filters saved.' : 'Search filters cleared — nothing to sweep until you set them again.', 'info');
+          notify(
+            !criteria
+              ? 'Search filters cleared — nothing to sweep until you set them again.'
+              : changed
+                ? 'Search filters saved. This is a different search from the one your places were swept for, so each place will be swept again from the start.'
+                : 'Search filters saved — the same search as before, so sweep progress is kept.',
+            'info',
+          );
         },
         onError: (e) => notify(`Couldn't save the filters — ${(e as Error).message}`, 'error'),
       },
@@ -1212,7 +1227,9 @@ function SearchCriteria({ places, notify }: { places: Place[]; notify: Notify })
       <p className="hunt-lead">
         The filters live on Rightmove, where they have their own names and you can see what they
         return. Set them there — price, bedrooms, whatever else you want — then copy the address bar
-        and paste it back here.
+        and paste it back here. Saving a different search sweeps every place again from the start:
+        a sweep only knows it has seen everything <em>its</em> search returns, and a wider one can
+        turn up flats that were there all along.
       </p>
       {start ? (
         <a

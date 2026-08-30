@@ -7,6 +7,8 @@ import { send } from '@/lib/messages';
 import { readSearchPage, staleAgainst, type SearchPage } from '@/lib/search-page';
 import {
   WIDEST_WINDOW,
+  criteriaFromUrl,
+  lastSweptFor,
   nextPageUrl,
   sweepSearchUrl,
   sweepWindow,
@@ -83,6 +85,15 @@ export function Sweep() {
     // the neighbourhood it turns out to be — two sightings rows for one page, differing only in a
     // column nothing displays, and one of them permanently wrong.
     if (!page || hubs === null) return;
+    // What this page was actually searched with, off the address bar rather than the saved
+    // settings: the settings may have changed since the tab was opened, and the sweep's progress
+    // has to be stamped with the search it is progress on (`criteriaFingerprint`). A search page
+    // whose URL cannot be read is a page we cannot file against a sweep — the cards are still
+    // worth recording, and the panel says why the progress is not.
+    const served = criteriaFromUrl(location.href);
+    if (hub && !served) {
+      push("Couldn't read this search's filters from the address bar, so this page is recorded as sightings but not as sweep progress.");
+    }
     void (async () => {
       const reply = await send({
         type: 'sweep:record',
@@ -94,13 +105,14 @@ export function Sweep() {
         // backwards. What an unadopted search does not get is sweep progress: see `progress` below.
         hub: hub?.name ?? page.locationName,
         cards: page.cards,
-        progress: hub
+        progress: hub && served
           ? {
               page: page.page,
               totalPages: page.totalPages,
               resultCount: page.resultCount,
               windowDays: page.maxDaysSinceAdded ?? WIDEST_WINDOW,
               locationIdentifier: page.locationIdentifier,
+              criteria: served.criteria,
             }
           : null,
       });
@@ -139,8 +151,8 @@ export function Sweep() {
   const counts = useMemo(() => tally(page, knowledge), [page, knowledge]);
 
   const choice: SweepWindowChoice | null = useMemo(
-    () => (hub ? sweepWindow(sweeps?.find((s) => s.hub === hub.name)?.lastSweptAt ?? null) : null),
-    [hub, sweeps],
+    () => (hub ? sweepWindow(lastSweptFor(sweeps?.find((s) => s.hub === hub.name), criteria)) : null),
+    [hub, sweeps, criteria],
   );
 
   if (!result.ok) {
@@ -430,7 +442,9 @@ function HubList({
       <summary>All sweeps</summary>
       <ul>
         {hubs.map((hub) => {
-          const last = sweeps?.find((s) => s.hub === hub.name)?.lastSweptAt ?? null;
+          // "Swept" is only ever said of the search the hunt runs now: a place swept to the end
+          // yesterday for a lower rent ceiling reads as never swept, which is what its window is.
+          const last = lastSweptFor(sweeps?.find((s) => s.hub === hub.name), criteria);
           const choice = sweepWindow(last);
           const url = sweepSearchUrl({ hub, days: choice.days, criteria });
           return (

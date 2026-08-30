@@ -1,4 +1,5 @@
 import {
+  lastSweptFor,
   listingUrl,
   recheckTargets,
   sweepSearchUrl,
@@ -168,7 +169,10 @@ async function scan(
 
   for (const hub of hubs) {
     const previous = before.find((s) => s.placeId === hub.id) ?? null;
-    const choice = sweepWindow(previous?.lastSweptAt ?? null, deps.now(), hub.maxDaysSinceAdded);
+    // Dated by the last complete pass *of this search*: a place swept to the end last night under
+    // a lower rent ceiling has never been swept for the new one (`lastSweptFor`), and the widest
+    // window is what stops that pass's date skipping every listing the change let in.
+    const choice = sweepWindow(lastSweptFor(previous, criteria), deps.now(), hub.maxDaysSinceAdded);
     const search = { hub: toSweepHub(hub), days: choice.days, criteria };
     const first = sweepSearchUrl({ ...search, page: 1 });
     if (first === null) {
