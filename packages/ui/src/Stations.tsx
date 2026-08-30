@@ -40,6 +40,11 @@ export function Stations({
   // first four of those is a panel showing one interchange and calling it four stations.
   const shown = useMemo(() => dedupeStations(stations).slice(0, limit), [stations, limit]);
   const [walks, setWalks] = useState<Walks>({});
+  // Separate from `walks` because an empty record is not a failure: a postcode whose stations TfL
+  // has never been asked about answers `{}` legitimately, and drew identically to a lookup that
+  // fell over until the host started rejecting. The rows are the same either way — this only adds
+  // the sentence that tells the two apart.
+  const [walksFailed, setWalksFailed] = useState(false);
 
   // Keyed on the names rather than on the array, which is rebuilt on every render. The walk and
   // the lines are cached server-side per (postcode, station), so a second view asking the same
@@ -49,9 +54,20 @@ export function Stations({
   useEffect(() => {
     if (!postcode || names.length === 0) return;
     let live = true;
-    void host.stationWalks(postcode, names).then((found) => {
-      if (live) setWalks(found);
-    });
+    setWalksFailed(false);
+    void host.stationWalks(postcode, names).then(
+      (found) => {
+        if (live) setWalks(found);
+      },
+      () => {
+        // The distances stay: they came with the listing and are still true. What goes is the
+        // silence about the times, which is the half a reader cannot otherwise account for.
+        if (live) {
+          setWalks({});
+          setWalksFailed(true);
+        }
+      },
+    );
     return () => {
       live = false;
     };
@@ -68,7 +84,11 @@ export function Stations({
           <div className="rm-line" key={s.name}>
             <span className="rm-station">
               {s.name.replace(/\s+Station$/, '')}
-              <LineDots lines={info?.lines ?? []} />
+              {/* TfL's answer plus whatever the name's own brackets declared. Union, never replace:
+                  a merge of "(Northern)" and "(Bakerloo)" must show both, and TfL's lookup can
+                  legitimately return only half the lines when its index holds two entries under
+                  one name — see `dedupeStations`. */}
+              <LineDots lines={[...new Set([...(info?.lines ?? []), ...s.lines])]} />
             </span>
             <span className="rm-value rm-modes">
               {/* The walk is the number that decides anything; the miles are context beside it. */}
@@ -77,11 +97,27 @@ export function Stations({
                   <ModeIcon mode="walking" size={12} /> {formatDuration(info.seconds)}
                 </span>
               )}
-              <span className="rm-dim">{stationDistance(s.distance, s.unit)}</span>
+              {/* The minutes are our routed walk; the miles are Rightmove's straight line, rounded
+                  to a tenth — so the pair disagrees whenever the walk is not straight, which in
+                  London is always. One word attached to the number, rather than a caption under
+                  the block: the qualifier travels with the figure, costs nothing on a phone, and
+                  a sentence repeated on every listing is a price paid hundreds of times for a
+                  confusion resolved once. See #43. */}
+              <span className="rm-dim">
+                {stationDistance(s.distance, s.unit)} <span className="rm-direct">direct</span>
+              </span>
             </span>
           </div>
         );
       })}
+      {/* Under the rows rather than in place of them. The stations and their distances are real and
+          came with the listing; it is only the walk that is missing, and saying which is missing is
+          the difference between a degraded row and a wrong one. */}
+      {walksFailed && (
+        <div className="rm-line rm-walks-failed" role="status">
+          <span className="rm-dim">Walking times unavailable — distances are straight-line.</span>
+        </div>
+      )}
     </>
   );
 }

@@ -20,17 +20,8 @@ import {
 import { Flags } from '@house-hunt/ui';
 import { webAppUrl } from '@/lib/web-app';
 import { HubFact } from '@house-hunt/ui';
-import { galleryFor, hubsFromProject, travelDestinations, type Hub } from '@house-hunt/core';
-import {
-  formatDuration,
-  Icon,
-  MapsButton,
-  ModeIcon,
-  readTravel,
-  Routes,
-  TransitBasis,
-  type IconName,
-} from '@house-hunt/ui';
+import { galleryFor, hubsFromProject, type Hub } from '@house-hunt/core';
+import { Icon, MapsButton, TransitBasis, TravelGrid, type IconName } from '@house-hunt/ui';
 import { Stations, STATIONS_SHOWN } from '@house-hunt/ui';
 import { Gallery } from '@house-hunt/ui';
 /* First, so everything after it can read a token. Inside a shadow root there is no page stylesheet
@@ -43,7 +34,6 @@ import './panel.css';
 import { SizeFact } from '@house-hunt/ui';
 import type { Point } from '@house-hunt/core';
 import {
-  TRAVEL_MODES,
   type Analysis,
   type ArchiveReason,
   type Listing,
@@ -562,77 +552,33 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
         />
       </Section>
 
+      {/* The same grid the website's flat view draws — the hand-rolled rows it replaces filtered
+          out the modes without an answer, so each place showed a different number of figures in a
+          different order and nothing lined up. A line where every mode failed is now three dashes,
+          each saying on hover what happened to that mode — more information than the one collapsed
+          "no route" sentence, less shouting. Retry stays panel-wide: `refreshTravel` blanks and
+          refetches every leg, and narrowing it is a change to `travel:get`, not to this render. */}
       <Section title="Travel times" note={<TransitBasis />}>
-        {travelDestinations(places).length === 0 ? (
-          <div className="rm-empty">Nowhere to measure to — add somewhere with a postcode, on the website</div>
-        ) : !listing.postcode ? (
-          <div className="rm-empty">No postcode on this listing</div>
-        ) : travel === null ? (
-          <div className="rm-empty rm-working">Working…</div>
-        ) : (
-          travelDestinations(places).map((place) => {
-            const forPlace = travel.filter((x) => x.placeId === place.id);
-            const verdict = readTravel(forPlace);
-            const shown = TRAVEL_MODES.map((mode) => {
-              const t = verdict.usable.find((x) => x.mode === mode);
-              if (!t) return null;
-              // Only transit has a route worth explaining. Walking and cycling are one leg, and
-              // "you walk, for 15 minutes" is not worth a hover.
-              const routes = mode === 'transit' ? t.options : undefined;
-              return (
-                <Hint
-                  key={mode}
-                  className="rm-mode"
-                  underline={false}
-                  text={routes && routes.length > 0 ? <Routes options={routes} /> : undefined}
-                >
-                  <ModeIcon mode={mode} size={12} /> {formatDuration(t.seconds)}
+        <TravelGrid
+          places={places}
+          travel={travel}
+          postcode={listing.postcode}
+          heading={null}
+          actions={({ place, verdict }) => (
+            <>
+              {verdict.transient && (
+                <Hint text="Ask the planner again — one of these did not come back.">
+                  <button className="rm-retry" onClick={() => void refreshTravel()}>
+                    ↻
+                  </button>
                 </Hint>
-              );
-            }).filter(Boolean);
-
-
-            return (
-              <div className="rm-line" key={place.id}>
-                <span>{place.label}</span>
-                {/* An empty row would read as "no travel time needed" rather than "every mode
-                    failed" — usually a place TfL can't route to, like outside London. */}
-                <span className={shown.length > 0 ? 'rm-value rm-modes' : 'rm-value rm-bad'}>
-                  {shown.length > 0 ? (
-                    <>
-                      {shown}
-                      {/* A mode that failed while others succeeded used to vanish, which reads as
-                          "we didn't think cycling was worth showing" rather than "we asked and
-                          got nothing back". */}
-                      {verdict.transient && (
-                        <Hint
-                          text={`${verdict.transient.mode} did not come back: ${verdict.transient.error}`}
-                        >
-                          <button className="rm-retry" onClick={() => void refreshTravel()}>
-                            ↻
-                          </button>
-                        </Hint>
-                      )}
-                      {/* One button per row rather than per mode: the map is the same place
-                          whichever way you'd travel, and it picks the mode you last looked at. */}
-                      <MapsButton postcode={listing.postcode} place={place} />
-                    </>
-                  ) : verdict.transient ? (
-                    <Hint text={`TfL did not answer: ${verdict.transient.error}`}>
-                      <button className="rm-retry" onClick={() => void refreshTravel()}>
-                        ↻ TfL failed — retry
-                      </button>
-                    </Hint>
-                  ) : (
-                    <Hint text="No journey between these two points.">
-                      no route
-                    </Hint>
-                  )}
-                </span>
-              </div>
-            );
-          })
-        )}
+              )}
+              {/* One button per row rather than per mode: the map is the same place whichever
+                  way you'd travel. */}
+              <MapsButton postcode={listing.postcode} place={place} />
+            </>
+          )}
+        />
       </Section>
 
 

@@ -456,6 +456,55 @@ check(
   dedupeStations([station('Angel Station', 0.5), station('Old Street Station', 0.6, 'km')]).map((s) => s.name),
   ['Old Street Station', 'Angel Station'],
 );
+// Issue #48: siblings distinguished by a bracketed line name. Neither word list is a subset of the
+// other, so the parent/child rule above cannot see them — the bracket is Rightmove itself marking
+// the word off as a line, and membership in LINE_COLOURS is what recognises it.
+const elephant = [
+  station('Elephant & Castle Underground Station (Northern)', 0.1, 'miles', ['LONDON_UNDERGROUND']),
+  station('Elephant & Castle Underground Station (Bakerloo)', 0.1, 'miles', ['LONDON_UNDERGROUND']),
+];
+check('two entries differing only by a bracketed line are one station', dedupeStations(elephant).length, 1);
+// The survivor must not name one line over dots showing two — the bracket is consumed as data, so
+// it is gone from the label as well as the comparison.
+check(
+  'the merged row drops the bracket from the name',
+  dedupeStations(elephant)[0]?.name,
+  'Elephant & Castle Underground Station',
+);
+check(
+  'and carries the union of what the brackets said',
+  dedupeStations(elephant)[0]?.lines,
+  ['northern', 'bakerloo'],
+);
+// A line whose own name contains the separator is one line, not two half-matches.
+check(
+  'a two-word line name in brackets is recognised',
+  dedupeStations([
+    station('Edgware Road Underground Station (Hammersmith & City)', 0.2, 'miles', ['LONDON_UNDERGROUND']),
+    station('Edgware Road Underground Station (Bakerloo)', 0.2, 'miles', ['LONDON_UNDERGROUND']),
+  ]).length,
+  1,
+);
+// Bare `victoria` is a station; only a bracket marks the word off as a line. This is the check that
+// stops the bracket rule being read as licence to strip line words generally.
+check(
+  'Victoria beside Victoria Coach Station merges exactly as before',
+  dedupeStations([
+    station('Victoria Station', 0.3, 'miles', ['LONDON_UNDERGROUND']),
+    station('Victoria Coach Station', 0.4),
+  ]).map((s) => s.name),
+  ['Victoria Coach Station'],
+);
+// A bracket naming no line we know stays in the name, so an unrecognised qualifier fails closed to
+// two rows — exactly the behaviour before the rule existed.
+check(
+  'an unrecognised bracket is part of the name',
+  dedupeStations([
+    station('Canada Water Station (East Entrance)', 0.2),
+    station('Canada Water Station (West Entrance)', 0.2),
+  ]).length,
+  2,
+);
 check('nothing in, nothing out', dedupeStations([]), []);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }

@@ -6,7 +6,7 @@ import { accessToken, requireSession, signIn, signOut, Unauthenticated } from '@
 // Journeys, station walks and postcode lookups are resolved by the `travel` Edge Function now, not
 // here. The worker used to call TfL directly through host permissions a browser tab does not have —
 // and, more to the point, that made every client a writer of caches every project reads.
-import { locatePostcode, stationWalks, travelTimes } from '@house-hunt/core/db';
+import { locatePostcode, requestStationWalks, travelTimes } from '@house-hunt/core/db';
 import {
   describe,
   type AnalysisRequest,
@@ -26,7 +26,6 @@ import {
   authState,
   activeProjectId,
   cachedTravelTimes,
-  consumeInvites,
   createInvite,
   forgetActiveProject,
   forgetSightings,
@@ -190,14 +189,10 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
     case 'auth:sign-in': {
       const result = await signIn(request.email, request.password);
       if (result.status !== 'signed-in') return result;
-      // Consume the invite HERE, and before reading the state. This line is the whole invite flow:
-      // without it a newly invited person signs in and lands in no project forever. A comment on
-      // this spot used to claim consumption happened, and nothing did it.
-      //
-      // It runs on EVERY sign-in and not only the first, which is what makes an invite into a
-      // second house hunt work: somebody who already has an account is never sent a code, they just
-      // sign in, and this is the line that notices they were asked somewhere new.
-      await consumeInvites();
+      // Invites are consumed inside `authState()` now, on every read rather than only at this
+      // moment — a comment on this spot once claimed consumption happened when nothing did it, and
+      // then the sign-in-only version left anybody already signed in waiting forever. The read
+      // below is therefore also the consume.
       forgetActiveProject();
       return { status: 'signed-in', state: await readAuthState() };
     }
@@ -337,7 +332,7 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       return await cachedTravelTimes(request.postcodes);
 
     case 'stations:walk':
-      return await stationWalks(request.postcode, request.stations);
+      return await requestStationWalks(request.postcode, request.stations);
 
     case 'postcode:point':
       return await locatePostcode(request.postcode);

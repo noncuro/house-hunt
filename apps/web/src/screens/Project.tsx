@@ -28,6 +28,7 @@ import {
   AMENITIES,
   SWEEP_RADII,
   SWEEP_WINDOWS,
+  criteriaFingerprint,
   criteriaFromUrl,
   describeCriteria,
   distanceMiles,
@@ -758,9 +759,10 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
     mutationFn: async () => await createInvite(email.trim(), project.id),
     onSuccess: async (outcome) => {
       setResult(outcome);
-      // Only a real invite clears the field. Every other outcome is about the address that is
-      // still in it, and clearing it would leave the sentence underneath pointing at nothing.
-      if (outcome.status === 'invited') setEmail('');
+      // Both ways an invite can finish clear the field: a code sent, and an existing account added
+      // outright. Every other outcome is about the address that is still in it, and clearing it
+      // would leave the sentence underneath pointing at nothing.
+      if (outcome.status === 'invited' || outcome.status === 'added') setEmail('');
       await refresh();
     },
     onError: (e: Error) => notify(`Not invited — ${e.message}`),
@@ -923,10 +925,8 @@ function Invited({ result }: { result: Extract<InviteResult, { status: 'invited'
   return (
     <div className="notice notice-good invite-code">
       <p>
-        Invited <strong>{result.invite.email}</strong>.{' '}
-        {result.userExisted
-          ? 'They already have an account, so they can just sign in with their own password — the code below is only needed if they have forgotten it and want to start again.'
-          : 'Send them this code. They enter it with their address and a password of their choosing.'}
+        Invited <strong>{result.invite.email}</strong>. Send them this code. They enter it with
+        their address and a password of their choosing.
       </p>
       <p className="invite-code-value">
         <code>{result.code}</code>
@@ -957,6 +957,16 @@ function Outcome({ result }: { result: InviteResult }) {
   switch (result.status) {
     case 'invited':
       return <Invited result={result} />;
+    case 'added':
+      // No code and nothing to send: they already had an account, so they are in. The hunt is on
+      // their screen the next time the app loads for them — it does not push to an open tab.
+      return (
+        <p className="notice notice-good">
+          Added <strong>{result.invite.email}</strong> — they already have an account, so they are
+          in this hunt now. It appears for them the next time they open the app; there is no code
+          to send.
+        </p>
+      );
     case 'at-capacity':
       return (
         <p className="error">
@@ -1151,6 +1161,13 @@ function SearchCriteria({ places, notify }: { places: Place[]; notify: Notify })
   const current = settings.data?.search ?? null;
 
   const apply = (criteria: SweepCriteria | undefined) => {
+    // Whether this is a different search from the one the places were swept under. Each sweep is
+    // stamped with what it searched for (`criteriaFingerprint`), so a changed search starts every
+    // place again from the widest window — nothing here resets anything; the places' rows simply
+    // stop counting as swept for the new search. What is owed is the sentence saying so, because
+    // the sweeps that stop counting are somebody's fortnight of work. Compared as parsed criteria,
+    // not as the pasted string: re-pasting the same search in a different order keeps its progress.
+    const changed = criteriaFingerprint(criteria) !== criteriaFingerprint(current);
     // The whole preferences object, like every other control here: a partial write would drop the
     // amenity wants somebody set thirty seconds ago.
     save.mutate(
@@ -1159,7 +1176,14 @@ function SearchCriteria({ places, notify }: { places: Place[]; notify: Notify })
         onSuccess: () => {
           setPasted('');
           setRejected(false);
-          notify(criteria ? 'Search filters saved.' : 'Search filters cleared — nothing to sweep until you set them again.', 'info');
+          notify(
+            !criteria
+              ? 'Search filters cleared — nothing to sweep until you set them again.'
+              : changed
+                ? 'Search filters saved. This is a different search from the one your places were swept for, so each place will be swept again from the start.'
+                : 'Search filters saved — the same search as before, so sweep progress is kept.',
+            'info',
+          );
         },
         onError: (e) => notify(`Couldn't save the filters — ${(e as Error).message}`, 'error'),
       },
@@ -1218,7 +1242,9 @@ function SearchCriteria({ places, notify }: { places: Place[]; notify: Notify })
       <p className="hunt-lead">
         The filters live on Rightmove, where they have their own names and you can see what they
         return. Set them there — price, bedrooms, whatever else you want — then copy the address bar
-        and paste it back here.
+        and paste it back here. Saving a different search sweeps every place again from the start:
+        a sweep only knows it has seen everything <em>its</em> search returns, and a wider one can
+        turn up flats that were there all along.
       </p>
       {start ? (
         <a
@@ -1381,9 +1407,10 @@ function LocationNote({
 
 /** The places this hunt cares about, and what it does with each one.
  *
- *  One list, three jobs, and each row says which it can do. Every place with a postcode is timed by
- *  walking, bike and transit; every place with coordinates fixes a listing ("0.4 mi NE of Angel");
- *  and a place you tick "search around" becomes a sweep centre.
+ *  One list, three jobs, and each row says which it can do. Every place with coordinates fixes a
+ *  listing ("0.4 mi NE of Angel"); a place you give a postcode and leave timed is measured by
+ *  walking, bike and transit; and a place you give a radius becomes a sweep centre. The last two
+ *  are independent — Angel can be both, and neither switch writes the other.
  *
  *  This was two sections on two pages — places here, neighbourhoods under the sweep — with their
  *  own add forms, their own lists, and the compass quietly merging them on every card. Angel had to
@@ -1494,13 +1521,31 @@ function Places({
     if (saved && miles !== null && saved.locationIdentifier === null) await resolve(saved);
   }
 
+  /** Whether the hunt times journeys to this place.
+   *
+   *  Turning it off takes a row off the panel, a row off the detail pane and three columns off the
+   *  compare table for everybody in the hunt, and stops the scheduled backfill asking for those
+   *  legs. No confirm: it is one click to undo, and this screen spends its one `confirm()` on
+   *  removing a place, which cascades a whole sweep history. A line saying nothing was destroyed is
+   *  what the moment needs, because the columns vanishing looks like data loss and is not
+   *  — `travel_time` is keyed on a pair of postcodes and has never known what a place is. */
+  async function setTimed(place: Place, timed: boolean) {
+    const saved = await patch(place, { travelTimed: timed });
+    if (saved && !timed) {
+      notify(
+        `${place.label} is no longer timed, for everyone in the hunt. The journeys already worked ` +
+          'out are kept, and come back if you turn this on again.',
+      );
+    }
+  }
+
   return (
     <section className="setting hunt-card">
       <h2 className="hunt-h">Places</h2>
       <Explainer lead="The office, the in-laws, the neighbourhoods you are looking in.">
-        Every one is timed by walking, bike and public transport, and fixes each listing on the
-        compass — &ldquo;0.4 mi NE of Angel&rdquo;. Give one a radius and it also becomes somewhere
-        the sweep goes looking. {TRANSIT_BASIS_NOTE}
+        Every one fixes each listing on the compass — &ldquo;0.4 mi NE of Angel&rdquo;. Say which
+        ones you want journey times to, by walking, bike and public transport, and give one a radius
+        to make it somewhere the sweep goes looking. {TRANSIT_BASIS_NOTE}
       </Explainer>
       {places.length === 0 && (
         <p className="dim">Nothing yet — add the office, the in-laws, the areas you are searching.</p>
@@ -1523,6 +1568,27 @@ function Places({
             </button>
 
             <div className="hunt-place-controls">
+            {/* Travel first, because it is what a place does the moment it is added — the only way
+                to add one is by giving it a postcode — and searching around it is the job a place
+                is given afterwards. Disabled rather than off where there is no postcode: "cannot be
+                routed to" and "not worth routing to" are two different states and the stored flag
+                keeps whatever it says, so it comes back into force if a postcode ever arrives. */}
+            <Pill
+              label={`Travel times to ${place.label}`}
+              title={
+                place.postcode === null
+                  ? 'No postcode on this place, so there is nothing to route to. Add one and this becomes a choice.'
+                  : 'Whether this hunt times journeys here. Off takes it off the panel, the detail pane and the compare table for everyone, and stops the scheduled lookups. Nothing already worked out is thrown away.'
+              }
+              faint={!place.travelTimed}
+              disabled={busy || place.postcode === null}
+              value={place.travelTimed ? 'on' : 'off'}
+              onPick={(v) => void setTimed(place, v === 'on')}
+            >
+              <option value="on">timing journeys here</option>
+              <option value="off">not timing journeys</option>
+            </Pill>
+
             <Pill
               label={`Search around ${place.label}`}
               title="How far around this place Rightmove searches. The same steps its own radius control offers."

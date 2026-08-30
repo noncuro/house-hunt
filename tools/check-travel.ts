@@ -241,6 +241,34 @@ function modesInTravelGaps(sql: string): { modes: string[] } | { problem: string
   return { modes: [...literals[0]!.matchAll(/'([^']*)'/g)].map((m) => m[1]!).sort() };
 }
 
+/** Which columns of `place` the `travel_gaps` body tests, or a sentence saying why they could not
+ *  be read.
+ *
+ *  `travelDestinations` and this function are two implementations of one question — which places a
+ *  journey is asked about — and the SQL one is where the money goes and the one that gets
+ *  forgotten. It has no types to widen and no caller to break, so a clause dropped from it is a
+ *  scheduled job quietly fetching journeys nobody wants, at three legs per flat, with every screen
+ *  looking right.
+ *
+ *  Comments first, for the reason the mode parser gives: the sentence beside the clause names the
+ *  column, so a check that read the raw text would go on passing after the clause itself was
+ *  deleted. */
+function placeClausesInTravelGaps(sql: string): { columns: string[] } | { problem: string } {
+  const uncommented = sql.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, '');
+  const body = /create\s+(?:or\s+replace\s+)?function\s+public\.travel_gaps\b[\s\S]*?\$\$([\s\S]*?)\$\$/i
+    .exec(uncommented)?.[1];
+  if (body === undefined) return { problem: 'no `create function public.travel_gaps ... $$ ... $$` body — did it move or change quoting?' };
+
+  const where = /\bwhere\b([\s\S]*?)\border\s+by\b/i.exec(body)?.[1];
+  if (where === undefined) return { problem: 'the travel_gaps body has no `where ... order by` — where did the predicate go?' };
+
+  // `pl` is what the body calls `place`, asserted rather than assumed: an alias renamed in a
+  // rewrite would otherwise leave this reading an empty set and calling it a pass.
+  if (!/\bjoin\s+place\s+pl\b/i.test(body)) return { problem: 'the travel_gaps body no longer joins `place` as `pl` — this check is reading the wrong alias' };
+
+  return { columns: [...new Set([...where.matchAll(/\bpl\.([a-z_]+)/gi)].map((m) => m[1]!))].sort() };
+}
+
 /** `check` against whichever half of that union came back, so a parse problem reads as a failure
  *  rather than as a comparison nobody made. */
 function modes(name: string, sql: string, expected: string[] | string) {
@@ -315,6 +343,30 @@ modes(
   edited('create function public.travel_gaps', 'create function public.travel_backlog'),
   'no `create function public.travel_gaps ... $$ ... $$` body — did it move or change quoting?',
 );
+
+console.log(`travel_gaps places (${MIGRATION})`);
+{
+  const found = placeClausesInTravelGaps(migration);
+  check(
+    'the backlog is derived only for places with a postcode that are timed',
+    'columns' in found ? found.columns : found.problem,
+    ['postcode', 'travel_timed'],
+  );
+  // The clause is what stops the spend, so losing it has to read as a failure rather than as a
+  // shorter list nobody looks at.
+  const withoutTimed = placeClausesInTravelGaps(migration.replace('       and pl.travel_timed\n', ''));
+  check(
+    'and dropping the travel_timed clause is noticed',
+    'columns' in withoutTimed ? withoutTimed.columns : withoutTimed.problem,
+    ['postcode'],
+  );
+  const commentedOut = placeClausesInTravelGaps(migration.replace('       and pl.travel_timed\n', '       -- and pl.travel_timed\n'));
+  check(
+    'a clause left only in a comment does not count',
+    'columns' in commentedOut ? commentedOut.columns : commentedOut.problem,
+    ['postcode'],
+  );
+}
 
 /* Which station a name means. TfL's search is fuzzy and ranks by relevance, so the guard against
  * being handed a different station is name equality once both sides are reduced — and every case
