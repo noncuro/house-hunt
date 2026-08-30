@@ -304,7 +304,9 @@ pnpm check:all      # + every pure-function check (seconds)
 ```
 
 Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `listing` (which URLs are a
-listing, and what a share hands over), `hubs`, `stage`, `shortlist`, `sweep`, `travel`,
+listing, and what a share hands over), `invite` (what state an invitation is in, once, for both
+screens that show one), `hubs`, `stage`, `shortlist`, `sweep`, `travel` (what a cached journey means,
+and what one ask may cost before it is dispatched),
 `geo` (the sentence a refused position gets, and a maps link that is not a guess about the phone),
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint), `sync` (the
 `_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a

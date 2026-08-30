@@ -223,6 +223,22 @@ export interface AdminProject {
   spentThisMonthUsd: number;
 }
 
+/** One thing an admin did to somebody's budget or member limit.
+ *
+ *  `actorId` is null when the service role made the change: it is not a person, it has no profile,
+ *  and something operational moving a cap is a different fact from an admin at a keyboard. Both
+ *  figures are carried because "raised to 200" is half an answer. */
+export interface AdminAction {
+  id: string;
+  occurredAt: string;
+  actorId: string | null;
+  action: 'set_user_cap' | 'set_project_cap' | 'set_max_members';
+  subjectUserId: string | null;
+  subjectProjectId: string | null;
+  previousValue: number | null;
+  newValue: number;
+}
+
 export interface UsageRow {
   id: string;
   occurredAt: string;

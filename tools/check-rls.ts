@@ -18,6 +18,9 @@
  *    - an invite is consumed only by the person it was addressed to, and only through
  *      `consume_invites()`; a member cannot write an invite's status by any other route
  *    - `spend_summary` answers about the caller, whoever they name in the argument
+ *    - the admin audit log is readable by admins alone and writable only by the functions that
+ *      perform the change, and it records what the change was
+ *    - a member can neither reserve TfL capacity nor record travel calls against their allowance
  *
  *  It also asserts a handful of things that must still WORK. A database that refuses everything
  *  passes an adversarial test perfectly, and that is the failure this whole change would be
@@ -197,7 +200,11 @@ const OUTSIDER = 'rls-check-outsider@example.test';
 const EXISTING = 'rls-check-existing@example.test';
 /** An account with a pending invite stranded by the era when nothing added existing accounts. */
 const STRANDED = 'rls-check-stranded@example.test';
-const EXTRA_USERS = [INVITEE, PLATFORM, LATE, OUTSIDER, EXISTING, STRANDED];
+/** An admin, made one by hand rather than by `admin_email`, so the audit log can be read the way
+ *  an admin actually reads it: authenticated, through RLS. The service key bypasses RLS, so a
+ *  read with it says nothing about the policy. */
+const EMAIL_ADMIN = 'rls-check-admin@example.test';
+const EXTRA_USERS = [INVITEE, PLATFORM, LATE, OUTSIDER, EXISTING, STRANDED, EMAIL_ADMIN];
 /** An invite id belonging to no row, for probing a function without letting it do anything. */
 const MISSING_INVITE = '00000000-0000-4000-c000-0000000000ff';
 const PASSWORD = 'rls-check-password-9f3a';
@@ -206,6 +213,10 @@ async function tearDown() {
   // Order matters only where a foreign key does not cascade. Projects cascade to everything
   // project-scoped; the global rows and the users are cleared explicitly.
   await admin.from('api_usage').delete().in('project_id', [PROJECT_A, PROJECT_B]);
+  // Both keep their row when the project goes — `on delete set null`, for the same reason
+  // `api_usage` does — so neither is reached by the cascade.
+  await admin.from('admin_action').delete().in('subject_project_id', [PROJECT_A, PROJECT_B]);
+  await admin.from('travel_claim').delete().in('project_id', [PROJECT_A, PROJECT_B]);
   // Platform invites carry no project and so are not reached by the cascade below.
   await admin.from('invite').delete().in('email', [...EXTRA_USERS, 'another@example.test', EMAIL_A, EMAIL_B]);
   await admin.from('verdict_history').delete().in('project_id', [PROJECT_A, PROJECT_B]);
@@ -222,11 +233,16 @@ async function tearDown() {
   await admin.from('station_point').delete().in('name', ['RLS Check Station', 'RLS Other Station']);
 
   const { data } = await admin.auth.admin.listUsers({ perPage: 1000 });
-  for (const user of data?.users ?? []) {
-    if ([EMAIL_A, EMAIL_B, ...EXTRA_USERS].includes(user.email ?? '')) {
-      await admin.auth.admin.deleteUser(user.id);
-    }
-  }
+  const fixtureUsers = (data?.users ?? []).filter((u) => [EMAIL_A, EMAIL_B, ...EXTRA_USERS].includes(u.email ?? ''));
+
+  // Before the users go, not after. `admin_action` nulls both its subject and its actor on a user
+  // delete rather than cascading — the point of the log is that it outlives what it is about — so a
+  // row cleared up by user id afterwards is a row with no id left to find it by, and every run would
+  // leave an all-null orphan behind on a long-lived local database.
+  const ids = fixtureUsers.map((u) => u.id);
+  if (ids.length > 0) await admin.from('admin_action').delete().in('subject_user_id', ids);
+
+  for (const user of fixtureUsers) await admin.auth.admin.deleteUser(user.id);
 }
 
 async function createUser(email: string): Promise<string> {
@@ -242,6 +258,11 @@ function must(context: string, error: { message: string } | null) {
 async function setUp(): Promise<{ userA: string; userB: string }> {
   const userA = await createUser(EMAIL_A);
   const userB = await createUser(EMAIL_B);
+  // Not through `admin_email`, which is deployment data this check must not depend on: the flag
+  // is set directly, which is the state the policies read.
+  const userAdmin = await createUser(EMAIL_ADMIN);
+  must('making the admin an admin', (await admin.from('profile')
+    .update({ is_admin: true }).eq('id', userAdmin)).error);
 
   // The trigger on auth.users is what creates these. If it did not fire, everything below is
   // meaningless, so this is checked rather than assumed.
@@ -354,7 +375,7 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
   must("seeding B's spend", (await admin.from('api_usage')
     .insert({ project_id: PROJECT_B, user_id: userB, model: 'gpt-5.6-terra', cost_usd: 1.5, rightmove_id: LISTING_B })).error);
 
-  return { userA, userB };
+  return { userA, userB, userAdmin };
 }
 
 async function signIn(email: string): Promise<SupabaseClient> {
@@ -368,7 +389,7 @@ async function signIn(email: string): Promise<SupabaseClient> {
 
 async function main() {
   await tearDown();
-  const { userA, userB } = await setUp();
+  const { userA, userB, userAdmin } = await setUp();
   const a = await signIn(EMAIL_A);
 
   // ----------------------------------------------------------------------------------------- //
@@ -702,10 +723,85 @@ async function main() {
   refused('claim_analysis: a client claiming its own budget', await rpc(a, 'claim_analysis', { p_rightmove_id: LISTING_A, p_project_id: PROJECT_A, p_user_id: userA }));
   refused('record_api_usage: a client writing its own spend', await rpc(a, 'record_api_usage', { p_project_id: PROJECT_A, p_user_id: userA, p_model: 'gpt-5.6-terra', p_input_tokens: 1, p_cached_input_tokens: 0, p_output_tokens: 1 }));
 
+  // The travel reservation, which is `claim_analysis`'s problem on TfL's allowance rather than on
+  // money. `denied` rather than `refused` for both: one returns jsonb and the other returns void, so
+  // "the call affected nothing" is what success looks like too — which is the blind spot the four
+  // cache assertions above sat in for a deploy. A member who could claim would reserve somebody
+  // else's whole minute; one who could release would record calls nobody made against them.
+  denied('claim_travel_calls: a member reserving TfL capacity', await rpc(a, 'claim_travel_calls', { p_user_id: userA, p_project_id: PROJECT_A, p_calls: 1, p_limit: 300, p_window: '60 seconds' }));
+  denied('release_travel_calls: a member recording travel calls', await rpc(a, 'release_travel_calls', { p_reservation: 1, p_user_id: userA, p_project_id: PROJECT_A, p_made: 1 }));
+
+  // The audit log.
+  //
+  // THE ORDER HERE IS THE ASSERTION. A row is written first, and only then is the member asked to
+  // read the table — because `nothing()` passes on an empty table, and the suite tears down and
+  // starts from a fresh `supabase start` in CI, so a read asserted before anything had been logged
+  // would have passed identically against `using (true)` or against no policy at all. That is the
+  // same shape as the four cache assertions that sat green for a deploy against a grant that had
+  // never been revoked.
+  //
+  // The log records both figures, because "raised to 200" is half an answer: from 150 is a decision
+  // and from 5 is an incident. The starting cap is read rather than written as a literal — it is a
+  // column default nobody here owns.
+  const capBefore = Number((await admin.from('project').select('monthly_cap_usd').eq('id', PROJECT_A).single()).data?.monthly_cap_usd);
+  allowed('admin_set_project_cap: the server raising a cap', await rpc(admin, 'admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: capBefore + 1 }));
+  const logged = (await admin.from('admin_action').select('action, previous_value, new_value').eq('subject_project_id', PROJECT_A).order('id', { ascending: false }).limit(1)).data?.[0];
+  is('the audit log recorded what changed', [logged?.action, Number(logged?.previous_value), Number(logged?.new_value)], ['set_project_cap', capBefore, capBefore + 1]);
+
+  // ...and now that there is provably a row in it, what a member can see of it. Not their own rows,
+  // as `api_usage` would give them: nothing. What the log answers is which admin did this, and
+  // showing that to the person whose cap moved would make it a notification.
+  nothing('admin_action: a member reading the audit log, which is not empty', await a.from('admin_action').select('*'));
+  refused('admin_action: a member writing an entry', await a.from('admin_action').insert({ action: 'set_project_cap', subject_project_id: PROJECT_A, new_value: 999 }).select());
+  denied('admin_set_project_cap: a member raising their own project cap', await rpc(a, 'admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: 999 }));
+  denied('admin_set_max_members: a member raising their own member limit', await rpc(a, 'admin_set_max_members', { p_project_id: PROJECT_A, p_max: 99 }));
+  is('the cap did not move', Number((await admin.from('project').select('monthly_cap_usd').eq('id', PROJECT_A).single()).data?.monthly_cap_usd), capBefore + 1);
+  is('and the member wrote no entry', (await admin.from('admin_action').select('id').eq('new_value', 999)).data?.length, 0);
+
+  // And the half neither of those covers. Everything above reads the log with the service key,
+  // which bypasses RLS, or asserts that a member sees nothing — both of which a policy granting
+  // the read to nobody satisfies perfectly. This is an admin, authenticated, going through the
+  // policy, which is the only way anybody actually looks at this table.
+  const asAdmin = await signIn(EMAIL_ADMIN);
+  sees('admin_action: an admin reading the audit log', await asAdmin.from('admin_action').select('id'));
+  // Readable, still not writable by hand. The rows are written by `admin_set_project_cap` and
+  // its siblings, which are `SECURITY DEFINER`; an admin who could insert here could write a
+  // history of changes that never happened, which is the one thing an audit log must not allow.
+  refused(
+    'admin_action: an admin writing an entry by hand',
+    await asAdmin.from('admin_action').insert({ action: 'set_project_cap', subject_project_id: PROJECT_A, new_value: 998 }).select(),
+  );
+  is('and no entry was written', (await admin.from('admin_action').select('id').eq('new_value', 998)).data?.length, 0);
+
+  // A cap named on a project that does not exist used to report success and change nothing, which
+  // an audit row would then have recorded as a change that happened.
+  denied('admin_set_project_cap: a project that is not there', await rpc(admin, 'admin_set_project_cap', { p_project_id: '00000000-0000-4000-b000-0000000000ff', p_cap: 12 }));
+  await admin.rpc('admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: capBefore });
+
   // ----------------------------------------------------------------------------------------- //
+  // This section is what makes the publishable key safe to ship, and the reasoning is written here
+  // because this is where somebody will be standing when they wonder about it.
+  //
+  // That key is inside `apps/web/public/rightmove-house-hunt.zip`, which anybody may download, so
+  // anybody may read it out of the bundle. It is *publishable* — that is what the name means — and
+  // today it authorises nothing: every policy is `to authenticated` and `anon` holds no grant, so
+  // the key opens a door into an empty room. It is not a secret that has leaked and it is not worth
+  // rotating, and nothing here should be redesigned to hide it.
+  //
+  // What it does do is set up a failure. One policy written `to public` instead of `to authenticated`
+  // — a single word, in a migration that reads perfectly and denies nothing visible — would hand the
+  // database to everyone holding the zip, and there is no other symptom: the app works, the tests
+  // pass, and the only sign is a policy line nobody re-reads. That is the whole reason the block
+  // below exists rather than being taken as read. It is not belt-and-braces on a boundary already
+  // proved elsewhere; for the anon role it *is* the boundary. So it must keep running in CI
+  // (`.github/workflows/check.yml`), and a new table or RPC belongs in the lists below on the day
+  // it is added.
+  //
+  // Recorded against issue #70, which the owner settled as needing no code change — only that the
+  // argument stop living in a backlog entry and start living beside the check it is about.
   console.log('\nthe anon role — the key that ships in the bundle — holds nothing');
 
-  for (const table of [...PROJECT_SCOPED, ...GLOBAL, 'profile', 'project', 'project_member', 'model_price', 'admin_email'] as const) {
+  for (const table of [...PROJECT_SCOPED, ...GLOBAL, 'profile', 'project', 'project_member', 'model_price', 'admin_email', 'admin_action', 'travel_claim'] as const) {
     nothing(`anon: read ${table}`, await anon.from(table).select('*'));
   }
   refused('anon: insert a place', await anon.from('place').insert({ project_id: PROJECT_A, label: 'x', postcode: 'x' }).select());
@@ -715,6 +811,8 @@ async function main() {
   refused('anon: call record_property', await rpc(anon, 'record_property', { p_project_id: PROJECT_A, p_property: { rightmove_id: LISTING_A, url: 'u', display_address: 'd' } }));
   refused('anon: call cache_travel', await rpc(anon, 'cache_travel', { p_origin_postcode: 'X', p_dest_postcode: 'Y', p_mode: 'walking', p_seconds: 60 }));
   refused('anon: call claim_analysis', await rpc(anon, 'claim_analysis', { p_rightmove_id: LISTING_A, p_project_id: PROJECT_A, p_user_id: userA }));
+  denied('anon: call claim_travel_calls', await rpc(anon, 'claim_travel_calls', { p_user_id: userA, p_project_id: PROJECT_A, p_calls: 1, p_limit: 300, p_window: '60 seconds' }));
+  denied('anon: call admin_set_project_cap', await rpc(anon, 'admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: 999 }));
   is('the travel cache is intact after anon', await count('travel_time', 'origin_postcode', 'RLS 1AA'), 2);
 
   // ----------------------------------------------------------------------------------------- //

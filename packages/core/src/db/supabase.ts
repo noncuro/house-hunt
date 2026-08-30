@@ -28,6 +28,7 @@ import { rightmoveListingId } from '../listing';
 import { logWarn } from '../log';
 import type {
   AddListingResult,
+  AdminAction,
   AdminProject,
   AdminUser,
   AuthState,
@@ -2111,6 +2112,48 @@ export async function adminProjects(): Promise<AdminProject[]> {
     createdAt: r.created_at,
     spentThisMonthUsd: spentByProject.get(r.id) ?? 0,
   }));
+}
+
+/** What admins have changed, newest first.
+ *
+ *  RLS returns nothing at all to a non-admin — unlike every other read here, where a member sees
+ *  their own rows — because the answer is which admin did it, and that is not the subject's to read.
+ *  `LIMIT` rather than the keyset walk `usageSince` does: nothing is summed from these rows, so a
+ *  page of the most recent is the whole question.
+ *
+ *  The total comes back with the page, and that is not a nicety. Without it the only number the
+ *  screen had was the page length, so a deployment with five hundred changes said "200" — a cap
+ *  presented as a count, on the one screen whose job is to say what has actually happened.
+ *  `count: 'exact'` is answered by the same request the rows come from, so it costs no round
+ *  trip. */
+export const ADMIN_ACTION_PAGE = 200;
+
+export async function adminActions(): Promise<{ actions: AdminAction[]; total: number }> {
+  const { data, error, count } = await db()
+    .from('admin_action')
+    .select(
+      'id, occurred_at, actor_id, action, subject_user_id, subject_project_id, previous_value, new_value',
+      { count: 'exact' },
+    )
+    .order('id', { ascending: false })
+    .limit(ADMIN_ACTION_PAGE);
+  fail('reading what admins have changed', error);
+
+  const actions = ((data ?? []) as any[]).map((r) => ({
+    id: String(r.id),
+    occurredAt: r.occurred_at,
+    actorId: r.actor_id ?? null,
+    action: r.action,
+    subjectUserId: r.subject_user_id ?? null,
+    subjectProjectId: r.subject_project_id ?? null,
+    previousValue: r.previous_value === null ? null : Number(r.previous_value),
+    newValue: Number(r.new_value),
+  }));
+
+  // A null count means PostgREST did not answer with one. Falling back to the page length is the
+  // old wrong answer, so it falls back to the only other thing that is certainly true: what we
+  // are holding.
+  return { actions, total: count ?? actions.length };
 }
 
 export async function adminSetUserCap(userId: string, capUsd: number): Promise<void> {
