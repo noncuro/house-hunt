@@ -16,9 +16,12 @@ import { send } from './messages';
 export const extensionHost: UiHost = {
   async stationWalks(postcode, stations) {
     const reply = await send({ type: 'stations:walk', postcode, stations });
-    // A failure here is not worth surfacing: the component renders the distance it already has and
-    // simply lacks the walk. Throwing would take down a panel over a missing number.
-    return reply.ok ? reply.data : {};
+    // Answering `{}` here said "no walk is known for any of these", which is a state the panel draws
+    // every day and cannot be told apart from a lookup that fell over. Throwing does not take the
+    // panel down — `Stations` keeps the distances and adds a line saying the times are missing —
+    // so the failure is passed on rather than dressed as an empty answer.
+    if (!reply.ok) throw new Error(reply.error);
+    return reply.data;
   },
 
   async openListing(rightmoveId) {

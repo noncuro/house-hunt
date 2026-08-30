@@ -319,6 +319,11 @@ export function useTravel(postcode: string | null, placesKey: string) {
     // Resolving costs real calls at the far end, so do not re-ask because a window regained focus.
     refetchOnWindowFocus: false,
     staleTime: 5 * 60_000,
+    // The default gcTime is also five minutes, and a query nothing observes is dropped when it
+    // elapses — so stepping through forty flats and back re-resolved the first one from scratch.
+    // A resolved journey is not perishable the way a verdict is: it is a walk between two fixed
+    // points, and the server caches it in `travel_time` anyway.
+    gcTime: 6 * 60 * 60_000,
   });
 }
 

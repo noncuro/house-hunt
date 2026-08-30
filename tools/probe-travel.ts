@@ -15,14 +15,17 @@ if (existsSync(ENV_FILE)) {
 }
 Object.assign(env, process.env as Record<string, string>);
 const head = { apikey: env.WXT_SUPABASE_PUBLISHABLE_KEY!, Authorization: `Bearer ${env.WXT_SUPABASE_PUBLISHABLE_KEY!}` };
-const saved = (await (await fetch(`${env.WXT_SUPABASE_URL}/rest/v1/place?select=id,label,postcode,lat,lon`, { headers: head })).json()) as any[];
-// Same rule as the background: no postcode, no journey. A place folded in from the old
+const saved = (await (await fetch(`${env.WXT_SUPABASE_URL}/rest/v1/place?select=id,label,postcode,lat,lon,travel_timed`, { headers: head })).json()) as any[];
+// Same rule as the background, asked through the same function: no postcode and no journey, and
+// no journey either to a place somebody has switched off. A place folded in from the old
 // neighbourhood list has neither postcode nor — sometimes — coordinates, and probing for a
 // destination spelled `null` returns a TfL error that reads like the API being down.
-const places = travelDestinations(saved);
+const places = travelDestinations(saved.map((p) => ({ ...p, travelTimed: p.travel_timed as boolean })));
 console.log('places:', places.map((p) => `${p.label} pc=${p.postcode} lat=${p.lat} lon=${p.lon}`));
 const skipped = saved.filter((p) => p.postcode === null).map((p) => p.label);
 if (skipped.length > 0) console.log('no postcode, not probed:', skipped.join(', '));
+const untimed = saved.filter((p) => p.postcode !== null && !p.travel_timed).map((p) => p.label);
+if (untimed.length > 0) console.log('not timed, not probed:', untimed.join(', '));
 
 const FROM = process.argv[2] ?? 'N1 8DW';
 const MODES: Record<string, string | null> = { transit: null, walking: 'walking', cycling: 'cycle' };

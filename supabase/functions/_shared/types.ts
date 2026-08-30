@@ -188,6 +188,14 @@ export interface Place {
   /** A per-place override of the sweep window. Null leaves it to `sweepWindow`, which decides from
    *  when this place was last swept completely. */
   maxDaysSinceAdded: number | null;
+  /** Whether journeys are timed to this place, or it is only somewhere to search around and fix a
+   *  flat against. True for everything that existed before the switch did.
+   *
+   *  Read alongside the postcode and never instead of it: no postcode means a place *cannot* be
+   *  routed to, this means it is not *worth* routing to, and the screen says different things about
+   *  the two. `travelDestinations` is where the pair is asked as one question, and `travel_gaps` is
+   *  where the same question is asked again in SQL. */
+  travelTimed: boolean;
 }
 
 /** The steps Rightmove's own radius control offers. Stored as the number that goes into the URL,
