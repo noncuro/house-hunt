@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import './hint.css';
 
@@ -9,7 +9,13 @@ import './hint.css';
  *  and appears on the browser's own schedule.
  *
  *  Positioned `fixed` against the viewport rather than nested in the panel, because the panel
- *  scrolls and clips, and a tooltip that gets cut off is worse than none. */
+ *  scrolls and clips, and a tooltip that gets cut off is worse than none.
+ *
+ *  Two ways in, because there are two kinds of device. A mouse hovers, after a delay, and leaves.
+ *  A finger taps to open and taps somewhere else to close — there is no hover on a touchscreen, and
+ *  this app is installed to phone home screens, so hover-only meant every explanation in the main
+ *  loop was unreachable on the surface it was designed for. The two paths are told apart by
+ *  `pointerType` rather than by a media query: one component, and the device says which it is. */
 const SHOW_DELAY_MS = 200;
 const GAP = 8;
 const MAX_WIDTH = 300;
@@ -38,26 +44,56 @@ export function Hint({
 
   useLayoutEffect(() => () => clearTimeout(timer.current), []);
 
-  if (!text) return <>{children}</>;
+  const place = () => {
+    clearTimeout(timer.current);
+    const box = anchor.current?.getBoundingClientRect();
+    if (!box) return;
+    // Clamp into the viewport: the panel sits at the right edge, so an unclamped tooltip
+    // would hang off-screen almost every time.
+    const left = Math.max(GAP, Math.min(box.left, window.innerWidth - MAX_WIDTH - GAP));
+    const above = box.top > window.innerHeight / 2;
+    setAt({ left, top: above ? box.top - GAP : box.bottom + GAP, above });
+    setOpen(true);
+  };
 
+  /** The delay is a hover's own: it stops a bubble appearing under every word a mouse crosses on
+   *  its way somewhere else. A tap has already said which word it means, so a tap calls `place`. */
   const show = () => {
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      const box = anchor.current?.getBoundingClientRect();
-      if (!box) return;
-      // Clamp into the viewport: the panel sits at the right edge, so an unclamped tooltip
-      // would hang off-screen almost every time.
-      const left = Math.max(GAP, Math.min(box.left, window.innerWidth - MAX_WIDTH - GAP));
-      const above = box.top > window.innerHeight / 2;
-      setAt({ left, top: above ? box.top - GAP : box.bottom + GAP, above });
-      setOpen(true);
-    }, SHOW_DELAY_MS);
+    timer.current = setTimeout(place, SHOW_DELAY_MS);
   };
 
   const hide = () => {
     clearTimeout(timer.current);
     setOpen(false);
   };
+
+  /** Tap somewhere else and it goes away — the other half of tap-to-open, and the only close
+   *  gesture a finger has.
+   *
+   *  On the anchor's `ownerDocument`, not its root node. In the panel the anchor is inside a shadow
+   *  root, and a listener on that root only ever sees events whose path runs through it — which is
+   *  every tap inside the panel and no tap outside it. So the one gesture this exists for, tapping
+   *  away onto the Rightmove page, never reached it and the bubble stayed open. The document sees
+   *  all of them, and `composedPath` is what still identifies a tap on the hint itself: a composed
+   *  event carries its shadow-DOM path even after retargeting, so the anchor is in that list when
+   *  the tap was on it and absent when it was not. `pointerdown` rather than `click` so the
+   *  explanation is gone before whatever was tapped next gets on with its own job. */
+  useEffect(() => {
+    if (!open) return;
+    const ownerDocument = anchor.current?.ownerDocument;
+    if (!ownerDocument) return;
+    const away = (event: Event) => {
+      const here = anchor.current;
+      if (here && event.composedPath().includes(here)) return;
+      clearTimeout(timer.current);
+      setOpen(false);
+    };
+    ownerDocument.addEventListener('pointerdown', away);
+    return () => ownerDocument.removeEventListener('pointerdown', away);
+  }, [open]);
+
+  if (!text) return <>{children}</>;
 
   const Tag = as;
   const classes = ['rm-hint', underline ? 'rm-hint-mark' : '', className].filter(Boolean).join(' ');
@@ -68,8 +104,24 @@ export function Hint({
       className={classes}
       tabIndex={0}
       aria-describedby={id}
-      onMouseEnter={show}
-      onMouseLeave={hide}
+      onPointerEnter={(event) => {
+        if (event.pointerType === 'mouse') show();
+      }}
+      onPointerLeave={(event) => {
+        if (event.pointerType === 'mouse') hide();
+      }}
+      // A tap opens it, and a second tap on the same mark puts it away. Not for a mouse: a mouse has
+      // hover, and toggling on click would take the bubble away from somebody who clicked the word
+      // they were already reading about, with no way back until they moved the pointer off and on.
+      onPointerUp={(event) => {
+        if (event.pointerType === 'mouse') return;
+        // A tap that lands on a control inside the hint is a tap on the control. Several hints wrap
+        // a button so the button's label can explain it — the stage steps, the verdict, the
+        // copy-coordinates one — and there a tap means "do the thing", not "tell me about it".
+        if (onControl(event.target, event.currentTarget)) return;
+        if (open) hide();
+        else place();
+      }}
       onFocus={show}
       onBlur={hide}
     >
@@ -98,6 +150,16 @@ export function Hint({
         )}
     </Tag>
   );
+}
+
+/** Whether the tap landed on something inside the hint that does its own job when tapped.
+ *
+ *  `[tabindex]` catches the ones that are interactive without being a `<button>`; the hint itself
+ *  carries one, so it is excluded by name rather than by the selector. */
+function onControl(target: EventTarget | null, hint: Element): boolean {
+  if (!(target instanceof Element)) return false;
+  const control = target.closest('button, a, input, select, textarea, [role="button"], [tabindex]');
+  return control !== null && control !== hint && hint.contains(control);
 }
 
 /** Where the bubble is actually rendered. `position: fixed` is measured against the viewport,

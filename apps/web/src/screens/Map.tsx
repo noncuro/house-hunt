@@ -136,7 +136,6 @@ export function ShortlistMap({
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const markers = useRef(new Map<string, L.CircleMarker>());
-  const firstRun = useRef(true);
   /** Whether the view on screen is one the reader chose — by panning, by zooming, or by having
    *  left the map here last time. Nothing may re-frame over it.
    *
@@ -269,6 +268,13 @@ export function ShortlistMap({
       saved ? saved.zoom : 12,
     );
     map.current = instance;
+    // A view you left is a view you chose, so arriving on one counts the same as a pan — and it is
+    // settled here, at the moment the map is built, rather than by the run of the marker effect
+    // that happens to be first. That distinction is the whole of #55: the old test was "the first
+    // marker run of a mount that had a saved view", which a mount whose query was still in flight
+    // spent on a run with no coordinates in it. The run that finally had the pins was then an
+    // ordinary one, and it fitted straight over the view that had just been restored.
+    if (saved) chosen.current = true;
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© OpenStreetMap contributors',
@@ -326,22 +332,15 @@ export function ShortlistMap({
 
     // Frame everything rather than leaving the reader to find the pins. Only on a change of
     // contents — refitting on every selection would fight the person panning around — and never
-    // on the first run of a mount that restored where you were, which is the same fight one step
-    // removed.
-    const restored = firstRun.current && lastView.has(projectId);
-    firstRun.current = false;
-    if (restored) {
-      // Where you left it, deliberately unfitted — and nothing below should undo that. A view you
-      // left is a view you chose, so it counts the same as a pan.
-      //
-      // `firstRun` is cleared above rather than held back until a run has pins. Holding it back
-      // reads better — it would keep a restored view when the flats arrive a frame late — and it
-      // makes `restored` a condition that never becomes false, so with an empty first run the pins
-      // are never framed at all. That is #55; it is not fixable here without the harness.
-      chosen.current = true;
-      return;
-    }
-    fit(instance, located);
+    // over a view the reader has taken, which is the same fight one step removed.
+    //
+    // Nothing here counts runs. A run with no coordinates asks `fit` for nothing and gets nothing,
+    // and the next run with pins is free to frame them; a mount that restored a view said so when
+    // the map was built. Neither question is answered by "is this the first time round", which is
+    // what conflated the two and made #55.
+    if (!chosen.current) fit(instance, located);
+  // `projectId` is here although nothing above reads it: a change of hunt rebuilds the map in the
+  // effect that owns it, and these markers belong to the instance that has just been thrown away.
   }, [located, projectId]);
 
   /** Re-measure when the container's size changes, and re-frame until the reader takes over.
