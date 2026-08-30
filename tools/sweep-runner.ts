@@ -310,7 +310,22 @@ function installedExtensionDir(): string {
   if (!existsSync(INSTALL_CONF)) return DEFAULT_EXTENSION;
   const lines = readFileSync(INSTALL_CONF, 'utf8').split('\n');
   const dirs = lines.flatMap((l) => (l.startsWith('dir=') ? [l.slice('dir='.length).trim()] : []));
-  return dirs.length > 0 ? resolve(dirs[dirs.length - 1]!) : DEFAULT_EXTENSION;
+  const dir = dirs.at(-1);
+  // A conf file that exists but names nothing is not the same as no conf file, and must not be
+  // treated as one. Falling back would load a different copy of the extension than the installer
+  // last put down — and in the `dir=` with nothing after it case, `resolve('')` is the working
+  // directory, which is not an extension at all. Either way the sweep goes on to print a version
+  // and run, so the wrong build looks exactly like the right one. A stale unpacked copy is the
+  // most common bug in this project and it never looks like one; this is the one place that can
+  // still say so.
+  if (!dir) {
+    die(
+      `${INSTALL_CONF} exists but names no dir=.\n` +
+        'Reinstall so it does, delete the file to fall back to the default, or point this run at a ' +
+        'build with SWEEP_EXTENSION=/path/to/chrome-mv3.',
+    );
+  }
+  return resolve(dir);
 }
 
 /** Printed on every run, because "which build was that" is the first question of any sweep that
