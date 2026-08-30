@@ -1344,8 +1344,10 @@ async function checkJoining({ browser }: Stage): Promise<void> {
       note('adding an existing account still minted an invite code, which nobody can use');
     } else {
       // The same signed-in page, reloaded — the arrival the bug report describes. Nothing here
-      // signs in again, so what this asserts is that a plain load consumes nothing and still
-      // finds the membership the invite already wrote.
+      // signs in again. `authState` does call `consume_invites` on every read, so the load is not
+      // inert; what makes this an assertion about arriving rather than about redeeming is that
+      // `create_invite` already accepted this invite, leaving nothing for it to consume. So what
+      // is asserted is that a plain load finds the membership the invite itself wrote.
       await page.reload({ waitUntil: 'domcontentloaded' });
       await waitForApp(page);
       await settle(page);
