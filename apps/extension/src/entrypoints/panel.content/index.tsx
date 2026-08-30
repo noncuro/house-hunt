@@ -6,6 +6,7 @@ import { webAppUrl } from '@/lib/web-app';
 import { listingIdFromUrl } from '@/lib/cards';
 import { Panel } from '@/components/Panel';
 import {
+  onSessionChange,
   PAGE_MESSAGE,
   PAGE_REQUEST,
   send,
@@ -38,6 +39,7 @@ export default defineContentScript({
         const root = withHost(createRoot(container));
         root.render(<Loading />);
         void start(root);
+        onSessionChange(() => void start(root));
         return root;
       },
       onRemove(root) {
@@ -52,7 +54,12 @@ const ASK_EVERY_MS = 200;
 const GIVE_UP_AFTER_MS = 8000;
 
 /** Resolve the session, then decide what this page gets. `auth:state` is the one message the
- *  worker answers rather than refusing when nobody is signed in, so this is safe to ask first. */
+ *  worker answers rather than refusing when nobody is signed in, so this is safe to ask first.
+ *
+ *  Asked again whenever the session changes, so the tab somebody was looking at when they signed in
+ *  stops being the one page that does not notice (#86). Signing out re-runs it too and the panel
+ *  goes back to its one honest line, rather than leaving a working overlay on a machine somebody has
+ *  just left. */
 async function start(root: Root): Promise<void> {
   const auth = await send({ type: 'auth:state' });
   if (!auth.ok) {

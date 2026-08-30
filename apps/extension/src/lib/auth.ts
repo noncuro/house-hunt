@@ -32,6 +32,7 @@
  *  `signIn`, because the bridge hands credentials over and the worker signs *itself* in with them:
  *  two independent sessions rather than two holders of one rotated refresh token (design D3).
  */
+import { SESSION_STORAGE_KEY } from '@house-hunt/core';
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { configure } from '@house-hunt/core/db';
 import { setLogSink } from '@house-hunt/core';
@@ -46,10 +47,6 @@ if (!url || !key) {
     'WXT_SUPABASE_URL / WXT_SUPABASE_PUBLISHABLE_KEY missing — set them in the repo root .env and rebuild',
   );
 }
-
-/** Where the session lives. Named rather than defaulted so it is greppable in
- *  `chrome://extensions` → Storage, which is the only debugger the other laptop has. */
-export const SESSION_STORAGE_KEY = 'rm-supabase-session';
 
 /** supabase-js writes JSON strings; chrome.storage.local stores them verbatim. A missing key must
  *  come back `null` rather than `undefined` — supabase-js treats `undefined` as a storage failure

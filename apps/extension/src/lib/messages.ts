@@ -62,6 +62,7 @@ export type {
   UsageRow,
 } from '@house-hunt/core';
 export { MIN_PASSWORD_LENGTH } from '@house-hunt/core';
+import { SESSION_STORAGE_KEY } from '@house-hunt/core';
 
 // The messages themselves.
 // ------------------------------------------------------------------------------------------------
@@ -316,3 +317,30 @@ export type PageMessage =
   | { source: typeof PAGE_MESSAGE; ok: false; error: string; withdrawn?: true };
 
 export type PageRequest = { source: typeof PAGE_REQUEST };
+
+/** Run `whenChanged` when somebody signs in or out, in any tab or on the website.
+ *
+ *  A content script reads the auth state once, when it loads (`auth:state`), which leaves exactly
+ *  one page wrong: the tab you were looking at when you signed in. It is also the tab most likely to
+ *  be open, because the website's sign-in is reached from it — so the first thing a new person does
+ *  produces a panel that says they are signed out while they are signed in, with copy telling them
+ *  to reload (#86).
+ *
+ *  Reading storage is not holding a client, so this stays outside `auth.ts` and the worker keeps
+ *  being the only thing that constructs one — the key itself comes from `contracts.ts`, which has no
+ *  dependencies. `chrome.storage.onChanged` fires in every context of the extension, including this
+ *  one, whenever the worker's storage adapter writes the session.
+ *
+ *  Returns nothing to unsubscribe with: a content script lives as long as its page, and the listener
+ *  is torn down with it. */
+export function onSessionChange(whenChanged: () => void): void {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !(SESSION_STORAGE_KEY in changes)) return;
+    const { oldValue, newValue } = changes[SESSION_STORAGE_KEY]!;
+    // Supabase rewrites this key on every token refresh, which is hourly and changes nothing a
+    // reader can see. Re-rendering the panel then would throw away a listing somebody is reading for
+    // no reason at all, so only the transitions between having a session and not having one count.
+    if ((oldValue === undefined || oldValue === null) === (newValue === undefined || newValue === null)) return;
+    whenChanged();
+  });
+}

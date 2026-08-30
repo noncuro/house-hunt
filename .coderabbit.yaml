@@ -33,8 +33,12 @@ reviews:
     - path: "**/*.{ts,tsx}"
       instructions: |
         - Lazy non-typing: flag `any` or a blind `as` cast where a real type
-          would do. Untyped JSON from the network or from `__PAGE_MODEL` must
-          be parsed with zod, not asserted.
+          would do. At a network boundary — a request body, a TfL or
+          postcodes.io reply, `__PAGE_MODEL`, `__NEXT_DATA__` — the payload
+          must be narrowed field by field and fall to a stated outcome, never
+          `as`-cast into a type and read. Do NOT ask for zod: it is not a
+          dependency of this workspace, and a finding that requires adding one
+          cannot be acted on (#119). Ask for the field checks instead.
         - Swallowed errors and silent defaults: flag empty catches,
           catch-and-log-only, and plausible-looking fallbacks where the code
           should throw. A default must be intentional, not a way to dodge

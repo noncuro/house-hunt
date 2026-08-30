@@ -19,8 +19,16 @@
  *  tidiness one — a version string nobody can parse is a version string nobody can compare, and
  *  it would sail past the collision test by having no prefix to collide with.
  *
+ *  The third thing it checks is *order*, which is a different failure with the same cause (#115).
+ *  `supabase db push` refuses a file that sorts before the newest version already recorded in
+ *  `schema_migrations`, so a migration stamped behind one that has already merged is refused at
+ *  deploy time — after the code that needs it is on main. `migrate.yml` failed exactly that way at
+ *  the #104 merge, and the window it opens is the website live and calling a function the database
+ *  has not got.
+ *
  *  Run: `pnpm check:migrations`
  */
+import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 
@@ -93,6 +101,69 @@ for (const [version, names] of byVersion) {
   );
 }
 if (collisions === 0 && named > 0) ok('each version string belongs to one file');
+
+// --------------------------------------------------------------------------------------------- //
+console.log('\nand none is stamped behind one that has already merged');
+
+/** Run git, or say nothing convincingly enough that the caller can tell. */
+function git(...args: string[]): string | null {
+  const run = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8' });
+  return run.status === 0 ? run.stdout : null;
+}
+
+/** The migration versions on `origin/main`.
+ *
+ *  Only the tree is wanted, not the history, so a shallow fetch of that one ref is enough — which
+ *  matters because CI checks out at `fetch-depth: 1` and has no `origin/main` to read. Fetching is
+ *  what makes this run in the place it has to run: a check that quietly skips itself in CI is a
+ *  check that is present and absent at the same time.
+ *
+ *  Null means git could not answer — no remote, or no network on a machine that has never fetched.
+ *  That is reported as a note rather than a pass or a failure, because it is this check being unable
+ *  to look, and both of the other answers would be a claim it has not earned. */
+function versionsOnMain(): Set<string> | null {
+  if (git('rev-parse', '--verify', '--quiet', 'origin/main') === null) {
+    if (git('fetch', '--depth=1', '--quiet', 'origin', 'main') === null) return null;
+    if (git('rev-parse', '--verify', '--quiet', 'FETCH_HEAD') === null) return null;
+  }
+  const ref = git('rev-parse', '--verify', '--quiet', 'origin/main') === null ? 'FETCH_HEAD' : 'origin/main';
+  const listed = git('ls-tree', '--name-only', ref, `${DIR}/`);
+  if (listed === null) return null;
+  const versions = new Set<string>();
+  for (const line of listed.split('\n')) {
+    const version = NAME.exec(line.slice(`${DIR}/`.length))?.[1];
+    if (version) versions.add(version);
+  }
+  return versions;
+}
+
+const onMain = versionsOnMain();
+if (onMain === null) {
+  console.log('  note  could not read origin/main, so nothing here is claimed about ordering');
+} else if (onMain.size === 0) {
+  console.log('  note  origin/main carries no migrations yet, so there is nothing to sort behind');
+} else {
+  const newest = [...onMain].sort().at(-1)!;
+  // Only what this branch adds. A migration already on main that sorts behind another already on
+  // main is history — it applied in whatever order it applied in, and saying so now would be a
+  // failure nobody can act on, on every branch, for ever.
+  const added = [...byVersion.keys()].filter((version) => !onMain.has(version)).sort();
+  const behind = added.filter((version) => version < newest);
+  if (behind.length > 0) {
+    for (const version of behind) {
+      fail(
+        `${byVersion.get(version)!.join(', ')} is stamped ${version}, behind ${newest} which is already on main — ` +
+          '`supabase db push` refuses a file that sorts before the newest version it has recorded, so this ' +
+          'would be skipped at deploy time with the code that needs it already merged. Renumber it to a ' +
+          'minute after ' + newest + ' that no other migration uses, on main or on a branch in flight.',
+      );
+    }
+  } else if (added.length > 0) {
+    ok(`${added.length} new migration(s), all stamped after ${newest}`);
+  } else {
+    ok('this branch adds no migrations');
+  }
+}
 
 // --------------------------------------------------------------------------------------------- //
 console.log(failures === 0 ? '\nall good' : `\n${failures} failed`);
