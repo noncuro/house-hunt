@@ -525,11 +525,16 @@ async function main() {
     }),
   );
 
+  // The postcode is on every payload from here down, because the upsert writes what it is given:
+  // omit it and the row's postcode goes null, which is right for a page that has none and is not
+  // what any client sends. It matters more than it looks — `travel_time` and `station_walk` are
+  // keyed on the postcode, so a fixture that drops it detaches the flat from its own caches and the
+  // three reads at the end of this section come back empty.
   allowed(
     'record_property: a listing my project has opened',
     await rpc(a, 'record_property', {
       p_project_id: PROJECT_A,
-      p_property: { rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street', price: '£2,000 pcm' },
+      p_property: { rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street', postcode: 'RLS 1AA', price: '£2,000 pcm' },
     }),
   );
   is('...and it actually wrote', (await admin.from('property').select('price').eq('rightmove_id', LISTING_A).single()).data?.price, '£2,000 pcm');
@@ -540,7 +545,7 @@ async function main() {
     "record_property: a listing another project found (accepted by D4, and attributed)",
     await rpc(a, 'record_property', {
       p_project_id: PROJECT_A,
-      p_property: { rightmove_id: LISTING_B, url: 'https://example.test/b', display_address: 'B Street', price: '£9 pcm' },
+      p_property: { rightmove_id: LISTING_B, url: 'https://example.test/b', display_address: 'B Street', postcode: 'RLS 1BB', price: '£9 pcm' },
     }),
   );
   is('...and the row names who wrote it', (await admin.from('property').select('written_by_project').eq('rightmove_id', LISTING_B).single()).data?.written_by_project, PROJECT_A);
@@ -560,7 +565,7 @@ async function main() {
     p_project_id: PROJECT_A,
     p_property: {
       rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street',
-      price: '£1 pcm', observed_at: yesterday,
+      postcode: 'RLS 1AA', price: '£1 pcm', observed_at: yesterday,
     },
   });
   if (stale.error) fail('record_property: a page read yesterday', `refused outright: ${stale.error.message}`);
@@ -573,7 +578,7 @@ async function main() {
     p_project_id: PROJECT_A,
     p_property: {
       rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street',
-      price: '£2,100 pcm', observed_at: new Date().toISOString(),
+      postcode: 'RLS 1AA', price: '£2,100 pcm', observed_at: new Date().toISOString(),
     },
   });
   if (fresh.error) fail('record_property: a page read just now', `refused: ${fresh.error.message}`);
@@ -586,7 +591,7 @@ async function main() {
     p_project_id: PROJECT_A,
     p_property: {
       rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street',
-      price: '£2,200 pcm', observed_at: future,
+      postcode: 'RLS 1AA', price: '£2,200 pcm', observed_at: future,
     },
   }));
   const stampedAt = (await admin.from('property').select('observed_at').eq('rightmove_id', LISTING_A).single()).data?.observed_at;
