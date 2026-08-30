@@ -172,14 +172,19 @@ reviews:
         - Images are answered from memory, never written to disk.
 
     # ---- Docs -------------------------------------------------------------
-    - path: "{AGENTS,CLAUDE,README,RESEARCH,SETUP,TODO}.md"
+    - path: "{AGENTS,CLAUDE,README,SETUP,design,product}.md"
       instructions: |
-        RESEARCH.md is why, AGENTS.md is how it is built and how to check you
-        have not broken it. Flag a documented rule that the diff's code no
-        longer follows, and a new decision added to AGENTS.md that belongs as
-        a comment on the code that owns it — AGENTS.md holds only
-        cross-cutting rules and decisions an agent working elsewhere could
-        silently violate.
+        AGENTS.md is how it is built and how to check you have not broken it,
+        product.md is how we decide what to build, design.md is the numbered
+        technical decisions the code cites as "(design D<n>)". Flag a
+        documented rule that the diff's code no longer follows, and a new
+        decision added to AGENTS.md that belongs as a comment on the code that
+        owns it — AGENTS.md holds only cross-cutting rules and decisions an
+        agent working elsewhere could silently violate, and is read at the
+        start of every agent run, so length there is paid on every invocation.
+        Flag prose that reaches for `simply`, `genuinely`, `honestly`,
+        `obviously` or `of course`, and an adjective where a number was
+        available.
 
   # The extension zip and its source hashes are rebuilt and committed by CI;
   # reviewing them as source produces noise on every packaging commit.
@@ -199,6 +204,8 @@ knowledge_base:
     filePatterns:
       - "AGENTS.md"
       - "CLAUDE.md"
+      - "product.md"
+      - "design.md"
       - "docs/coverage.md"
 
 chat:

@@ -216,7 +216,7 @@ begin
   -- one order down. As one statement it is as tight as read committed goes, and not tighter: the
   -- `not exists` cannot see a `cache_travel` insert that has not committed yet, so a loser whose
   -- statement snapshot predates the winner's commit still records a backoff the winner's `clear`
-  -- has already been and gone for. Accepted, not overlooked (TODO.md). Shutting it would mean a
+  -- has already been and gone for. Accepted, not overlooked (issue #76). Shutting it would mean a
   -- transaction-scoped advisory lock on the journey key in *both* functions, which puts a lock on
   -- every cached journey — including the interactive path, which is most of them — to save an
   -- `attempts` counter one higher than earned on a row that suppresses nothing while the answer it
