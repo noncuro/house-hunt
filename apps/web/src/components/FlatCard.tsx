@@ -5,6 +5,7 @@ import {
   flagsFor,
   galleryFor,
   groupOf,
+  readPlaceTravel,
   resolveSize,
   sizeOf,
   stageSentence,
@@ -24,7 +25,6 @@ import {
   ScoreGauge,
   VerdictStamp,
   formatDuration,
-  readTravel,
 } from '@house-hunt/ui';
 import { isSurprise } from '@/lib/score';
 
@@ -189,8 +189,7 @@ function summarise(
   if (size) bits.push(`${size.value.toLocaleString()} sq ft${size.approximate ? '*' : ''}`);
 
   const first = travelDestinations(places)[0];
-  const rows = first && entry.postcode ? (travel?.[entry.postcode] ?? []) : [];
-  const best = readTravel(rows.filter((t) => t.placeId === first?.id)).best;
+  const best = first ? readPlaceTravel(entry.postcode, first.id, travel).best : null;
   if (best && first) bits.push(`${formatDuration(best.seconds)} ${verbFor(best.mode)} to ${first.label}`);
 
   return bits.join(' · ');

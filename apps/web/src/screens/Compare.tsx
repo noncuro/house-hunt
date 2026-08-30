@@ -10,13 +10,13 @@ import {
   SizeValue,
   StageSelect,
   formatDuration,
-  readTravel,
 } from '@house-hunt/ui';
 import {
   dedupeStations,
   flagsFor,
   nearestStationMiles,
   problemsOnly,
+  readPlaceTravel,
   relativeUpdate,
   resolveSize,
   stationDistance,
@@ -887,14 +887,9 @@ function pick(
   mode: TravelMode | null,
   travel: Record<string, TravelTime[]> | undefined,
 ) {
-  const verdict = forPlace(entry, placeId, travel);
+  const verdict = readPlaceTravel(entry.postcode, placeId, travel);
   const winner = mode ? (verdict.usable.find((t) => t.mode === mode) ?? null) : verdict.best;
   return { verdict, winner };
-}
-
-function forPlace(entry: ShortlistEntry, placeId: string, travel: Record<string, TravelTime[]> | undefined) {
-  const rows = (entry.postcode && travel?.[entry.postcode]) || [];
-  return readTravel(rows.filter((t) => t.placeId === placeId));
 }
 
 /* The price column reads a listing through the model's own parser (`parseMonthlyPrice`): weekly
