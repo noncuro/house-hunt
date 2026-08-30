@@ -25,65 +25,99 @@
 -- come to disagree about what it means to take a place: `consume_invites()` loops over it now.
 
 -- ------------------------------------------------------------------------------------------------
--- accept_invite — one live invite becomes one membership, or does not because the hunt is full.
+-- accept_invite — one live invite becomes one membership, or does not, and says which.
 --
--- Returns the project joined, or null when there was no room. Not callable by clients: it takes the
--- user as an argument, which is exactly the back door `consume_invites()` refuses to have, and it is
--- safe here only because both callers are `security definer` functions that have already decided
--- whose invite this is.
+-- Three outcomes, named rather than folded into a null: `joined` with the project, `no-room` when
+-- the hunt filled up while the invite waited, and `gone` when another caller took the same row up
+-- first. The third is not a hypothetical any more. Invites are consumed on every read of who is
+-- signed in, so two tabs opening together are two calls in flight over the same rows, and an
+-- unconditional `set status = 'accepted'` would let both act: for a platform invite that is two
+-- house hunts created for one person, both of which they are a member of, with nothing on screen to
+-- say which is the real one. So the row is *claimed* — an update matching only while it is still
+-- pending — and everything with a side effect happens after the claim succeeds.
+--
+-- NOT CALLABLE BY CLIENTS, and this is the most dangerous line in the file. It takes the user as an
+-- argument, which is exactly the back door `consume_invites()` refuses to have: a signed-in caller
+-- who could reach this could name any project and their own id and join it. The revoke below names
+-- `authenticated` explicitly rather than trusting `public`, because Supabase grants EXECUTE on new
+-- public functions to `authenticated` and a bare `revoke ... from public` leaves that standing —
+-- which is how `project_training_revision` shipped as a cross-hunt oracle and was caught by one
+-- assertion in `check:rls`. There is an assertion here for the same reason.
 -- ------------------------------------------------------------------------------------------------
-create or replace function public.accept_invite(p_invite invite, p_user uuid, p_email text)
-returns uuid
+drop function if exists public.accept_invite(invite, uuid, text);
+
+create or replace function public.accept_invite(
+  p_invite invite,
+  p_user   uuid,
+  p_email  text,
+  out o_project uuid,
+  out o_outcome text
+)
 language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_project uuid;
   v_members int;
   v_max     int;
 begin
   if p_invite.project_id is null then
-    -- A platform invite promises a house hunt of their own. Named for them rather than left
-    -- blank: an unnamed project in the switcher is indistinguishable from a broken one.
-    insert into project (name)
-    values (coalesce(nullif(split_part(p_email, '@', 1), ''), 'My') || '''s house hunt')
-    returning id into v_project;
+    -- The key create_invite takes for a platform invite, so the two serialise: this is the path
+    -- that creates a project, and it is the one where acting twice is worst.
+    perform pg_advisory_xact_lock(hashtextextended('rm:invite-email:' || lower(p_email), 0));
   else
-    v_project := p_invite.project_id;
+    o_project := p_invite.project_id;
 
     -- Same lock and same order as create_invite and claim_analysis, so the ceiling cannot be
     -- crossed by an invite being created and another being consumed at the same moment. Re-entrant
     -- within a transaction, which is what lets create_invite hold it and then call this.
-    perform pg_advisory_xact_lock(hashtextextended('rm:project:' || v_project::text, 0));
+    perform pg_advisory_xact_lock(hashtextextended('rm:project:' || o_project::text, 0));
 
-    select count(*)::int into v_members from project_member where project_id = v_project;
-    select max_members into v_max from project where id = v_project;
+    select count(*)::int into v_members from project_member where project_id = o_project;
+    select max_members into v_max from project where id = o_project;
 
     -- Consuming is net zero against the ceiling — this invite was already counted as pending
     -- when it was created — so the honest test is on members alone. It can still fail, because
     -- an invite issued when there was room can be consumed after somebody else took the place.
     -- Leaving it pending is deliberate: revoking a member's place because they were slow is
-    -- worse than telling them the hunt is full and letting somebody make room.
+    -- worse than telling them the hunt is full and letting somebody make room. Checked before the
+    -- claim below, under the lock, so a refusal leaves the row exactly as it found it.
     if v_members >= coalesce(v_max, 6) then
-      return null;
+      o_project := null;
+      o_outcome := 'no-room';
+      return;
     end if;
   end if;
 
-  insert into project_member (project_id, user_id)
-  values (v_project, p_user)
-  on conflict do nothing;
-
   update invite
      set status = 'accepted', accepted_at = now()
-   where id = p_invite.id;
+   where id = p_invite.id and status = 'pending' and expires_at > now();
+
+  if not found then
+    o_project := null;
+    o_outcome := 'gone';
+    return;
+  end if;
+
+  if o_project is null then
+    -- A platform invite promises a house hunt of their own. Named for them rather than left
+    -- blank: an unnamed project in the switcher is indistinguishable from a broken one. After the
+    -- claim, so the project is created once however many callers raced for this row.
+    insert into project (name)
+    values (coalesce(nullif(split_part(p_email, '@', 1), ''), 'My') || '''s house hunt')
+    returning id into o_project;
+  end if;
+
+  insert into project_member (project_id, user_id)
+  values (o_project, p_user)
+  on conflict do nothing;
 
   -- Land them somewhere, but only somebody with nowhere already: a returning member taking up a
   -- second invite must not be yanked out of the hunt they were working in.
-  update profile set active_project_id = v_project
+  update profile set active_project_id = o_project
    where id = p_user and active_project_id is null;
 
-  return v_project;
+  o_outcome := 'joined';
 end;
 $$;
 
@@ -103,6 +137,7 @@ declare
   v_email    text := lower(nullif(trim(coalesce(auth.jwt() ->> 'email', '')), ''));
   v_invite   invite%rowtype;
   v_project  uuid;
+  v_outcome  text;
   v_joined   uuid[] := '{}';
   v_full     uuid[] := '{}';
   v_active   uuid;
@@ -126,12 +161,16 @@ begin
        and expires_at > now()
      order by created_at
   loop
-    v_project := public.accept_invite(v_invite, v_user, v_email);
-    if v_project is null then
-      v_full := v_full || v_invite.project_id;
-    else
+    select o_project, o_outcome into v_project, v_outcome
+      from public.accept_invite(v_invite, v_user, v_email);
+
+    if v_outcome = 'joined' then
       v_joined := v_joined || v_project;
+    elsif v_outcome = 'no-room' then
+      v_full := v_full || v_invite.project_id;
     end if;
+    -- 'gone' is silent on purpose: another call in flight — this function runs on every read of
+    -- who is signed in — took the row up first, so the membership it stands for exists either way.
   end loop;
 
   -- Somebody with memberships and no active project — after leaving the hunt they were in, say —
@@ -194,6 +233,7 @@ declare
   v_existing invite;
   v_invite   invite;
   v_joined   uuid;
+  v_outcome  text;
 begin
   -- Deliberately loose: a sanity check against a blank or a stray name, not an attempt to decide
   -- what an address may look like. An address that does not exist simply never signs in.
@@ -269,11 +309,19 @@ begin
     -- waiting for a sign-in that is never going to happen. Take it up now instead. A place was
     -- reserved for it when it was written, so this cannot cross the ceiling.
     if v_user is not null then
-      v_joined := public.accept_invite(v_existing, v_user, v_email);
-      if v_joined is null then
+      select o_project, o_outcome into v_joined, v_outcome
+        from public.accept_invite(v_existing, v_user, v_email);
+
+      if v_outcome = 'no-room' then
         return jsonb_build_object('status', 'at-capacity', 'members', v_members,
                                   'pending', v_pending, 'max_members', v_max, 'invite', null);
       end if;
+      if v_outcome <> 'joined' then
+        -- Nothing else can have claimed this row: the lock this transaction holds is the one every
+        -- other path to it takes first.
+        raise exception 'create_invite: invite % went away under the project lock', v_existing.id;
+      end if;
+
       select i.* into v_invite from invite i where i.id = v_existing.id;
       -- greatest(): a platform invite's pending count is over `project_id = null`, which counts
       -- nothing, and 0 - 1 would claim negative invites outstanding.
@@ -308,11 +356,14 @@ begin
                               'invite', to_jsonb(v_invite));
   end if;
 
-  v_joined := public.accept_invite(v_invite, v_user, v_email);
-  if v_joined is null then
-    -- The ceiling was checked four statements ago under the lock this still holds.
-    raise exception 'create_invite: project % refused a member it had room for', p_project_id;
+  select o_project, o_outcome into v_joined, v_outcome
+    from public.accept_invite(v_invite, v_user, v_email);
+  if v_outcome <> 'joined' then
+    -- Both refusals are impossible on a row inserted two statements ago under a lock this
+    -- transaction still holds: the ceiling was checked above, and nothing else can see this row.
+    raise exception 'create_invite: project % answered "%" for a place it had', p_project_id, v_outcome;
   end if;
+
   select i.* into v_invite from invite i where i.id = v_invite.id;
   return jsonb_build_object('status', 'added', 'members', v_members + 1,
                             'pending', v_pending, 'max_members', v_max,
