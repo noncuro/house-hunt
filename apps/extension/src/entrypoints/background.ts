@@ -6,7 +6,7 @@ import { accessToken, requireSession, signIn, signOut, Unauthenticated } from '@
 // Journeys, station walks and postcode lookups are resolved by the `travel` Edge Function now, not
 // here. The worker used to call TfL directly through host permissions a browser tab does not have —
 // and, more to the point, that made every client a writer of caches every project reads.
-import { locatePostcode, stationWalks, travelTimes } from '@house-hunt/core/db';
+import { locatePostcode, requestStationWalks, travelTimes } from '@house-hunt/core/db';
 import {
   describe,
   type AnalysisRequest,
@@ -337,7 +337,7 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       return await cachedTravelTimes(request.postcodes);
 
     case 'stations:walk':
-      return await stationWalks(request.postcode, request.stations);
+      return await requestStationWalks(request.postcode, request.stations);
 
     case 'postcode:point':
       return await locatePostcode(request.postcode);

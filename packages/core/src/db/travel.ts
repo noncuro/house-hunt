@@ -178,35 +178,22 @@ async function computeTravelTimes(postcode: string, refresh: boolean): Promise<T
 
 export type StationWalks = Record<string, { seconds?: number; lines: string[] }>;
 
-/** Walking time to each nearby station, and the lines it carries. Throws when the lookup fails —
- *  a caller that caches the answer needs the failure to stay a failure, because an empty record
- *  cached as data is a blank walk column that outlives the blip that caused it. */
+/** Walking time to each nearby station, and the lines it carries. Throws when the lookup fails, and
+ *  the failure travels all the way to the component.
+ *
+ *  It used to be caught here and answered as `{}`, which is a real and ordinary state — "no walk is
+ *  known for any of these" — so a lookup that fell over drew exactly like one that succeeded with
+ *  nothing to report: four stations, their distances, and no times. Degrading is still the right
+ *  behaviour; the mistake was doing it where nothing could see it. `Stations` degrades instead,
+ *  keeping the distances and saying the walks are missing, which is the same graceful row plus the
+ *  one sentence that makes it readable.
+ *
+ *  A caller that caches this needs the rejection for a second reason: `{}` remembered as data turns
+ *  a one-second blip into half an hour of blank walk columns at that postcode. */
 export async function requestStationWalks(postcode: string, stations: string[]): Promise<StationWalks> {
   if (stations.length === 0) return {};
   const { walks } = await ask<{ walks: StationWalks }>({ kind: 'stations', postcode, names: stations });
   return walks;
-}
-
-/** A missing walk degrades one row of a list; the straight-line distance is still shown. Taking a
- *  panel down over it would be the wrong trade.
- *
- *  A function around the lookup rather than a `catch` copied beside each one: the web host has to
- *  put this *outside* its cache, so that React Query sees the rejection and does not remember `{}`
- *  as an answer, and the policy is the same policy either way round. */
-export async function degradingMissingWalks(
-  postcode: string,
-  run: () => Promise<StationWalks>,
-): Promise<StationWalks> {
-  try {
-    return await run();
-  } catch (e) {
-    logWarn('travel', 'station walks failed', { postcode, error: e instanceof Error ? e.message : String(e) });
-    return {};
-  }
-}
-
-export async function stationWalks(postcode: string, stations: string[]): Promise<StationWalks> {
-  return await degradingMissingWalks(postcode, () => requestStationWalks(postcode, stations));
 }
 
 /** Where a postcode is, for the hub compass.

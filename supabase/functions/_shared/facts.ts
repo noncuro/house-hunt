@@ -409,13 +409,15 @@ function stationWords(name: string): string[] {
  *  separator — and only then split, so "Circle & District" reads as two. Every part has to be a
  *  line for the split to count: half-recognised brackets stay in the name. */
 function bracketLines(content: string): string[] | null {
+  // `hasOwn` rather than `in`: `in` walks the prototype, so "(Constructor)" and "(ToString)" would
+  // read as line ids and be stripped out of the station's name.
   const whole = lineId(content);
-  if (whole in LINE_COLOURS) return [whole];
+  if (Object.hasOwn(LINE_COLOURS, whole)) return [whole];
   const parts = content
     .split(/[,/]|&|\band\b/i)
     .map(lineId)
     .filter((part) => part.length > 0);
-  if (parts.length > 1 && parts.every((part) => part in LINE_COLOURS)) return parts;
+  if (parts.length > 1 && parts.every((part) => Object.hasOwn(LINE_COLOURS, part))) return parts;
   return null;
 }
 

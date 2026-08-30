@@ -1,6 +1,6 @@
 import type { UiHost } from '@house-hunt/ui';
 import { listingUrl } from '@house-hunt/core';
-import { degradingMissingWalks, requestStationWalks } from '@house-hunt/core/db';
+import { requestStationWalks } from '@house-hunt/core/db';
 import { queryClient } from './queries';
 import { openTabExtension } from './bridge';
 
@@ -18,26 +18,20 @@ import { openTabExtension } from './bridge';
 export const webHost: UiHost = {
   // Cached at the host seam rather than in `Stations`, which cannot cache: it renders inside the
   // Rightmove panel too, where there is no QueryClient — the fetch is injected for exactly that
-  // reason. Without this, triage refetched the walks on every `j`/`k` step (the pane is keyed on
-  // the flat, so each step unmounts it), and the station rows sat blank for ~200ms next to a
-  // travel block that snapped back from its own cache. A walk from a postcode to a station is
-  // fixed geography, not a verdict, so it is kept far longer than the 30s the rest of the app
-  // uses — and `fetchQuery` dedupes in-flight asks as well.
+  // reason. Without this, triage refetched the walks on every `j`/`k` step, because the pane is
+  // keyed on the flat and each step unmounts it. A walk from a postcode to a station is fixed
+  // geography, not a verdict, so it is kept far longer than the 30s the rest of the app uses.
   //
-  // The throwing lookup goes inside the cache and the degrade goes outside it, which is the whole
-  // trick: `stationWalks` answers a failure with `{}`, and cached as data that turns a one-second
-  // blip into half an hour of blank walk columns at that postcode, with nothing on screen saying
-  // why. React Query does not keep a rejection as data, so a failure is re-asked on the next
-  // render while a genuinely empty answer still caches for the full staleTime.
+  // The rejection is passed on rather than turned into `{}` here. React Query keeps no rejection as
+  // data, so a failure is re-asked on the next render while a genuinely empty answer still caches
+  // for the full staleTime — and `Stations` is the only place that can tell the reader.
   stationWalks: (postcode, stations) =>
-    degradingMissingWalks(postcode, () =>
-      queryClient.fetchQuery({
-        queryKey: ['station-walks', postcode, [...stations].sort().join(',')],
-        queryFn: () => requestStationWalks(postcode, stations),
-        staleTime: 30 * 60_000,
-        gcTime: 6 * 60 * 60_000,
-      }),
-    ),
+    queryClient.fetchQuery({
+      queryKey: ['station-walks', postcode, [...stations].sort().join(',')],
+      queryFn: () => requestStationWalks(postcode, stations),
+      staleTime: 30 * 60_000,
+      gcTime: 6 * 60 * 60_000,
+    }),
 
   async openListing(rightmoveId) {
     const reply = await openTabExtension(listingUrl(rightmoveId));
