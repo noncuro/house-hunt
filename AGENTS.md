@@ -293,6 +293,7 @@ pnpm check:all      # + every pure-function check (seconds)
 
 Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `listing` (which URLs are a
 listing, and what a share hands over), `hubs`, `stage`, `shortlist`, `sweep`, `travel`,
+`geo` (the sentence a refused position gets, and a maps link that is not a guess about the phone),
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint), `sync` (the
 `_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a
 shared fix could sit unshipped with every check green),

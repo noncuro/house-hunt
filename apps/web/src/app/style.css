@@ -1132,6 +1132,20 @@ code {
   border-color: var(--fainter);
 }
 
+/* Beside the postcode you can copy, and quieter than the toggle: it leaves the app. */
+.card-map-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.card-map-open:hover {
+  text-decoration: underline;
+}
+
 .card-map {
   width: 100%;
   height: 260px;
@@ -1855,6 +1869,48 @@ code {
 .map-count {
   font-weight: 600;
   color: var(--ink);
+}
+
+/* The reader's own position, in the corner the hunt's own counts are not in. A button of our own
+   rather than Leaflet's `locate` control: a refused position has to become a sentence somebody can
+   read, and Leaflet's answer to one is an event nobody is listening to. */
+.map-tools {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s2);
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s1);
+  max-width: min(280px, calc(100% - var(--s5)));
+}
+
+.map-locate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: var(--s1) var(--s3);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-card);
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.map-locate:disabled {
+  cursor: progress;
+  color: var(--ink-soft);
+}
+
+.map-locate-error {
+  margin: 0;
+  box-shadow: var(--shadow-card);
+  font-size: 12px;
+  text-align: right;
 }
 
 /* Map on the left, the flat on the right — sixty/forty, which is the split at which the map is
@@ -2937,8 +2993,10 @@ input[type='checkbox'] {
     height: calc(100vh - 180px);
   }
 
-  /* Stacked, and the map keeps the top: on a phone the flat is what you scroll to having chosen a
-     pin, not something competing with the pins for width. */
+  /* Stacked, and the map keeps the top. This is a narrow window rather than a phone — a phone is
+     given no dock at all, because there a tap on a pin opens the flat's own panel (see
+     `screens/Map.tsx`) — so the card below the map is something you scroll to rather than
+     something competing with the pins for width. */
   .mapview-split {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2947,6 +3005,21 @@ input[type='checkbox'] {
     height: auto;
     min-height: 0;
     max-height: 60vh;
+  }
+
+  /* A thumb, not a cursor: the button that puts you on the map moves to the edge the hand is
+     already at, and the sentence under it gets the width to be a sentence. */
+  .map-tools {
+    top: auto;
+    right: var(--s2);
+    bottom: var(--s3);
+    left: var(--s2);
+    align-items: flex-start;
+    max-width: none;
+  }
+
+  .map-locate-error {
+    text-align: left;
   }
 
   /* A bottom sheet: the flat arrives from the edge nearest the thumb, and leaves the screen behind
