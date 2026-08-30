@@ -121,8 +121,29 @@ does, and a reviewer cannot obtain an invitation — so without this field the r
 first screen and the rejection reads as "we could not access the functionality".
 
 The account below has to exist on the live project before you submit, and it has to have something
-in it: an empty shortlist and a listing with no analysis looks broken rather than invite-only. Seed
-it with the demo data (`pnpm seed:demo`) so the reviewer sees the product working.
+in it: an empty shortlist and a listing with no analysis looks broken rather than invite-only. There
+is no seeder (#133), so until there is, fill it by hand — every step is something the product does
+anyway, which is why the manual route works at all:
+
+1. **Make the hunt the account will land in.** Sign in as the reviewer account, create a project,
+   and keep it separate from any real hunt. Ratings the reviewer sets are shared with whoever is in
+   the project they are in, and the last paragraph of the block below promises that is only the demo
+   one.
+2. **Give it somewhere to travel to.** Add two or three places in Settings. Without them the travel
+   table is a column of dashes, which is the screen looking broken rather than empty.
+3. **Add six to eight flats**, by pasting Rightmove addresses into Add flat. Spread them across the
+   funnel — leave most shortlisted, move one to viewing booked, archive one — so the board and the
+   funnel have something in them rather than one full column.
+4. **Rate about half of them**, both ways. A pile with no verdicts leaves head-to-head and the
+   triage sort with nothing to order.
+5. **Wait for the analysis to finish** before you submit. It is what fills the findings the panel
+   shows in step 3 of the block, and it is the slowest part — check a card shows its findings
+   rather than a spinner. This spends the OpenAI key, which is the reason a seeder that did it on
+   every run was never obviously the right thing to build.
+
+Two things not to do: do not point the account at a real hunt to save time — the reviewer can rate
+and archive, and those are shared facts — and do not save the listings' photographs anywhere. The
+app stores the CDN URLs and nothing here changes that.
 
 ```
 This extension is invite-only, so please use the account below.
@@ -145,12 +166,12 @@ view has content in it. Ratings you set are shared with that demo project only.
 
 **Before submitting**, create it and check it:
 
-```bash
-# Create the reviewer account on the live project (service role; run from the repo root).
-pnpm reviewer:create            # prints the address and the generated password
+**`pnpm reviewer:create` does not exist yet — #133.** It was written into this checklist before it
+was built, so this step has never been runnable. Until it is, make the account by hand: sign-up is
+off (`enable_signup = false`), so add it the way any member is added and set the password with
+`python3 tools/set-password.py <address>`.
 
-# Then sign in with it yourself once, in a clean Chrome profile, and walk the four steps above.
-```
+Then sign in with it yourself once, in a clean Chrome profile, and walk the four steps above.
 
 Rotate or delete the account once the review passes — it is a real account with a real password,
 and it should not outlive the reason it existed.

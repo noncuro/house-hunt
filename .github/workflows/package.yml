@@ -20,10 +20,18 @@ name: package
 on:
   push:
     branches: [main]
+    # Every path in `INPUTS` in `tools/package-stamp.ts`, because a build input outside this filter
+    # is one that can change on main without the zip being rebuilt — and `check:zip` would then
+    # report the served download as stale for ever, on a workflow that never runs to fix it.
+    # `pnpm check:zip` holds the two lists against each other (#120).
     paths:
       - 'apps/extension/**'
       - 'packages/core/src/**'
+      - 'packages/core/package.json'
       - 'packages/ui/src/**'
+      - 'packages/ui/package.json'
+      - 'tsconfig.base.json'
+      - 'pnpm-lock.yaml'
   workflow_dispatch:
 
 permissions:

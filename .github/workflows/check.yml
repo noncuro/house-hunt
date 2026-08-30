@@ -52,12 +52,6 @@ jobs:
       - run: cp .env.ci .env
       - run: pnpm install --frozen-lockfile
 
-      - uses: denoland/setup-deno@v2
-        with:
-          # `check:functions` runs `deno check` over the Edge Functions, which are outside tsc and
-          # oxlint — for a long time nothing checked them at all.
-          deno-version: v2.x
-
       - run: pnpm check:all
 
   # ----------------------------------------------------------------------------------------- #
@@ -84,10 +78,6 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: ${{ env.SUPABASE_CLI_VERSION }}
-
-      # The functions need an environment; the template is committed precisely so this line is all
-      # it takes. Nothing in it is secret — see the file.
-      - run: cp supabase/.env.example supabase/.env
 
       - run: supabase start
 
@@ -118,7 +108,6 @@ jobs:
         with:
           version: ${{ env.SUPABASE_CLI_VERSION }}
 
-      - run: cp supabase/.env.example supabase/.env
       - run: supabase start
 
       # Chromium and its libraries. `--with-deps` matters on a bare runner: without the system

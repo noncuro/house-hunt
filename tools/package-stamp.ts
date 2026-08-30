@@ -28,7 +28,7 @@ export const STAMP = resolve(ROOT, 'apps/web/public/rightmove-house-hunt.sources
  *  — and so are the icons, the tsconfigs and the lockfile: an icon is copied into the archive
  *  verbatim, module resolution decides what the bundler pulls in, and a dependency bump changes the
  *  bundle without touching a line of this repository's own code. */
-const INPUTS = [
+export const INPUTS = [
   'apps/extension/src',
   'apps/extension/public',
   'apps/extension/wxt.config.ts',

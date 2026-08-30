@@ -9,7 +9,6 @@ Rightmove pages are fetched rather than committed.
 pnpm install
 pnpm exec playwright install chromium         # once per machine
 
-cp supabase/.env.example supabase/.env        # the functions' environment
 supabase start                                # ports 5434x, not the defaults
 
 pnpm build:smoke                              # an extension pointed at the local stack
