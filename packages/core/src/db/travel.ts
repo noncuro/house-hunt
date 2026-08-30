@@ -176,25 +176,37 @@ async function computeTravelTimes(postcode: string, refresh: boolean): Promise<T
   return times;
 }
 
-/** Walking time to each nearby station, and the lines it carries. */
-export async function stationWalks(
-  postcode: string,
-  stations: string[],
-): Promise<Record<string, { seconds?: number; lines: string[] }>> {
+export type StationWalks = Record<string, { seconds?: number; lines: string[] }>;
+
+/** Walking time to each nearby station, and the lines it carries. Throws when the lookup fails —
+ *  a caller that caches the answer needs the failure to stay a failure, because an empty record
+ *  cached as data is a blank walk column that outlives the blip that caused it. */
+export async function requestStationWalks(postcode: string, stations: string[]): Promise<StationWalks> {
   if (stations.length === 0) return {};
+  const { walks } = await ask<{ walks: StationWalks }>({ kind: 'stations', postcode, names: stations });
+  return walks;
+}
+
+/** A missing walk degrades one row of a list; the straight-line distance is still shown. Taking a
+ *  panel down over it would be the wrong trade.
+ *
+ *  A function around the lookup rather than a `catch` copied beside each one: the web host has to
+ *  put this *outside* its cache, so that React Query sees the rejection and does not remember `{}`
+ *  as an answer, and the policy is the same policy either way round. */
+export async function degradingMissingWalks(
+  postcode: string,
+  run: () => Promise<StationWalks>,
+): Promise<StationWalks> {
   try {
-    const { walks } = await ask<{ walks: Record<string, { seconds?: number; lines: string[] }> }>({
-      kind: 'stations',
-      postcode,
-      names: stations,
-    });
-    return walks;
+    return await run();
   } catch (e) {
-    // A missing walk degrades one row of a list; the straight-line distance is still shown. Taking
-    // a panel down over it would be the wrong trade.
     logWarn('travel', 'station walks failed', { postcode, error: e instanceof Error ? e.message : String(e) });
     return {};
   }
+}
+
+export async function stationWalks(postcode: string, stations: string[]): Promise<StationWalks> {
+  return await degradingMissingWalks(postcode, () => requestStationWalks(postcode, stations));
 }
 
 /** Where a postcode is, for the hub compass.

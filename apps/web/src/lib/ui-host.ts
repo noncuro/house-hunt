@@ -1,6 +1,6 @@
 import type { UiHost } from '@house-hunt/ui';
 import { listingUrl } from '@house-hunt/core';
-import { stationWalks } from '@house-hunt/core/db';
+import { degradingMissingWalks, requestStationWalks } from '@house-hunt/core/db';
 import { queryClient } from './queries';
 import { openTabExtension } from './bridge';
 
@@ -22,16 +22,22 @@ export const webHost: UiHost = {
   // the flat, so each step unmounts it), and the station rows sat blank for ~200ms next to a
   // travel block that snapped back from its own cache. A walk from a postcode to a station is
   // fixed geography, not a verdict, so it is kept far longer than the 30s the rest of the app
-  // uses — and `fetchQuery` dedupes in-flight asks as well. Note `stationWalks` resolves `{}`
-  // rather than throwing when the lookup fails, so a failure is cached like an answer until the
-  // staleTime lapses; it degrades one row's walk column, which is the documented trade there.
+  // uses — and `fetchQuery` dedupes in-flight asks as well.
+  //
+  // The throwing lookup goes inside the cache and the degrade goes outside it, which is the whole
+  // trick: `stationWalks` answers a failure with `{}`, and cached as data that turns a one-second
+  // blip into half an hour of blank walk columns at that postcode, with nothing on screen saying
+  // why. React Query does not keep a rejection as data, so a failure is re-asked on the next
+  // render while a genuinely empty answer still caches for the full staleTime.
   stationWalks: (postcode, stations) =>
-    queryClient.fetchQuery({
-      queryKey: ['station-walks', postcode, [...stations].sort().join(',')],
-      queryFn: () => stationWalks(postcode, stations),
-      staleTime: 30 * 60_000,
-      gcTime: 6 * 60 * 60_000,
-    }),
+    degradingMissingWalks(postcode, () =>
+      queryClient.fetchQuery({
+        queryKey: ['station-walks', postcode, [...stations].sort().join(',')],
+        queryFn: () => requestStationWalks(postcode, stations),
+        staleTime: 30 * 60_000,
+        gcTime: 6 * 60 * 60_000,
+      }),
+    ),
 
   async openListing(rightmoveId) {
     const reply = await openTabExtension(listingUrl(rightmoveId));
