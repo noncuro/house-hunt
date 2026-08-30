@@ -86,8 +86,15 @@
   box-shadow: 0 20px 60px rgb(0 0 0 / 45%);
   /* The overlay handles horizontal drags itself; `pan-y` leaves the browser its vertical gestures
      and stops it claiming the sideways one as a scroll or a back-navigation halfway through a
-     swipe. Without it the photo follows the finger for an inch and then the page takes over. */
-  touch-action: pan-y;
+     swipe. Without it the photo follows the finger for an inch and then the page takes over.
+
+     `pinch-zoom` is named explicitly because `touch-action` is a whitelist, not a subtraction:
+     `pan-y` alone means pan-y and *nothing else*, which silently took pinch-to-zoom with it. That
+     is the whole of #103 — a photograph is the one thing on this screen somebody wants to look at
+     closely, and the gesture everybody tries first did nothing, on the surface where it is the only
+     gesture available. It costs the swipe nothing: a pinch is two fingers and a swipe is one, so
+     the browser and this overlay are never claiming the same gesture. */
+  touch-action: pan-y pinch-zoom;
   /* A long-press on a photo otherwise offers to save or share it, and a drag across one starts the
      browser's own image drag — both fire in the middle of a swipe. */
   user-select: none;

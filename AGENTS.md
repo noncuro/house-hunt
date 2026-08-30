@@ -467,5 +467,14 @@ In addition to the usual:
   exactly one implementation, when the problem needed one function.
 - **Regex-parsing structured output.** String-splitting CLI or API output that offers `--json`
   or an equivalent structured form.
-- **Lazy non-typing.** `any` (or a blind `as` cast) where a real type would do — untyped JSON
-  from the network or `__PAGE_MODEL` should be parsed with zod, not asserted.
+- **Lazy non-typing.** `any` (or a blind `as` cast) where a real type would do. At a network
+  boundary — a request body, a reply from TfL or postcodes.io, `__PAGE_MODEL`, `__NEXT_DATA__` —
+  **narrow field by field and answer a stated outcome; never `as` a payload into a type and read
+  it.** Read each field, check that it is the shape you need, and fall to a named result:
+  `not-found`, `unreadable`, a 400 that says which field. `packages/core/src/listing.ts`,
+  `app/api/resolve-location` and `checkAsk` in `app/api/travel` are what that looks like.
+
+  zod is deliberately not a dependency and never has been, so a review asking for it is asking for
+  a library this workspace does not have (#119). `listing.ts` decodes an index-reference encoding
+  *before* any schema could see an object, narrowing by hand returns a stated outcome where a schema
+  would throw, and `packages/core` is bundled into an MV3 worker.

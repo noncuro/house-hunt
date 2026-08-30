@@ -6,6 +6,7 @@ import { webAppUrl } from '@/lib/web-app';
 import { listingIdFromUrl } from '@/lib/cards';
 import { Panel } from '@/components/Panel';
 import {
+  onSessionChange,
   PAGE_MESSAGE,
   PAGE_REQUEST,
   send,
@@ -28,6 +29,23 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
 
   async main(ctx) {
+    // Only the current session's listeners may be live. The set `start` leaves behind holds the
+    // user it was started with, so a second person signing in on the same browser would have the
+    // older set render the panel — and write a verdict — as whoever was signed in before. The
+    // generation count covers the await inside `start`: a session that changes twice during it
+    // would otherwise leave the first run's listeners with nothing referring to them.
+    let stopListening: (() => void) | null = null;
+    let stopWatching: (() => void) | null = null;
+    let generation = 0;
+    const restart = async (root: Root): Promise<void> => {
+      stopListening?.();
+      stopListening = null;
+      const mine = ++generation;
+      const stop = await start(root);
+      if (mine === generation) stopListening = stop;
+      else stop?.();
+    };
+
     const ui = await createShadowRootUi(ctx, {
       name: 'rightmove-house-hunt',
       position: 'inline',
@@ -37,10 +55,18 @@ export default defineContentScript({
         // worker for a station walk or a paced tab without importing the transport themselves.
         const root = withHost(createRoot(container));
         root.render(<Loading />);
-        void start(root);
+        void restart(root);
+        stopWatching = onSessionChange(() => void restart(root));
         return root;
       },
       onRemove(root) {
+        // The watcher first: it would otherwise call `restart` on an unmounted root. Bumping the
+        // generation is what stops a `start` already awaiting the worker from attaching to it.
+        stopWatching?.();
+        stopWatching = null;
+        generation += 1;
+        stopListening?.();
+        stopListening = null;
         root?.unmount();
       },
     });
@@ -52,28 +78,35 @@ const ASK_EVERY_MS = 200;
 const GIVE_UP_AFTER_MS = 8000;
 
 /** Resolve the session, then decide what this page gets. `auth:state` is the one message the
- *  worker answers rather than refusing when nobody is signed in, so this is safe to ask first. */
-async function start(root: Root): Promise<void> {
+ *  worker answers rather than refusing when nobody is signed in, so this is safe to ask first.
+ *
+ *  Asked again whenever the session changes, so the tab somebody was looking at when they signed in
+ *  stops being the one page that does not notice (#86). Signing out re-runs it too and the panel
+ *  goes back to its one honest line, rather than leaving a working overlay on a machine somebody has
+ *  just left. Returns what stops the listeners it set up, or null where it set none up. */
+async function start(root: Root): Promise<(() => void) | null> {
   const auth = await send({ type: 'auth:state' });
   if (!auth.ok) {
     root.render(<Broken error={auth.error} />);
-    return;
+    return null;
   }
   if (auth.data.status === 'signed-out') {
     root.render(<SignedOut />);
-    return;
+    return null;
   }
   if (!auth.data.activeProject) {
     root.render(<NoProject />);
-    return;
+    return null;
   }
-  listen(root, auth.data.user);
+  return listen(root, auth.data.user);
 }
 
-function listen(root: Root, user: SessionUser): void {
+/** Returns what stops it: the handler, the asking, and the deadline all go together, because the
+ *  user this closes over is the one it renders the panel as. */
+function listen(root: Root, user: SessionUser): () => void {
   let answered = false;
 
-  window.addEventListener('message', (event) => {
+  const onMessage = (event: MessageEvent) => {
     if (event.source !== window || event.origin !== location.origin) return;
     const message = event.data as PageMessage | undefined;
     if (message?.source !== PAGE_MESSAGE) return;
@@ -93,7 +126,8 @@ function listen(root: Root, user: SessionUser): void {
     root.render(
       message.ok ? <Panel listing={message.listing} user={user} /> : <Broken error={message.error} />,
     );
-  });
+  };
+  window.addEventListener('message', onMessage);
 
   // Ask until answered. The MAIN-world script may not have finished — or, because it runs at
   // document_end and we run at document_idle, may have already broadcast before we were here.
@@ -102,7 +136,7 @@ function listen(root: Root, user: SessionUser): void {
   ask();
 
   // Never sit on "Reading listing…" forever — silence is a failure and should look like one.
-  setTimeout(() => {
+  const giveUp = setTimeout(() => {
     clearInterval(asking);
     if (!answered) {
       root.render(
@@ -110,6 +144,12 @@ function listen(root: Root, user: SessionUser): void {
       );
     }
   }, GIVE_UP_AFTER_MS);
+
+  return () => {
+    window.removeEventListener('message', onMessage);
+    clearInterval(asking);
+    clearTimeout(giveUp);
+  };
 }
 
 function Loading() {

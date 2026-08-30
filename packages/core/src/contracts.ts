@@ -10,6 +10,18 @@
 // that carried them, from when the only way a view could reach the database was to ask the
 // background worker. The website reaches it directly, so the shapes outlived the transport.
 
+/** Where the extension's Supabase session lives in `chrome.storage.local`.
+ *
+ *  Imported by all three that need it, never written out again. It is here rather than beside the
+ *  client that writes it because neither of the other two can import `auth.ts`: one would be a
+ *  second client holder, which silently kills the MV3 session (`check:one-client`), and the other
+ *  would drag `import.meta.env` into a Node process. This file has no dependencies, so all three
+ *  can reach it.
+ *
+ *  Named rather than left to supabase-js's default so it is greppable in `chrome://extensions` →
+ *  Storage. */
+export const SESSION_STORAGE_KEY = 'rm-supabase-session';
+
 /** Who is signed in. `displayName` is what a verdict is attributed to; it falls back to the email
  *  address rather than to a blank, because "— , 2h ago" reads as a bug. */
 export interface SessionUser {

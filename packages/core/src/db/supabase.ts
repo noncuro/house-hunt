@@ -91,12 +91,23 @@ export class NoActiveProject extends Error {
 // Who is signed in, and which project they are working in.
 // ------------------------------------------------------------------------------------------------
 
-/** The active project, resolved once per worker lifetime.
+/** How long the active project may be believed without asking again.
+ *
+ *  A storage watcher cannot help here: this is not in storage. It is `profile.active_project_id` in
+ *  the database, so a hunt switched on another machine is invisible by construction and a bound on
+ *  staleness is the only available answer — without one the cache lasted a whole worker lifetime,
+ *  and righted itself at a moment nobody could predict (#86).
+ *
+ *  A minute is chosen against what the cache is for, which is keeping a profile read off *every*
+ *  query: a shortlist load asks a dozen times a second and all but the first are still free. */
+const PROJECT_CACHE_MS = 60_000;
+
+/** The active project, resolved at most once a minute.
  *
  *  Cached against the user id rather than globally: signing out and back in as somebody else in the
  *  same worker must not leave the previous person's project in place, and that is exactly what a
  *  bare module-level string would do. */
-let projectCache: { userId: string; projectId: string } | null = null;
+let projectCache: { userId: string; projectId: string; readAt: number } | null = null;
 
 export function forgetActiveProject(): void {
   projectCache = null;
@@ -184,7 +195,7 @@ export async function authState(): Promise<AuthState> {
     await setActiveProject(projects[0]!.id);
     activeId = projects[0]!.id;
   }
-  projectCache = activeId ? { userId: session.user.id, projectId: activeId } : null;
+  projectCache = activeId ? { userId: session.user.id, projectId: activeId, readAt: Date.now() } : null;
 
   void touchLastSeen(session.user.id);
 
@@ -227,11 +238,13 @@ async function touchLastSeen(userId: string): Promise<void> {
  *  returning null, so a handler cannot forget to check and quietly read nothing. */
 export async function activeProjectId(): Promise<string> {
   const session = await requireSession();
-  if (projectCache?.userId === session.user.id) return projectCache.projectId;
+  if (projectCache?.userId === session.user.id && Date.now() - projectCache.readAt < PROJECT_CACHE_MS) {
+    return projectCache.projectId;
+  }
 
   const profile = await readProfile(session.user.id, session.user.email ?? '');
   if (profile.activeProjectId) {
-    projectCache = { userId: session.user.id, projectId: profile.activeProjectId };
+    projectCache = { userId: session.user.id, projectId: profile.activeProjectId, readAt: Date.now() };
     return profile.activeProjectId;
   }
 
@@ -239,7 +252,7 @@ export async function activeProjectId(): Promise<string> {
   if (projects.length === 0) throw new NoActiveProject('you are not a member of any project yet');
   if (projects.length > 1) throw new NoActiveProject('choose which house hunt to work in');
   await setActiveProject(projects[0]!.id);
-  projectCache = { userId: session.user.id, projectId: projects[0]!.id };
+  projectCache = { userId: session.user.id, projectId: projects[0]!.id, readAt: Date.now() };
   return projects[0]!.id;
 }
 
@@ -250,7 +263,7 @@ export async function setActiveProject(projectId: string): Promise<void> {
     .update({ active_project_id: projectId })
     .eq('id', session.user.id);
   fail('switching project', error);
-  projectCache = { userId: session.user.id, projectId };
+  projectCache = { userId: session.user.id, projectId, readAt: Date.now() };
 }
 
 export async function setDisplayName(displayName: string): Promise<void> {
