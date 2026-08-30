@@ -26,7 +26,10 @@ import { relative, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const DIR = 'supabase/migrations';
-const NAME = /^(\d{14})_[a-z0-9_]+\.sql$/;
+// `[a-z0-9_]+` would have accepted `20260830120000___.sql` and `20260830120000__a_.sql`, which are
+// not lower_snake and read as a typo that got committed. Words of at least one character, joined by
+// single underscores, with none leading or trailing.
+const NAME = /^(\d{14})_[a-z0-9]+(?:_[a-z0-9]+)*\.sql$/;
 
 let failures = 0;
 
