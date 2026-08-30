@@ -1,5 +1,6 @@
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { db } from './client';
+import { NO_REASON_RECORDED } from '../tfl';
 import { accessToken } from './session';
 import { Unauthenticated } from './session';
 import { getCachedTravelFor, listPlaces, backfillPlaceCoords } from './supabase';
@@ -272,10 +273,11 @@ export async function cachedTravelTimes(postcodes: string[]): Promise<Record<str
               mode: r.mode,
               seconds: 0,
               changes: null,
-              // The row's own words where it has them. Not every no-route row is TfL's verdict:
-              // a walk further off than an hour on foot can cover is settled here without asking,
-              // and crediting TfL for it is a confident wrong answer in a tooltip.
-              error: r.reason ?? 'TfL found no journey for this mode',
+              // The row's own words where it has them, and an admission where it has none. Not
+              // every no-route row is TfL's verdict — a walk further off than an hour on foot can
+              // cover is settled here without asking — and a row that predates the reason column
+              // is not TfL's verdict either, for all anybody can tell (`NO_REASON_RECORDED`).
+              error: r.reason ?? NO_REASON_RECORDED,
               transient: false,
               stale,
             }
