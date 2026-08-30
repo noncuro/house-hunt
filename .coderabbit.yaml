@@ -1,0 +1,197 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# Review instructions for CodeRabbit. AGENTS.md is the source of truth for these
+# rules and for humans; this file is the subset a reviewer can check on a diff,
+# expressed as globs so each rule fires only where it applies. Keep the two in
+# step — a rule that changes there and not here reviews the old design.
+language: en-GB
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  auto_review:
+    enabled: true
+    drafts: false
+
+  # Applies to every file. Kept short deliberately: a long global blob gets
+  # diluted across the diff, and the specific rules live in path_instructions.
+  instructions: |
+    Read AGENTS.md at the repo root before reviewing — it holds the standing
+    rules and the decisions that look like bugs but are not. Judge the change
+    against the design it documents, not against generic best practice, and if
+    a diff contradicts AGENTS.md say which rule it breaks.
+
+    Two things are never acceptable in this repo:
+      - PII. No real names, personal email addresses, or anything identifying
+        the people using the app — in code, docs, examples, fixtures or tests.
+      - Re-hosted Rightmove listing photos or floorplans. Images are shown from
+        Rightmove's own CDN URLs; a diff that saves, commits or proxies one is
+        wrong even if it makes a check pass.
+
+  path_instructions:
+    # ---- Cross-cutting code quality -------------------------------------
+    - path: "**/*.{ts,tsx}"
+      instructions: |
+        - Lazy non-typing: flag `any` or a blind `as` cast where a real type
+          would do. Untyped JSON from the network or from `__PAGE_MODEL` must
+          be parsed with zod, not asserted.
+        - Swallowed errors and silent defaults: flag empty catches,
+          catch-and-log-only, and plausible-looking fallbacks where the code
+          should throw. A default must be intentional, not a way to dodge
+          error handling. The project rule is fail loudly — if extraction or a
+          fetch breaks, the surface must say so; blanks read as real data.
+        - Comments explain why, not what. Flag comments that restate the code,
+          and long ones where a few words would do.
+        - Copy-paste instead of reuse: two blocks differing by a variable or a
+          string want a shared function with a parameter. Search for an
+          existing helper before accepting a new utility.
+        - Unnecessary abstraction: wrappers that delegate with the same
+          signature, or a pattern with exactly one implementation, where one
+          function was the answer.
+        - Orphaned scaffolding: imports, functions or variables added in the
+          diff and never referenced; TODO or stub bodies in finished code.
+        - Collateral damage: deletions, rewrites or reformatting unrelated to
+          the stated change, and validation, guards or auth checks removed to
+          get past an error rather than fixing it.
+        - Regex-parsing structured output: flag string-splitting of CLI or API
+          output that offers `--json` or an equivalent structured form.
+
+    # ---- One fact, one renderer -----------------------------------------
+    - path: "{apps/web/src,apps/extension/src/entrypoints,packages/ui/src}/**"
+      instructions: |
+        One fact, one renderer. Anything both the website and the extension
+        show belongs in `packages/ui/src/` or `packages/core/src/facts.ts`.
+        Flag a fact — a price, a travel time, a stage label, an area figure —
+        re-derived or re-formatted inside a view when a shared renderer for it
+        already exists, and flag a new one added to a view rather than to the
+        shared packages.
+
+    # ---- The extension ---------------------------------------------------
+    - path: "apps/extension/**"
+      instructions: |
+        Any change under apps/extension/ must bump `version` in
+        apps/extension/package.json AND `EXPECTED_EXTENSION_VERSION` in
+        apps/web/src/lib/extension-version.ts, to the same value. Nothing
+        enforces this and the comparison over the bridge is the only thing
+        that can tell somebody their installed copy is stale — so if the diff
+        touches this directory and either number is unchanged, say so as a
+        blocking comment. Do not ask for the committed zip to be refreshed:
+        .github/workflows/package.yml rebuilds and commits it on main.
+
+    - path: "apps/extension/src/entrypoints/**"
+      instructions: |
+        - Only background.ts may construct a Supabase client. A second client
+          holder silently kills the MV3 session. Flag any `createClient` (or a
+          helper that wraps one) outside background.ts.
+        - Content scripts must stay scoped to Rightmove pages, except
+          bridge.content.ts which runs on the website's origin only and must
+          check that origin before trusting a message.
+        - Select on `data-testid`, never on CSS-module class names —
+          Rightmove's hashed classes churn. Flag any selector matching a
+          hashed or CSS-module class.
+
+    # ---- Shared code that also runs on Deno ------------------------------
+    - path: "packages/core/src/{analysis,png}.ts"
+      instructions: |
+        These are copied into supabase/functions/_shared/ and run on Deno.
+        They must stay Deno-clean: no `node:` imports, no `import.meta.env`,
+        no Node-only globals. Deploy refuses stale copies, so a change here
+        needs the `_shared/` copy updated in the same PR — `pnpm check:sync`
+        is what asserts it.
+
+    - path: "supabase/functions/**"
+      instructions: |
+        Edge Functions are outside tsc and oxlint — `pnpm check:functions`
+        (deno check) is the only typecheck they get. Files under `_shared/`
+        are copies of packages/core and must match their source exactly; flag
+        an edit made to the copy instead of the source.
+        The `travel` function is the sole writer of the travel cache. CORS
+        depends on WEB_APP_ORIGIN being set; a missing env var here reads as a
+        page that spins forever, so flag new env reads that default silently.
+
+    # ---- Domain decisions an agent might otherwise "fix" -----------------
+    - path: "packages/core/src/{stage,filter,sweep,tfl,hubs,shortlist}.ts"
+      instructions: |
+        Hold these decisions; a diff that reverses one needs to say why:
+        - A verdict and a stage are two facts and neither writes the other.
+          The only coupling is the `enter_funnel` trigger.
+        - A filter never drops a flat for a number we do not have. Filters
+          exclude only what is *known* not to qualify; unknowns are kept and
+          counted. Flag a comparison that drops null/undefined by accident.
+        - The sweep window snaps up, never down. A narrowed window drops
+          listings and looks like success.
+        - Driving times deliberately throw — TfL cannot do them, and a
+          fallback would mislabel a transit number as a driving one.
+        - SEED_HUBS is for dev tools and checks only. Hubs are project data
+          (`project_hub`); a surface reading the constant puts one project's
+          neighbourhoods on another's flats. A hub with no coordinates is
+          skipped, never defaulted.
+        - Route from the full postcode, not the lat/lon.
+
+    - path: "apps/web/src/lib/lens.ts"
+      instructions: |
+        Off the market hides rather than writes: a flat marked in
+        `training_exclusion` is drawn under Archived and nowhere else, and is
+        kept out of the triage pile. It must not touch the verdict or the
+        stage — a flat you loved and lost stays readable as loved. Flag any
+        change that has the off-market mark write to the funnel.
+
+    # ---- Database ---------------------------------------------------------
+    - path: "supabase/migrations/**"
+      instructions: |
+        Migrations reach production on merge, so review them as deploys.
+        - RLS is `to authenticated` everywhere; `anon` holds nothing.
+        - Shared fact tables are written only through SECURITY DEFINER
+          functions; DELETE is service_role only.
+        Flag a new table without RLS, a policy granted to `anon`, a direct
+        grant that bypasses the definer functions, and a destructive statement
+        with no guard. Migration files are append-only once merged — flag an
+        edit to an existing one rather than a new file.
+
+    # ---- Checks and harnesses --------------------------------------------
+    - path: "tools/**"
+      instructions: |
+        - Fixing tests instead of code: flag changed assertions or expected
+          values that make a check tautological, especially replacing a
+          hardcoded expected value with the computation under test. Each check
+          exists to pin reasoning that is invisible when wrong.
+        - No harness may reach Rightmove; OFFLINE_ARGS kills DNS for the
+          domain. Flag a harness that drops it or fetches a live page.
+        - A harness owns the servers it starts and refuses ones it did not.
+          Servers are spawned in their own process group and stopped as a
+          group; flag a spawn that signals only the wrapper, or a readiness
+          probe that would go green against a leftover server.
+        - Images are answered from memory, never written to disk.
+
+    # ---- Docs -------------------------------------------------------------
+    - path: "{AGENTS,CLAUDE,README,RESEARCH,SETUP,TODO}.md"
+      instructions: |
+        RESEARCH.md is why, AGENTS.md is how it is built and how to check you
+        have not broken it. Flag a documented rule that the diff's code no
+        longer follows, and a new decision added to AGENTS.md that belongs as
+        a comment on the code that owns it — AGENTS.md holds only
+        cross-cutting rules and decisions an agent working elsewhere could
+        silently violate.
+
+  # The extension zip and its source hashes are rebuilt and committed by CI;
+  # reviewing them as source produces noise on every packaging commit.
+  path_filters:
+    - "!apps/web/public/rightmove-house-hunt.zip"
+    - "!apps/web/public/rightmove-house-hunt.sources.json"
+    - "!pnpm-lock.yaml"
+    - "!apps/extension/.output/**"
+
+# CodeRabbit does not pick these up on its own — the resolved config on the
+# first PR reported `code_guidelines.filePatterns: []`, so the only thing
+# carrying AGENTS.md into a review was the prose pointer in
+# `reviews.instructions`. Naming the files here is what actually ingests them,
+# and is why the path_instructions above can stay a summary rather than a copy.
+knowledge_base:
+  code_guidelines:
+    filePatterns:
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "docs/coverage.md"
+
+chat:
+  auto_reply: true

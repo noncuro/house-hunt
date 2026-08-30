@@ -12,6 +12,7 @@ import {
   hubLabel,
   hubsFromProject,
   initialBearing,
+  locationLookupFor,
   nearestHub,
 } from '../packages/core/src/hubs';
 import type { Place } from '../packages/core/src/types';
@@ -240,6 +241,44 @@ check(
   'and a lone destination still answers',
   nearestHub(duncanTerrace, hubsFromProject([nearbyOffice]))?.hub.name,
   'Work',
+);
+
+// What gets sent to Rightmove when somebody looks up the area to sweep around a place.
+//
+// This is the quietly-wrong computation the whole file exists for, in its purest form: every answer
+// below is a plausible string, and the wrong one comes back from Rightmove as a real identifier for
+// a real town with real flats in it. "Work" resolves to REGION^1486, Worksop, 130 miles from the
+// EC1V office it names — a sweep that looks like it worked.
+console.log('\nwhat Rightmove is asked about a place');
+check(
+  'a place with a postcode is looked up by the postcode, never by its nickname',
+  locationLookupFor(place({ label: 'Work', postcode: 'EC1V 1JN' })),
+  'EC1V 1JN',
+);
+check(
+  'a place with no postcode falls back to the label, which is all there is',
+  locationLookupFor(place({ label: 'Hampstead', postcode: null })),
+  'Hampstead',
+);
+// The `postcode` column takes coordinates pasted from Google Maps as well as postcodes. Rightmove
+// can do nothing with a pair of decimals, and `toSlug` would hand it `51-5283--0-0913` — which is
+// not a 404, it is whatever that fuzzy-matches to.
+check(
+  'a pasted lat,lon is not a postcode, so the label is asked instead',
+  locationLookupFor(place({ label: 'The gym', postcode: '51.5283, -0.09131' })),
+  'The gym',
+);
+check(
+  'a negative lat,lon with no spaces is caught too',
+  locationLookupFor(place({ label: 'Airbnb', postcode: '-33.8688,151.2093' })),
+  'Airbnb',
+);
+// A postcode is not rejected for looking unusual: Rightmove is the judge of what it knows, and
+// this must not become a second, stricter opinion about what a UK postcode is.
+check(
+  'an outcode on its own is still a postcode and still asked',
+  locationLookupFor(place({ label: 'Somewhere', postcode: 'EC1V' })),
+  'EC1V',
 );
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }

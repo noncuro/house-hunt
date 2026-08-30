@@ -178,7 +178,7 @@ export async function resolve(slug: string): Promise<Resolved> {
     // coordinate it got from postcodes.io or TfL: two sources agreeing to a tenth of a mile is the
     // actual verification, and the identifier on its own is a number somebody wrote down. A hub
     // placed wrong silently rotates every bearing computed from it.
-    centroid: location.geometry ? centroid(location.geometry.coordinates) : null,
+    centroid: location.geometry ? centreOf(location.geometry) : null,
     resultCount: results?.resultCount ?? null,
   };
 }
@@ -191,7 +191,7 @@ interface SearchPage {
           locationType?: string;
           id?: string | number;
           displayName?: string;
-          geometry?: { coordinates: number[][][] };
+          geometry?: Geometry;
         };
         seoModel?: { canonicalUrl?: string };
         resultCount?: unknown;
@@ -200,17 +200,58 @@ interface SearchPage {
   };
 }
 
-/** Mean of the ring's vertices. The polygons are regular circles of ~100 points around the search
- *  centre, so the plain mean is the centre to well under any tolerance a caller would apply;
- *  nothing here needs a proper area-weighted centroid. */
-function centroid(coordinates: number[][][]): { lat: number; lon: number } | null {
+/** GeoJSON, kept loose because it arrives off the network and the two shapes below are not the
+ *  only two Rightmove could ever send. `centreOf` narrows it rather than trusting it. */
+interface Geometry {
+  type?: string;
+  coordinates?: unknown;
+}
+
+/** Rightmove's own centre for whatever it decided the name meant.
+ *
+ *  Two shapes, because a full postcode has no extent and everything else does. A station's
+ *  catchment, a region or an outcode comes back as a `Polygon` and is averaged; a `POSTCODE^`
+ *  result comes back as a bare `Point`, which is the centre already.
+ *
+ *  The point case is not a nicety. It is the shape the *default* lookup now returns, since a place
+ *  with a postcode is resolved by that postcode — and a polygon-only reader answers null for it,
+ *  which the screen renders as "no coordinate here to check it against". That sentence would be
+ *  false, and it would retire the cross-check on exactly the path that carries it. */
+function centreOf(geometry: Geometry): { lat: number; lon: number } | null {
+  const { coordinates } = geometry;
+  if (!Array.isArray(coordinates)) return null;
+  if (geometry.type === 'Point') return pointFrom(coordinates);
+
+  // Mean of the ring's vertices. The polygons are near-regular rings of up to ~140 points around
+  // the search centre, so the plain mean lands well inside any tolerance a caller applies; nothing
+  // here needs a proper area-weighted centroid.
   const ring = coordinates[0];
-  if (!ring?.length) return null;
+  if (!Array.isArray(ring) || ring.length === 0) return null;
   let lat = 0;
   let lon = 0;
-  for (const point of ring) {
-    lon += point[0] ?? 0;
-    lat += point[1] ?? 0;
+  let counted = 0;
+  for (const vertex of ring) {
+    const point = pointFrom(vertex);
+    // An unreadable vertex is skipped, not counted, and not treated as [0, 0]. All three choices
+    // were wrong once. Reading it as the origin dragged the centre towards the Atlantic in
+    // proportion to how much of the ring was missing. Abandoning the whole polygon looked safer
+    // and was worse: no centre means `milesApart` is null, which is the branch `resolve` takes to
+    // mean "nothing to check against" — so a single bad vertex would have waved the identifier
+    // through without the distance check this function exists to feed. Dropping the vertex moves
+    // the mean of a hundred-point ring by nothing worth measuring.
+    if (point === null) continue;
+    lat += point.lat;
+    lon += point.lon;
+    counted += 1;
   }
-  return { lat: lat / ring.length, lon: lon / ring.length };
+  return counted === 0 ? null : { lat: lat / counted, lon: lon / counted };
+}
+
+/** GeoJSON writes a coordinate `[lon, lat]`, the reverse of every other pair in this codebase.
+ *  Worth one named function rather than the index dance at each call site. */
+function pointFrom(value: unknown): { lat: number; lon: number } | null {
+  if (!Array.isArray(value)) return null;
+  const [lon, lat] = value as unknown[];
+  if (typeof lat !== 'number' || typeof lon !== 'number') return null;
+  return { lat, lon };
 }

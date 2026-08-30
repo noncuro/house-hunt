@@ -31,6 +31,8 @@ import {
   criteriaFromUrl,
   describeCriteria,
   distanceMiles,
+  locationLookupFor,
+  parseLatLon,
   rightmoveSearchStart,
   searchLocationFor,
 } from '@house-hunt/core';
@@ -489,15 +491,15 @@ function PlaceWhere({ place, notify }: { place: Place; notify: Notify }) {
   );
 }
 
-/** A pasted "lat, lon" cut down to three decimals, or null when the string is not one. Parsed
- *  rather than pattern-matched on length so a genuinely long place name is left alone. */
+/** A pasted "lat, lon" cut down to three decimals, or null when the string is a postcode.
+ *
+ *  The test itself is `parseLatLon`, shared with `locationLookupFor` rather than repeated here.
+ *  They are asking one question of one column — a `postcode` that holds a point instead — and two
+ *  answers to it would mean a place drawn as coordinates and looked up on Rightmove as though it
+ *  were an address, or the reverse. */
 function asCoordinates(value: string): string | null {
-  const parts = value.split(',');
-  if (parts.length !== 2) return null;
-  const [lat, lon] = parts.map((p) => Number(p.trim()));
-  if (!Number.isFinite(lat!) || !Number.isFinite(lon!)) return null;
-  if (Math.abs(lat!) > 90 || Math.abs(lon!) > 180) return null;
-  return `${lat!.toFixed(3)}, ${lon!.toFixed(3)}`;
+  const point = parseLatLon(value);
+  return point === null ? null : `${point.lat.toFixed(3)}, ${point.lon.toFixed(3)}`;
 }
 
 function HuntSettings({ notify }: { notify: Notify }) {
@@ -1280,14 +1282,51 @@ function SearchCriteria({ places, notify }: { places: Place[]; notify: Notify })
 }
 
 
+/** How far Rightmove's centre may sit from where this hunt says the place is before the answer
+ *  stops being saved on the strength of the one press that asked for it.
+ *
+ *  A mile, which is the distance at which the note below already stops reassuring and starts
+ *  warning, for the same reason: past a mile these are two different places, and it is Rightmove's
+ *  that the sweep would go and search. Under it the two sources agree and there is nothing to ask.
+ *
+ *  Nothing is refused — the note offers the identifier with the distance beside it, and one more
+ *  press takes it. What changes is that a disagreement this size is something somebody agreed to,
+ *  rather than something they were told about in the past tense, underneath a value that had
+ *  already been written and would already have been swept. */
+const CONFIRM_ABOVE_MILES = 1;
+
+/** The gap between the two independent answers to "where is this place", or null when either is
+ *  missing. One function because the note and the decision to save must not be able to disagree
+ *  about it — a warning shown next to a value that was saved anyway is how this read before. */
+function milesApart(place: Place, result: LocationResult): number | null {
+  if (result.status !== 'resolved' || result.centroid === null) return null;
+  if (place.lat === null || place.lon === null) return null;
+  return distanceMiles({ lat: place.lat, lon: place.lon }, result.centroid);
+}
+
 /** What one resolve attempt said. All four states are rendered: a silent failure here is a place
  *  that looks searchable and never appears in the sweep. */
-function LocationNote({ result, place }: { result: LocationResult; place: Place }) {
+function LocationNote({
+  result,
+  place,
+  onAccept,
+}: {
+  result: LocationResult;
+  place: Place;
+  /** Save an answer that was too far off to be saved on its own. */
+  onAccept: () => void;
+}) {
   if (result.status === 'not-found') {
+    // What was asked, rather than what the place is called here — since the lookup goes by
+    // postcode when there is one, quoting the label would report a failure for a question nobody
+    // asked and send somebody off to re-spell a nickname that was never sent.
+    const asked = locationLookupFor(place);
     return (
       <div className="error">
-        Rightmove has no area it calls &ldquo;{place.label}&rdquo;. Its own spelling is the one that
-        works — try &ldquo;{place.label} Station&rdquo;, or the area rather than the stop.
+        Rightmove has no area it calls &ldquo;{asked}&rdquo;.{' '}
+        {asked === place.postcode
+          ? 'That is this place’s postcode, and Rightmove knows nearly all of them — worth checking it is the right one.'
+          : `Its own spelling is the one that works — try “${place.label} Station”, or the area rather than the stop. Giving this place a postcode would have it looked up by that instead, which cannot be misread.`}
       </div>
     );
   }
@@ -1307,18 +1346,35 @@ function LocationNote({ result, place }: { result: LocationResult; place: Place 
   // points at the wrong neighbourhood returns a page full of plausible flats and reports nothing
   // new. Two independent sources agreeing is what makes it trustworthy, so a disagreement is shown
   // rather than assumed away — and Rightmove's centre is never written over the hub's own point.
-  const apart =
-    result.centroid !== null && place.lat !== null && place.lon !== null
-      ? distanceMiles({ lat: place.lat, lon: place.lon }, result.centroid)
-      : null;
+  const apart = milesApart(place, result);
+  if (apart !== null && apart > CONFIRM_ABOVE_MILES) {
+    // Whether this answer is the one the place is now holding. It is the honest test of what the
+    // sentence should say, and it re-reads itself: accepting rewrites the place, the row redraws,
+    // and the offer becomes a statement of what is set.
+    const held = place.locationIdentifier === result.locationIdentifier;
+    return (
+      <div className="error">
+        Rightmove calls this area &ldquo;{result.displayName}&rdquo; and puts its centre{' '}
+        {apart.toFixed(1)} mi from where this place is.{' '}
+        {held
+          ? 'Sweeps around here search that — check which of the two is wrong.'
+          : 'Nothing has been saved, because a sweep would go and search there rather than here. Check which of the two is wrong.'}
+        {!held && (
+          <button className="key" onClick={onAccept}>
+            Search &ldquo;{result.displayName}&rdquo; anyway
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="dim">
       Rightmove calls this area &ldquo;{result.displayName}&rdquo;, and sweeps will search that.
-      {apart === null
-        ? ' No coordinate here to check it against — worth adding one before you trust the sweep.'
-        : apart > 1
-          ? ` Rightmove puts its centre ${apart.toFixed(1)} mi from where this place is — check which of the two is wrong before sweeping it.`
-          : ` Rightmove's centre agrees to within ${apart.toFixed(1)} mi.`}
+      {apart !== null
+        ? ` Rightmove's centre agrees to within ${apart.toFixed(1)} mi.`
+        : place.lat === null
+          ? ' No coordinate on this place to check it against — worth adding one before you trust the sweep.'
+          : ' Rightmove sent no centre this time, so there was nothing to check it against.'}
     </div>
   );
 }
@@ -1395,13 +1451,29 @@ function Places({
     return saved;
   };
 
-  /** Ask Rightmove what it calls this place, once, because somebody pressed a button. */
+  /** Ask Rightmove what it calls this place, once, because somebody pressed a button.
+   *
+   *  Asked by postcode where there is one — see `locationLookupFor`, which is where the reasoning
+   *  lives. The label was what went before, and a label is a nickname: "Work" resolved, confidently,
+   *  to Worksop. */
   async function resolve(place: Place) {
     setBusy(true);
-    const result = await attempt(() => resolveLocation(place.label), notify);
+    const result = await attempt(() => resolveLocation(locationLookupFor(place)), notify);
     setBusy(false);
     if (!result) return;
     setLocated({ ...located, [place.id]: result });
+    if (result.status !== 'resolved') return;
+    // Written straight away only when Rightmove's centre and this hunt's own agree. The note has
+    // the rest: past a mile it says how far apart they are and offers the identifier, and a press
+    // there is what saves it. See `CONFIRM_ABOVE_MILES`.
+    const apart = milesApart(place, result);
+    if (apart !== null && apart > CONFIRM_ABOVE_MILES) return;
+    await keep(place, result);
+  }
+
+  /** Write a resolved identifier onto its place. Both halves together, because half an identifier
+   *  builds a search URL missing the parameter Rightmove echoes into its own box (see `isSwept`). */
+  async function keep(place: Place, result: LocationResult) {
     if (result.status !== 'resolved') return;
     await patch(place, {
       locationIdentifier: result.locationIdentifier,
@@ -1514,7 +1586,11 @@ function Places({
           </div>
           {located[place.id] && (
             <div className="hunt-place-note">
-              <LocationNote result={located[place.id]!} place={place} />
+              <LocationNote
+                result={located[place.id]!}
+                place={place}
+                onAccept={() => void keep(place, located[place.id]!)}
+              />
             </div>
           )}
         </div>

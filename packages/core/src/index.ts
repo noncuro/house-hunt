@@ -27,7 +27,7 @@ export * from './recheck';
 // `types.ts`. They are not the same and collapsing them into one name is how a raw API response
 // ends up written to the database. So the barrel names what it carries, and anything wanting a
 // TfL wire shape imports it from `@house-hunt/core/tfl` deliberately.
-export { lookupPostcode, lookupPostcodes, type Point, type PostcodeLookup } from './postcode';
+export { lookupPostcode, lookupPostcodes, parseLatLon, type Point, type PostcodeLookup } from './postcode';
 export {
   BUS_COLOUR,
   FALLBACK_LINE_COLOUR,
