@@ -19,6 +19,7 @@ import {
   RESULTS_PER_PAGE,
   SWEEP_MARGIN_HOURS,
   describeCriteria,
+  missingFor,
   nextPageUrl,
   rightmoveSearchStart,
   sweepProgress,
@@ -570,6 +571,43 @@ check(
   'an unresolved place is searched by name alone',
   rightmoveSearchStart({ label: 'The office', locationIdentifier: null, displayLocationIdentifier: null }),
   'https://www.rightmove.co.uk/property-to-rent/search.html?searchLocation=The+office',
+);
+
+// What still has to happen to a scanned listing before the fill-in run stops offering it.
+//
+// The wrong answer here is invisible: the run opens a tab, the tab does everything it can, and the
+// listing is offered again tomorrow. Nothing errors and the count of work left simply never falls.
+// Two real listings sat in that loop, one since 2026-08-12, because they have no photographs and
+// the vision pass therefore fails every single time it is retried.
+console.log('\nmissingFor');
+check(
+  'a listing with photos and no analysis is still worth opening',
+  missingFor({ postcode: 'N1 7GU', imageCount: 12, analysed: false }),
+  ['photos not analysed yet'],
+);
+check(
+  'and once analysed it is complete',
+  missingFor({ postcode: 'N1 7GU', imageCount: 12, analysed: true }),
+  [],
+);
+// The fix. A listing with no pictures cannot be analysed, so waiting for its analysis is waiting
+// for something no number of tabs will produce.
+check(
+  'a listing with no photos at all is complete without an analysis',
+  missingFor({ postcode: 'W1H 1AA', imageCount: 0, analysed: false }),
+  [],
+);
+// And not a general forgiveness of failure: photos that exist and have not been read are still a
+// reason to open it, which is what keeps a genuine timeout being retried.
+check(
+  'no postcode is always worth opening for',
+  missingFor({ postcode: null, imageCount: 0, analysed: false }),
+  ['no postcode read from the listing'],
+);
+check(
+  'and both can be missing at once',
+  missingFor({ postcode: null, imageCount: 3, analysed: false }),
+  ['no postcode read from the listing', 'photos not analysed yet'],
 );
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
