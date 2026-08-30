@@ -407,6 +407,18 @@ check(
   true,
 );
 
+/* The journey lock (#76). Both writers to a journey key have to take it, or the race it closes is
+ * back with one of them holding a lock against nobody. Read out of the migrations rather than
+ * trusted, the same way the modes are. */
+console.log('journey lock');
+for (const fn of ['cache_travel', 'record_travel_failure']) {
+  const { path, sql } = latestMigrationDefining(fn);
+  const start = sql.search(new RegExp(`function\\s+public\\.${fn}\\b`));
+  // Up to the body's own terminator, so the next function's lock cannot answer for this one.
+  const body = sql.slice(start, sql.indexOf('\n$$;', start));
+  check(`${fn} takes the journey lock (${path})`, /perform\s+public\.lock_travel_journey\(/.test(body), true);
+}
+
 if (failures > 0) {
   console.error(`\n${failures} failing`);
   process.exit(1);
