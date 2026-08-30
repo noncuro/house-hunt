@@ -480,11 +480,23 @@ function stdDev(values: number[], mean: number): number {
 
 /** How far the descent may go before it is made to stop.
  *
- *  It was the *number of steps every fit took*, and 800 of them at this step size reaches the
- *  plateau on standardised features. It is a ceiling now, reached only by a fit that has not
- *  settled by then: `CONVERGED` below ends the loop as soon as the parameters stop moving, which on
- *  a warm start is far sooner. Cold fits are unaffected — they were already running to 800 and
- *  still do. */
+ *  It was the *number of steps every fit took*, and 800 at this step size reaches the plateau on
+ *  standardised features. It is a ceiling now: `CONVERGED` below ends the loop as soon as the
+ *  parameters stop moving, warm-started or not — the break is deliberately not gated on the warm
+ *  start, because a cold fit that has stopped moving has equally stopped.
+ *
+ *  Which of the two actually ends a given descent is a question about the data, and it is measured
+ *  rather than assumed. On the 379-row fixture the *ceiling* stops nearly every leg — 120 of 120
+ *  warm ones in `love-vs-no` — because the labels carry real signal, the optimum sits far from the
+ *  prior, and at this step size the last stretch of the path is still moving by more than a
+ *  millionth at step 800. The tolerance earns its place at the other end of the range: the sparser
+ *  the training set the earlier it fires, and at 23 examples, which `MIN_PER_CLASS` permits, a cold
+ *  fit at λ=10 has settled by step 195.
+ *
+ *  So this saves a new hunt's retrain and not an established one's, which is the reverse of how it
+ *  was first described here. Anything claiming a large speedup from the stopping rule was measured
+ *  on data whose labels are independent of its features; there the optimum is the prior, and every
+ *  fit converges almost at once. */
 const MAX_ITERATIONS = 800;
 
 /** When the parameters have stopped moving, measured as the largest change any single one of them
