@@ -140,6 +140,26 @@ interactive path rather than the backfill, to protect a counter. Not worth it at
 revisiting the day a `travel_time` row becomes something the application itself deletes, because
 that is when the leftover row stops being inert.
 
+### Two retrains at once can leave the older model in the row
+
+`set_project_model` is a plain write. A retrain reads the project's verdicts, fits for a few
+seconds, and writes; two of them overlapping means the one that started earlier — and therefore
+fitted on the older set of verdicts — can land last and overwrite the newer model. Nothing detects
+it, and the row that every surface trusts to score flats is then fitted to an account of the hunt
+that somebody has already changed.
+
+It is old, not new: the Edge Function had exactly the same unguarded write. What changed when the
+retrain moved to a Vercel route is the size of the window. On Supabase the fit was cut off after two
+seconds of CPU, which is a poor way to be safe but did bound the overlap; the route's `maxDuration`
+is 300 seconds.
+
+**Closing it** is not an advisory lock in `set_project_model` — that serialises the write while
+leaving the read-fit-write cycle interleaved, so the stale model still wins, and it would look
+fixed. It means giving the fit a revision to carry: the RPC takes the verdict state the model was
+built from and refuses the write if it has moved since, so the loser is told to refit rather than
+silently discarded. That is a migration and a check of its own, which is why it is here and not in
+the pull request that widened the window.
+
 ## Wanted, not yet built
 
 - **Customisable search criteria** (bedrooms, price, property type, radius, Let Agreed) — phase 7

@@ -119,7 +119,22 @@ The function needs `OPENAI_API_KEY` set once as a project secret:
 supabase secrets set OPENAI_API_KEY=... --project-ref <ref>
 ```
 
-`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected by the platform; don't set them.
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected into *Edge Functions* by the platform;
+don't set them there.
+
+**A route on the website is a different matter, and this is a trap worth reading twice.** Vercel
+injects neither. Anything under `apps/web/src/app/api/` reads the project URL from
+`NEXT_PUBLIC_SUPABASE_URL`, which is already set — but the privileged key has no such substitute and
+has to be added to the Vercel project (Settings → Environment Variables), and to the workspace-root
+`.env` for `pnpm dev:web`.
+
+Set it as **`SUPABASE_SECRET_KEY`** (an `sb_secret_…`), which is the counterpart of the
+`sb_publishable_…` this project already uses. The routes also accept the legacy
+`SUPABASE_SERVICE_ROLE_KEY`, because that is the name the Supabase↔Vercel integration syncs — so a
+project with that integration connected has a working key already, under a name nobody chose.
+
+Without either, the failure is a 500 at the moment somebody presses the button. `docs/vercel-migration.md`
+says why these are moving.
 
 `pnpm deploy:function` deploys every function, not only `analyse`. One of them, `listing`, is what
 lets a phone add a flat: it fetches the one listing page somebody pasted or shared and decodes it
