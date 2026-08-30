@@ -9,8 +9,11 @@
  *  two branches open at once: each author read `origin/main`, correctly found the minute free, and
  *  could not see the other branch.
  *
- *  This is where that is caught, because GitHub Actions runs against the merge result: the second
- *  branch's CI sees both files and goes red before it can land.
+ *  This is where that is caught: CI runs it against the merge result, so it is red on the second
+ *  pull request when that branch is current with main, and otherwise on the `main` push straight
+ *  after it lands. A `pull_request` run is not recomputed when the base moves, so a branch behind
+ *  main can merge on a stale green tick — rebase before merging when another migration is in
+ *  flight.
  *
  *  A name that is not `YYYYMMDDHHMMSS_lower_snake.sql` fails for the same reason rather than a
  *  tidiness one — a version string nobody can parse is a version string nobody can compare, and

@@ -66,8 +66,10 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   function or policy is simply absent, in production only, because CI starts from an empty database
   and applies both files happily. It nearly landed twice in one day, both times between two branches
   open at once — each author checked `origin/main`, correctly found the minute free, and could not
-  see the other branch. `pnpm check:migrations` is what catches it once both are on main: Actions
-  runs against the merge result, so the second branch goes red before it can land.
+  see the other branch. `pnpm check:migrations` is what catches it, run against the merge result:
+  red on the second pull request when that branch is current with main, and otherwise red on the
+  `main` push right after it lands. A `pull_request` tick is not recomputed when the base moves,
+  so rebase before merging when another migration is in flight.
 - **Change anything that ends up inside the built extension — `apps/extension/`, and the
   `packages/core` and `packages/ui` source bundled into it — and bump
   `apps/extension/package.json`'s `version`, and `EXPECTED_EXTENSION_VERSION` in
