@@ -32,10 +32,33 @@ export type Lens =
 
 export const EVERYTHING: Lens = { kind: 'all' };
 
-/** Where Places opens. The shortlist is the working set — the flats somebody liked enough to do
- *  something about — and it was landing on the whole hunt instead, which on a swept project is
- *  hundreds of listings nobody has looked at and the shortlisted handful somewhere inside them. */
-export const DEFAULT_LENS: Lens = { kind: 'stage', stage: 'shortlisted' };
+/** Where Places opens: everything in the funnel that is still moving through it.
+ *
+ *  It opened on `shortlisted` before, which is a single step and an exact match — so the screen
+ *  showed the flats nobody had done anything about yet, and dropped each one at the moment somebody
+ *  did. Ring the agent and it left the view; book a viewing and it stayed gone. The places furthest
+ *  along, which are the ones with something at stake, were the hardest to find, and the only way
+ *  back to them was to know which step to click.
+ *
+ *  This is still the working set the shortlist default was reaching for — it is not the whole hunt,
+ *  which on a swept project is hundreds of listings nobody has opened. It is the same idea with the
+ *  bug taken out: liking a place puts it in the funnel, and it stays on this screen until it is
+ *  archived or gone. */
+export const DEFAULT_LENS: Lens = { kind: 'stage', stage: 'live' };
+
+/** How the cards pile themselves up under a lens.
+ *
+ *  Two questions, and which one the screen is answering depends on what it is showing. Under the
+ *  funnel lens the piles are the steps, newest-first, because "how far has this got" is the whole
+ *  reason those flats are on screen together. Anywhere else the piles are the verdicts, which is
+ *  the question the cards were always grouped by. Under a verdict lens there is nothing to group:
+ *  a single heading over everything says less than no heading at all. */
+export type Grouping = 'stage' | 'verdict' | null;
+
+export function groupingFor(lens: Lens): Grouping {
+  if (lens.kind === 'group') return null;
+  return lens.kind === 'stage' && lens.stage === 'live' ? 'stage' : 'verdict';
+}
 
 /** The board draws the funnel as columns, so a stage lens would leave it one populated column and
  *  five empty ones — there the filter and the layout are the same fact. A verdict lens is a
@@ -112,12 +135,17 @@ export function chipsFor(
   offMarket: ReadonlySet<string> | null,
 ): { main: Chip[]; aside: Chip[] } {
   const gone = entries.filter((e) => offMarket?.has(e.rightmoveId) ?? false);
-  const live = entries.filter((e) => !(offMarket?.has(e.rightmoveId) ?? false));
-  const funnel: FunnelCounts = funnelCounts(live);
+  // Still listed, which is a different question from `funnel.live` below — that one is about the
+  // stage somebody set, this one about whether the flat is still on the market at all.
+  const onMarket = entries.filter((e) => !(offMarket?.has(e.rightmoveId) ?? false));
+  const funnel: FunnelCounts = funnelCounts(onMarket);
   const groups: Record<Group, number> = { excited: 0, maybe: 0, rejected: 0, unrated: 0 };
-  for (const entry of live) groups[groupOf(entry.verdicts)] += 1;
+  for (const entry of onMarket) groups[groupOf(entry.verdicts)] += 1;
 
   const main: Chip[] = [
+    // First, and pressed when the screen opens. It is the union of the steps after it rather than a
+    // seventh step, so it sits at the head of the row the way a total does.
+    { lens: { kind: 'stage', stage: 'live' }, label: FILTER_LABEL.live, count: funnel.live },
     ...STAGES.filter((s) => s.value !== 'archived').map((s) => ({
       lens: { kind: 'stage', stage: s.value } as Lens,
       label: s.label,

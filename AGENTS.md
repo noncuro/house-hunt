@@ -25,6 +25,13 @@ pnpm compile        # typecheck both apps
 pnpm icons          # redraw the website's app icons (only when the mark itself changes)
 ```
 
+**`pnpm sweep` runs a whole sweep with nobody watching** — a real Chrome, the real extension, and
+the button on the Triage tab, clicked. It is the one thing in `tools/` that is *meant* to reach
+Rightmove, which is why its header restates what keeps it inside the standing rule: it presses the
+button, and it does not have its own idea of the pace. `pnpm sweep:sign-in` does the one-time
+sign-in that leaves a profile behind. **`docs/sweep-runner.md`** is the mini-PC recipe — systemd,
+Xvfb, and why updating the extension is an `ExecStartPre` rather than its own timer.
+
 The extension bundles only `WXT_*` vars, the website only `NEXT_PUBLIC_*`; both point at the same
 Supabase project. `WXT_WEB_APP_URL` is where the extension sends sign-ins and the origin its
 bridge trusts. Nothing runs locally in production: analysis, travel/postcode resolution, invites
