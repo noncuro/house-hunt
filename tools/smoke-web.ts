@@ -281,24 +281,29 @@ async function checkSession({ page }: Stage): Promise<void> {
  *  the screen drew a different set. One lens over all four renderings now, and it starts at
  *  Everything — which is a number the fixture decides. */
 async function checkList({ page }: Stage): Promise<void> {
-  // Places opens on the shortlist, not on the whole hunt. The two flats the fixture rates are the
-  // two the `enter_funnel` trigger puts there, so this asserts the default lens and that trigger at
-  // once — and it is the assertion that fails if the screen ever goes back to opening on everything,
-  // which on a swept project is hundreds of listings nobody has looked at.
+  // Places opens on what is in play — every step of the funnel except archived — and not on the
+  // whole hunt. The two flats the fixture rates are the two the `enter_funnel` trigger puts in the
+  // funnel, so this asserts the default lens and that trigger at once. Two ways for it to fail and
+  // both have happened: opening on everything, which on a swept project is hundreds of listings
+  // nobody has looked at; and opening on one step, which hid every flat the moment somebody moved
+  // it further along. `checkFunnel` holds the assertion for the second.
   const cards = await page.locator('[data-testid="flat-card"]').count();
-  const shortlisted = await openLens(page, 'shortlisted');
-  console.log(`places: ${cards} card(s) by default, at "shortlisted"`);
-  if ((await page.locator('[data-testid="lens-shortlisted"]').getAttribute('aria-pressed')) !== 'true') {
-    note('Places did not open on the shortlist');
+  // Read before `openLens`, because `openLens` clicks: afterwards the chip is pressed whatever the
+  // screen opened on, so the question has only one possible answer and the assertion cannot fail.
+  const openedOnLive = await page.locator('[data-testid="lens-live"]').getAttribute('aria-pressed');
+  const inPlay = await openLens(page, 'live');
+  console.log(`places: ${cards} card(s) by default, at "in play"`);
+  if (openedOnLive !== 'true') {
+    note('Places did not open on what is in play');
   }
-  if (cards !== shortlisted) {
-    note(`the shortlisted chip says ${shortlisted} and the screen drew ${cards}`);
+  if (cards !== inPlay) {
+    note(`the in-play chip says ${inPlay} and the screen drew ${cards}`);
   }
   if (await page.locator('[data-testid="lens-all"]').count()) {
     note('the toolbar still offers an "everything" chip');
   }
   for (const id of [fixtureId(1), fixtureId(4)]) {
-    if (!(await page.locator(`#card-${id}`).count())) note(`${id} is rated, so it should be shortlisted`);
+    if (!(await page.locator(`#card-${id}`).count())) note(`${id} is rated, so it should be in play`);
   }
 
   // And the flats outside the funnel, which is where the unrated ones sit and is the other half of
@@ -310,7 +315,7 @@ async function checkList({ page }: Stage): Promise<void> {
   for (const id of [fixtureId(2), fixtureId(5)]) {
     if (!(await page.locator(`#card-${id}`).count())) note(`${id} is in no funnel step but is not drawn there`);
   }
-  await openLens(page, 'shortlisted');
+  await openLens(page, 'live');
 
   // The shortlist read is the whole point: a card that rendered with no price or no address is a
   // join that half-worked, which looks like a design choice rather than a bug.
@@ -337,7 +342,7 @@ async function checkList({ page }: Stage): Promise<void> {
   if ((await page.locator('[data-testid="flat-card"]').count()) !== narrowed) {
     note('clicking the chip that is already on changed what the screen shows');
   }
-  await openLens(page, 'shortlisted');
+  await openLens(page, 'live');
 
   await page.screenshot({ path: resolve(SHOTS, 'web-list.png'), fullPage: true });
 
@@ -502,7 +507,7 @@ async function checkFunnel({ page }: Stage): Promise<void> {
     }
   }
 
-  const panel = await openFlat(page, id);
+  let panel = await openFlat(page, id);
   if (!panel) return;
 
   await panel.locator('[data-testid="stage-enquired"]').click();
@@ -519,6 +524,21 @@ async function checkFunnel({ page }: Stage): Promise<void> {
   if (moved?.setBy !== fixture.userId) {
     note(`the move is attributed to ${moved?.setBy ?? 'nobody'}, not to whoever clicked`);
   }
+
+  // Moving a flat forward must not take it off the screen it was moved on.
+  //
+  // This is the whole reason the default lens is the funnel rather than one step of it. Opening on
+  // `shortlisted` meant an exact match, so ringing the agent about a place removed it from the view
+  // — and nothing said so, because the flat had gone somewhere real and the screen stayed correct
+  // about the thing it was filtered to. The further along a place got, the harder it was to find,
+  // which is backwards for the ones with something at stake.
+  await closeFlat(page);
+  await openLens(page, 'live');
+  if (!(await page.locator(`#card-${id}`).count())) {
+    note(`${id} was moved to "reached out" and dropped off the default view — the funnel default has regressed`);
+  }
+  panel = await openFlat(page, id);
+  if (!panel) return;
 
   // Archiving is the one step that asks why, and nothing is written until it is answered.
   await panel.locator('[data-testid="stage-archived"]').click();
@@ -537,6 +557,14 @@ async function checkFunnel({ page }: Stage): Promise<void> {
   }
 
   await closeFlat(page);
+
+  // The other half of the same rule: archived is the one step that means it has stopped, so the
+  // flat leaves the in-play view. A lens that kept it would be a list of everything ever liked,
+  // growing forever, which is what "in play" exists not to be.
+  await openLens(page, 'live');
+  if (await page.locator(`#card-${id}`).count()) {
+    note(`${id} is archived and is still drawn under "in play"`);
+  }
 
   // The board draws the same fact as a layout rather than as a filter over one, which makes it the
   // rendering that could disagree with the chips without anybody noticing.
@@ -636,8 +664,8 @@ async function checkOffMarket({ page }: Stage): Promise<void> {
   }
   const cleared = await settleOn(() => offMarketReason(id), (r) => r === null);
   if (cleared !== null) note(`${id} is still excluded after being put back on the market`);
-  await openLens(page, 'shortlisted');
-  if (!(await card.count())) note(`${id} did not come back to the shortlist it left`);
+  await openLens(page, 'live');
+  if (!(await card.count())) note(`${id} did not come back to the view it left`);
 }
 
 /** The compare table, which is its own read path and has failed as a blank screen before. */
@@ -682,7 +710,7 @@ async function checkTable({ page }: Stage): Promise<void> {
   await ticks.nth(1).click();
 
   await page.screenshot({ path: resolve(SHOTS, 'web-table.png'), fullPage: true });
-  await openLens(page, 'shortlisted');
+  await openLens(page, 'live');
 }
 
 async function checkMap({ page }: Stage): Promise<void> {
