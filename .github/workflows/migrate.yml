@@ -6,9 +6,10 @@
 # somebody remembering to. `supabase_migrations.schema_migrations` now exists and is backfilled with
 # all 27, so `db push` applies only what is new.
 #
-# Deliberately narrow. It runs on main only, only when a file under supabase/migrations/ changed,
-# and it never touches Edge Functions — those hold secrets, are deployed with `pnpm deploy:function`,
-# and refuse stale copies of the shared sources, which is a check that wants a person in front of it.
+# Deliberately narrow. It runs on main only, and only when a file under supabase/migrations/ changed.
+# It used to say it stayed clear of the Edge Functions as well, which held secrets and were deployed
+# by hand. There are none: every route is `apps/web/src/app/api/`, Vercel deploys them on the same
+# push, and the schema is the only thing left that a merge does not carry to production by itself.
 #
 # The race this does not close: Vercel builds on the same push, so there is a window where the new
 # website is live against the old schema. It is a minute or two and the alternative is gating

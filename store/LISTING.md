@@ -122,7 +122,7 @@ first screen and the rejection reads as "we could not access the functionality".
 
 The account below has to exist on the live project before you submit, and it has to have something
 in it: an empty shortlist and a listing with no analysis looks broken rather than invite-only. Seed
-it with the demo data (`pnpm seed:demo`) so the reviewer sees the product working.
+it with demo data so the reviewer sees the product working — there is no seeder yet (#133).
 
 ```
 This extension is invite-only, so please use the account below.
@@ -145,12 +145,12 @@ view has content in it. Ratings you set are shared with that demo project only.
 
 **Before submitting**, create it and check it:
 
-```bash
-# Create the reviewer account on the live project (service role; run from the repo root).
-pnpm reviewer:create            # prints the address and the generated password
+**`pnpm reviewer:create` does not exist yet — #133.** It was written into this checklist before it
+was built, so this step has never been runnable. Until it is, make the account by hand: sign-up is
+off (`enable_signup = false`), so add it the way any member is added and set the password with
+`python3 tools/set-password.py <address>`.
 
-# Then sign in with it yourself once, in a clean Chrome profile, and walk the four steps above.
-```
+Then sign in with it yourself once, in a clean Chrome profile, and walk the four steps above.
 
 Rotate or delete the account once the review passes — it is a real account with a real password,
 and it should not outlive the reason it existed.
