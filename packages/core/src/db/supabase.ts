@@ -29,6 +29,7 @@ import type {
   Invite,
   InviteResult,
   LocationResult,
+  PlacePatch,
   ProjectMember,
   ProjectSummary,
   RedeemResult,
@@ -734,9 +735,16 @@ export async function setProjectSettings(preferences: HuntPreferences): Promise<
 // ------------------------------------------------------------------------------------------------
 
 const PLACE_COLUMNS =
-  'id, label, postcode, lat, lon, rightmove_location_id, display_location_id, sweep_radius_miles, max_days_since_added';
+  'id, label, postcode, lat, lon, rightmove_location_id, display_location_id, sweep_radius_miles, max_days_since_added, travel_timed';
 
 function toPlace(r: any): Place {
+  // The one column here whose absence is indistinguishable from a deliberate answer. `undefined` is
+  // falsy, and `travelDestinations` filters on it, so a select that dropped `travel_timed` would
+  // stop timing journeys to every place in the hunt and look exactly like somebody having switched
+  // them all off. Every other field is either nullable already or fails visibly when it is missing.
+  if (typeof r.travel_timed !== 'boolean') {
+    throw new Error('place row has no travel_timed — was it left out of PLACE_COLUMNS?');
+  }
   return {
     id: r.id,
     label: r.label,
@@ -752,6 +760,7 @@ function toPlace(r: any): Place {
       ? null
       : Number(r.sweep_radius_miles),
     maxDaysSinceAdded: r.max_days_since_added ?? null,
+    travelTimed: r.travel_timed,
   };
 }
 
@@ -786,20 +795,13 @@ export async function addPlace(label: string, postcode: string): Promise<Place> 
   return toPlace(data);
 }
 
-/** Change what a place is *for*: whether it is swept around, how far, and how often.
+/** Change what a place is *for*: whether journeys are timed to it, whether it is swept around, how
+ *  far, and how often.
  *
  *  Deliberately not a general-purpose row patcher. The label and the postcode are what the place
  *  *is* — changing either means resolving a coordinate again, which `addPlace` does on the way in —
  *  and everything here is what the hunt *does with* it. */
-export async function updatePlace(
-  id: string,
-  patch: {
-    locationIdentifier?: string | null;
-    displayLocationIdentifier?: string | null;
-    sweepRadiusMiles?: number | null;
-    maxDaysSinceAdded?: number | null;
-  },
-): Promise<Place> {
+export async function updatePlace(id: string, patch: PlacePatch): Promise<Place> {
   const projectId = await activeProjectId();
   const row: Record<string, unknown> = {};
   if (patch.locationIdentifier !== undefined) row.rightmove_location_id = patch.locationIdentifier;
@@ -808,6 +810,7 @@ export async function updatePlace(
   }
   if (patch.sweepRadiusMiles !== undefined) row.sweep_radius_miles = patch.sweepRadiusMiles;
   if (patch.maxDaysSinceAdded !== undefined) row.max_days_since_added = patch.maxDaysSinceAdded;
+  if (patch.travelTimed !== undefined) row.travel_timed = patch.travelTimed;
   if (Object.keys(row).length === 0) throw new Error('nothing to change about this place');
 
   const { data, error } = await db()

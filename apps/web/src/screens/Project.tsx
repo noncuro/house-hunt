@@ -1407,9 +1407,10 @@ function LocationNote({
 
 /** The places this hunt cares about, and what it does with each one.
  *
- *  One list, three jobs, and each row says which it can do. Every place with a postcode is timed by
- *  walking, bike and transit; every place with coordinates fixes a listing ("0.4 mi NE of Angel");
- *  and a place you tick "search around" becomes a sweep centre.
+ *  One list, three jobs, and each row says which it can do. Every place with coordinates fixes a
+ *  listing ("0.4 mi NE of Angel"); a place you give a postcode and leave timed is measured by
+ *  walking, bike and transit; and a place you give a radius becomes a sweep centre. The last two
+ *  are independent — Angel can be both, and neither switch writes the other.
  *
  *  This was two sections on two pages — places here, neighbourhoods under the sweep — with their
  *  own add forms, their own lists, and the compass quietly merging them on every card. Angel had to
@@ -1520,13 +1521,31 @@ function Places({
     if (saved && miles !== null && saved.locationIdentifier === null) await resolve(saved);
   }
 
+  /** Whether the hunt times journeys to this place.
+   *
+   *  Turning it off takes a row off the panel, a row off the detail pane and three columns off the
+   *  compare table for everybody in the hunt, and stops the scheduled backfill asking for those
+   *  legs. No confirm: it is one click to undo, and this screen spends its one `confirm()` on
+   *  removing a place, which cascades a whole sweep history. A line saying nothing was destroyed is
+   *  what the moment needs, because the columns vanishing looks like data loss and is not
+   *  — `travel_time` is keyed on a pair of postcodes and has never known what a place is. */
+  async function setTimed(place: Place, timed: boolean) {
+    const saved = await patch(place, { travelTimed: timed });
+    if (saved && !timed) {
+      notify(
+        `${place.label} is no longer timed, for everyone in the hunt. The journeys already worked ` +
+          'out are kept, and come back if you turn this on again.',
+      );
+    }
+  }
+
   return (
     <section className="setting hunt-card">
       <h2 className="hunt-h">Places</h2>
       <Explainer lead="The office, the in-laws, the neighbourhoods you are looking in.">
-        Every one is timed by walking, bike and public transport, and fixes each listing on the
-        compass — &ldquo;0.4 mi NE of Angel&rdquo;. Give one a radius and it also becomes somewhere
-        the sweep goes looking. {TRANSIT_BASIS_NOTE}
+        Every one fixes each listing on the compass — &ldquo;0.4 mi NE of Angel&rdquo;. Say which
+        ones you want journey times to, by walking, bike and public transport, and give one a radius
+        to make it somewhere the sweep goes looking. {TRANSIT_BASIS_NOTE}
       </Explainer>
       {places.length === 0 && (
         <p className="dim">Nothing yet — add the office, the in-laws, the areas you are searching.</p>
@@ -1549,6 +1568,27 @@ function Places({
             </button>
 
             <div className="hunt-place-controls">
+            {/* Travel first, because it is what a place does the moment it is added — the only way
+                to add one is by giving it a postcode — and searching around it is the job a place
+                is given afterwards. Disabled rather than off where there is no postcode: "cannot be
+                routed to" and "not worth routing to" are two different states and the stored flag
+                keeps whatever it says, so it comes back into force if a postcode ever arrives. */}
+            <Pill
+              label={`Travel times to ${place.label}`}
+              title={
+                place.postcode === null
+                  ? 'No postcode on this place, so there is nothing to route to. Add one and this becomes a choice.'
+                  : 'Whether this hunt times journeys here. Off takes it off the panel, the detail pane and the compare table for everyone, and stops the scheduled lookups. Nothing already worked out is thrown away.'
+              }
+              faint={!place.travelTimed}
+              disabled={busy || place.postcode === null}
+              value={place.travelTimed ? 'on' : 'off'}
+              onPick={(v) => void setTimed(place, v === 'on')}
+            >
+              <option value="on">timing journeys here</option>
+              <option value="off">not timing journeys</option>
+            </Pill>
+
             <Pill
               label={`Search around ${place.label}`}
               title="How far around this place Rightmove searches. The same steps its own radius control offers."

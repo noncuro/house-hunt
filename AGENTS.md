@@ -214,6 +214,16 @@ script in your own browser. So:
   never fetched anything for a flat nobody opened, which is how adding a place left a column of
   dashes that filled in only by hand.
 
+  **Which places count as destinations is written twice — `travelDestinations` in
+  `packages/core/src/hubs.ts` and the `where` clause of `travel_gaps` — and both have to say the
+  same thing.** A postcode and `place.travel_timed`, two clauses, because "cannot be routed to" and
+  "not worth routing to" are different facts and the screen says different things about them. The
+  SQL copy is the one that gets forgotten and the one the money runs through: a clause missing there
+  is the backfill fetching journeys nobody wants forever, three legs per flat, with every screen
+  looking right. `pnpm check:travel` reads the clause out of the live migration for that reason.
+  Switching a place off never deletes a `travel_time` row — that table is keyed on a pair of
+  postcodes and has never known what a place is — so switching it back on is the whole undo.
+
   **The schedule lives in the database, and the credentials it uses live in the project's vault.** It
   was a GitHub Actions workflow first, which is a reasonable place for a cron and was the wrong one
   here: it needed two repository secrets nobody knew were missing, so it failed at its own guard 40

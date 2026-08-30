@@ -79,6 +79,7 @@ export interface Measurable {
   postcode: string | null;
   lat: number | null;
   lon: number | null;
+  travelTimed: boolean;
 }
 
 /** The bars this place can actually answer.
@@ -87,6 +88,12 @@ export interface Measurable {
  *  coordinate, because that is what a distance is between. Most places have both; the neighbourhoods
  *  folded in from the old hub list have only the second, and a place whose postcode never resolved
  *  to a point has only the first.
+ *
+ *  A place nobody wants timed loses the three journey modes and keeps the straight line, which is
+ *  the one place this file answers differently from `travelDestinations`. "Within half a mile of
+ *  Angel" is exactly the filter a neighbourhood you are searching is good for, and it is measured
+ *  from a coordinate we already hold rather than fetched from anybody. A stored bar that has just
+ *  lost its mode is dropped by `withKnownPlaces`, so the pile widens rather than reading `unknown`.
  *
  *  Empty is a real answer and means this place cannot be measured to at all. A bar against one would
  *  read `unknown` for every flat in the hunt — which keeps the whole pile, so the control sits there
@@ -99,7 +106,7 @@ export function barModesFor(place: Measurable & { id?: string }): BarMode[] {
   // the distance came with the listing. Miles, and only miles, since it is Rightmove's figure and
   // there is nowhere fixed to route a journey from.
   if (place.id === NEAREST_STATION) return [CROW];
-  const modes: BarMode[] = place.postcode === null ? [] : [...TRAVEL_MODES];
+  const modes: BarMode[] = place.postcode === null || !place.travelTimed ? [] : [...TRAVEL_MODES];
   if (place.lat !== null && place.lon !== null) modes.push(CROW);
   return modes;
 }
@@ -135,6 +142,7 @@ export const NEAREST_STATION_PLACE: Place = {
   displayLocationIdentifier: null,
   sweepRadiusMiles: null,
   maxDaysSinceAdded: null,
+  travelTimed: false,
 };
 
 /** Somewhere a bar can be measured to: the hunt's own places, and the station every flat has. The

@@ -356,6 +356,7 @@ function hubRow(over: Partial<Place>): Place {
     displayLocationIdentifier: null,
     sweepRadiusMiles: 1,
     maxDaysSinceAdded: null,
+    travelTimed: true,
     ...over,
   };
 }
