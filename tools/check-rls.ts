@@ -10,6 +10,8 @@
  *    - every project-scoped table shows zero of project B's rows
  *    - every write into one of B's rows is refused
  *    - a DELETE against each of the five global fact tables removes nothing
+ *    - and a SELECT against each of them shows only the listings A's own project has opened —
+ *      the enumeration D14 deferred, which is now closed rather than accepted
  *    - `record_property` naming a project the caller is not in is refused
  *    - the `anon` role — the one the publishable key in the bundle carries — can read and write
  *      nothing, anywhere
@@ -114,6 +116,17 @@ function nothing(name: string, result: Result) {
   fail(name, `saw ${rows} row(s)`);
 }
 
+/** The opposite of `nothing`, and the half a scoping change most needs: at least one row came back.
+ *  `allowed` is not enough once a policy has a predicate in it — a policy that filters everything
+ *  away returns no error at all, so every read still reads as permitted while the app shows a blank
+ *  page. */
+function sees(name: string, result: Result) {
+  if (result.error) return fail(name, `expected rows, got: ${result.error.message}`);
+  const rows = Array.isArray(result.data) ? result.data.length : result.data === null ? 0 : 1;
+  if (rows === 0) fail(name, 'nothing came back — the policy is filtering out rows it must show');
+  else ok(name);
+}
+
 function empty(name: string, result: Result) {
   if (result.error) return fail(name, `errored instead of returning nothing: ${result.error.message}`);
   const rows = Array.isArray(result.data) ? result.data.length : result.data === null ? 0 : 1;
@@ -191,9 +204,11 @@ async function tearDown() {
   await admin.from('project').delete().like('name', 'rls-check-%');
   await admin.from('property_analysis').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW]);
   await admin.from('property').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW]);
-  await admin.from('travel_time').delete().eq('origin_postcode', 'RLS 1AA');
-  await admin.from('station_walk').delete().eq('postcode', 'RLS 1AA');
-  await admin.from('station_point').delete().eq('name', 'RLS Check Station');
+  // `property_price` cascades from `property` above; these three do not — they are keyed on a
+  // postcode or a station name, which is the whole reason they need a policy of their own.
+  await admin.from('travel_time').delete().in('origin_postcode', ['RLS 1AA', 'RLS 1BB']);
+  await admin.from('station_walk').delete().in('postcode', ['RLS 1AA', 'RLS 1BB']);
+  await admin.from('station_point').delete().in('name', ['RLS Check Station', 'RLS Other Station']);
 
   const { data } = await admin.auth.admin.listUsers({ perPage: 1000 });
   for (const user of data?.users ?? []) {
@@ -267,6 +282,18 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
     .insert({ postcode: 'RLS 1AA', station_name: 'RLS Check Station', seconds: 300 })).error);
   must('seeding shared facts', (await admin.from('travel_time')
     .insert({ origin_postcode: 'RLS 1AA', dest_postcode: 'RLS 2BB', mode: 'transit', seconds: 900, basis: 'weekday-0900' })).error);
+
+  // The same three caches again, hung off B's flat instead of A's. Without them the read
+  // assertions below could only say "A can still read the caches", which a `using (true)` policy
+  // satisfies perfectly — these are the rows that make the difference visible.
+  must("seeding B's station", (await admin.from('station_point')
+    .insert({ name: 'RLS Other Station', lat: 51.6, lon: -0.2 })).error);
+  must("seeding B's walk", (await admin.from('station_walk')
+    .insert({ postcode: 'RLS 1BB', station_name: 'RLS Other Station', seconds: 420 })).error);
+  must("seeding B's travel", (await admin.from('travel_time')
+    .insert({ origin_postcode: 'RLS 1BB', dest_postcode: 'RLS 2BB', mode: 'transit', seconds: 1100, basis: 'weekday-0900' })).error);
+  must("seeding B's price history", (await admin.from('property_price')
+    .insert({ rightmove_id: LISTING_B, price: '£3,000 pcm' })).error);
 
   // Project B's opinions — the rows A must never see or touch.
   must("seeding B's place", (await admin.from('place')
@@ -421,7 +448,7 @@ async function main() {
   is("A's cap is unchanged", Number((await admin.from('profile').select('monthly_cap_usd').eq('id', userA).single()).data?.monthly_cap_usd), 20);
 
   // ----------------------------------------------------------------------------------------- //
-  console.log('\nthe five global fact tables: read by anyone signed in, written by nobody');
+  console.log('\nthe five global fact tables: read for my own hunt, written by nobody');
 
   const GLOBAL = ['property', 'property_analysis', 'station_point', 'station_walk', 'travel_time'] as const;
   const before: Record<string, number> = {};
@@ -431,8 +458,28 @@ async function main() {
     if ((n ?? 0) === 0) fail(`${table}: the fixture`, 'nothing in the table, so a DELETE proves nothing');
   }
 
-  allowed('property: A can read a listing only B has linked', await a.from('property').select('*').eq('rightmove_id', LISTING_B).single());
-  allowed('property_analysis: A can read an analysis B paid for', await a.from('property_analysis').select('*').eq('rightmove_id', LISTING_B).single());
+  // Both of these used to read `allowed`, and that was the bug (#67). The cache is still shared —
+  // the analysis B paid for is read for free the moment A's project opens the flat, which is what
+  // the `record_property` block further down demonstrates — but until then A has no business
+  // knowing that B is looking at B Street. Between two people hunting together seeing the same
+  // flats is the point; between two households it is a disclosure of what somebody else is hunting
+  // for, where, and at what price.
+  nothing("property: a listing only B has opened", await a.from('property').select('*').eq('rightmove_id', LISTING_B).maybeSingle());
+  nothing("property_analysis: the analysis B paid for", await a.from('property_analysis').select('*').eq('rightmove_id', LISTING_B).maybeSingle());
+  nothing("property_price: what B's flat has cost", await a.from('property_price').select('*').eq('rightmove_id', LISTING_B));
+  nothing("travel_time: a journey from B's flat", await a.from('travel_time').select('*').eq('origin_postcode', 'RLS 1BB'));
+  nothing("station_walk: the walk from B's flat", await a.from('station_walk').select('*').eq('postcode', 'RLS 1BB'));
+  nothing("station_point: a station only B's flat is near", await a.from('station_point').select('*').eq('name', 'RLS Other Station'));
+
+  // And the assertion that would have caught the whole thing: no filter at all. Written in both
+  // directions on purpose — a policy that returns nothing passes every "cannot see B" test in this
+  // file and is a database that has stopped working.
+  const wholeTable = await a.from('property').select('rightmove_id');
+  const listed = ((wholeTable.data ?? []) as Array<{ rightmove_id: string }>).map((r) => r.rightmove_id);
+  if (wholeTable.error) fail('property: selecting the whole table', `errored rather than scoping: ${wholeTable.error.message}`);
+  else if (listed.includes(LISTING_B)) fail('property: selecting the whole table', `enumerated B's listing among ${listed.length} row(s)`);
+  else if (!listed.includes(LISTING_A)) fail('property: selecting the whole table', "A's own listing is missing — scoped past the point of working");
+  else ok('property: selecting the whole table shows this hunt and no other');
 
   refused('property: delete everything', await a.from('property').delete().neq('rightmove_id', '').select());
   refused('property_analysis: delete everything', await a.from('property_analysis').delete().neq('rightmove_id', '').select());
@@ -497,6 +544,55 @@ async function main() {
     }),
   );
   is('...and the row names who wrote it', (await admin.from('property').select('written_by_project').eq('rightmove_id', LISTING_B).single()).data?.written_by_project, PROJECT_A);
+  // The other half of #67, and the reason the scoping is a predicate rather than a wall: opening
+  // the flat is what makes the shared facts about it readable, and the analysis B already paid for
+  // is one of them. A project pays OpenAI once per listing across the whole platform, still.
+  sees('...and the analysis B paid for is readable now A has opened it', await a.from('property_analysis').select('rightmove_id').eq('rightmove_id', LISTING_B));
+
+  // ----------------------------------------------------------------------------------------- //
+  console.log('\nthe stale page: an older reading does not overwrite a newer one');
+
+  // Two hunts, one flat, and one of them looking at a tab that has been open since yesterday. The
+  // write still happens — the link is made, `last_seen_at` moves — but the shared row keeps the
+  // newer numbers, and the caller is told which of the two it got.
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const stale = await rpc(a, 'record_property', {
+    p_project_id: PROJECT_A,
+    p_property: {
+      rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street',
+      price: '£1 pcm', observed_at: yesterday,
+    },
+  });
+  if (stale.error) fail('record_property: a page read yesterday', `refused outright: ${stale.error.message}`);
+  else is('record_property: a page read yesterday says it kept the newer reading', stale.data, false);
+  is('...and the newer price is still on the row', (await admin.from('property').select('price').eq('rightmove_id', LISTING_A).single()).data?.price, '£2,000 pcm');
+  // Refusing the numbers is not refusing the visit: this project did open the flat.
+  is('...and the flat is still linked to the project that just looked at it', await count('project_property', 'rightmove_id', LISTING_A), 1);
+
+  const fresh = await rpc(a, 'record_property', {
+    p_project_id: PROJECT_A,
+    p_property: {
+      rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street',
+      price: '£2,100 pcm', observed_at: new Date().toISOString(),
+    },
+  });
+  if (fresh.error) fail('record_property: a page read just now', `refused: ${fresh.error.message}`);
+  else is('record_property: a page read just now writes', fresh.data, true);
+  is('...and the price moved', (await admin.from('property').select('price').eq('rightmove_id', LISTING_A).single()).data?.price, '£2,100 pcm');
+
+  // A clock a year fast must not be able to pin the row against everybody else for a year.
+  const future = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+  allowed('record_property: a page stamped a year in the future', await rpc(a, 'record_property', {
+    p_project_id: PROJECT_A,
+    p_property: {
+      rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street',
+      price: '£2,200 pcm', observed_at: future,
+    },
+  }));
+  const stampedAt = (await admin.from('property').select('observed_at').eq('rightmove_id', LISTING_A).single()).data?.observed_at;
+  if (stampedAt && new Date(stampedAt as string).getTime() > Date.now() + 60_000) {
+    fail('...is capped at the server clock', `the row now claims to have been read at ${stampedAt}`);
+  } else ok('...is capped at the server clock');
 
   // The three shared caches: a member may read them and may no longer write them.
   //
@@ -533,10 +629,12 @@ async function main() {
   denied('cache_travel: a journey of negative length, even from the server', await rpc(admin, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'walking', p_seconds: -5 }));
   denied('cache_station_point: half a coordinate, even from the server', await rpc(admin, 'cache_station_point', { p_name: 'RLS Half Station', p_lat: 51.5 }));
 
-  // And reading them is still exactly what every surface does.
-  allowed('travel_time: a member reading the shared cache', await a.from('travel_time').select('origin_postcode').limit(1));
-  allowed('station_point: a member reading the shared cache', await a.from('station_point').select('name').limit(1));
-  allowed('station_walk: a member reading the shared cache', await a.from('station_walk').select('postcode').limit(1));
+  // And reading them for this project's own flats is still exactly what every surface does. `sees`
+  // rather than `allowed`: since the policies grew a predicate, "no error" stopped meaning "a row
+  // came back", and the compare table full of dashes is what the difference looks like.
+  sees('travel_time: a member reading the cache for their own flat', await a.from('travel_time').select('origin_postcode').eq('origin_postcode', 'RLS 1AA'));
+  sees('station_point: ...and a station that flat is near', await a.from('station_point').select('name').eq('name', 'RLS Check Station'));
+  sees('station_walk: ...and the walk to it', await a.from('station_walk').select('postcode').eq('postcode', 'RLS 1AA'));
 
   refused('claim_analysis: a client claiming its own budget', await rpc(a, 'claim_analysis', { p_rightmove_id: LISTING_A, p_project_id: PROJECT_A, p_user_id: userA }));
   refused('record_api_usage: a client writing its own spend', await rpc(a, 'record_api_usage', { p_project_id: PROJECT_A, p_user_id: userA, p_model: 'gpt-5.6-terra', p_input_tokens: 1, p_cached_input_tokens: 0, p_output_tokens: 1 }));
