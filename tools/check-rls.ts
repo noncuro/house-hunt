@@ -175,7 +175,13 @@ const LATE = 'rls-check-late@example.test';
 /** Invited into project B and never signing in, so somebody else calling consume_invites has an
  *  invite in front of them that is not theirs. */
 const OUTSIDER = 'rls-check-outsider@example.test';
-const EXTRA_USERS = [INVITEE, PLATFORM, LATE, OUTSIDER];
+/** Already holding an account when invited — the case that used to mint a code nobody needed. */
+const EXISTING = 'rls-check-existing@example.test';
+/** An account with a pending invite stranded by the era when nothing added existing accounts. */
+const STRANDED = 'rls-check-stranded@example.test';
+const EXTRA_USERS = [INVITEE, PLATFORM, LATE, OUTSIDER, EXISTING, STRANDED];
+/** An invite id belonging to no row, for probing a function without letting it do anything. */
+const MISSING_INVITE = '00000000-0000-4000-c000-0000000000ff';
 const PASSWORD = 'rls-check-password-9f3a';
 
 async function tearDown() {
@@ -654,7 +660,10 @@ async function main() {
   // ----------------------------------------------------------------------------------------- //
   console.log('\nthe member ceiling, which is an invariant rather than something cleaned up afterwards');
 
-  refused('create_invite: a member calling it directly', await rpc(a, 'create_invite', { p_email: 'x@example.test', p_project_id: PROJECT_A, p_invited_by: userA }));
+  // `denied`, not `refused`: this is service_role-only by grant, so the refusal has to be an error.
+  // `refused` also accepts "affected nothing", which a call that quietly succeeded and returned a
+  // jsonb refusal would not be — but the distinction is the assertion, so say which one is meant.
+  denied('create_invite: a member calling it directly', await rpc(a, 'create_invite', { p_email: 'x@example.test', p_project_id: PROJECT_A, p_invited_by: userA }));
 
   must('lowering the ceiling', (await rpc(admin, 'admin_set_max_members', { p_project_id: PROJECT_A, p_max: 2 })).error);
   const invited = await rpc(admin, 'create_invite', { p_email: INVITEE, p_project_id: PROJECT_A, p_invited_by: userA });
@@ -743,6 +752,84 @@ async function main() {
   is('...leaving the membership at the ceiling', await count('project_member', 'project_id', PROJECT_A), 2);
   const stillWaiting = (await admin.from('invite').select('status').eq('email', LATE).eq('project_id', PROJECT_A).single()).data;
   is('...with the invite still pending rather than thrown away', stillWaiting?.status, 'pending');
+
+  // ----------------------------------------------------------------------------------------- //
+  console.log('\ninviting an address that already has an account, which used to mint a useless code');
+
+  // The invited person has an account and a phone that stays signed in for months, so "consumed on
+  // next sign-in" was consumed never: the owner got a code nobody needed and the invitee's screen
+  // never changed. create_invite writes the membership itself now and answers `added`; the first
+  // assertion here is the membership row, which is the fact the bug withheld.
+  must('making room for a direct add', (await rpc(admin, 'admin_set_max_members', { p_project_id: PROJECT_A, p_max: 4 })).error);
+  const existingId = await createUser(EXISTING);
+  const added = await rpc(admin, 'create_invite', { p_email: EXISTING, p_project_id: PROJECT_A, p_invited_by: userA });
+  const addedResult = added.data as
+    | { status?: string; members?: number; invite?: { status?: string; code_hash?: string | null } }
+    | null;
+  is('inviting an existing account adds them on the spot', addedResult?.status, 'added');
+  is('...counting them among the members in the answer', addedResult?.members, 3);
+  is('...as a member row that actually exists', await count('project_member', 'project_id', PROJECT_A), 3);
+  is('...with the invite recorded as accepted, so the list reads the same either way', addedResult?.invite?.status, 'accepted');
+  is('...and no code behind it', addedResult?.invite?.code_hash ?? null, null);
+  const existingProfile = await admin.from('profile').select('active_project_id').eq('id', existingId).single();
+  is('...landed in the hunt they were added to', existingProfile.data?.active_project_id, PROJECT_A);
+
+  const addedTwice = await rpc(admin, 'create_invite', { p_email: EXISTING, p_project_id: PROJECT_A, p_invited_by: userA });
+  is('adding them again says they are already here', (addedTwice.data as { status?: string } | null)?.status, 'already-a-member');
+
+  // The rows the bug left behind: a pending invite for an address that already had an account,
+  // waiting for a sign-in that was never going to happen. Re-inviting them — which is what an owner
+  // does when the first invite visibly did nothing — takes that row up instead of reporting it.
+  must('planting the stranded pending invite', (await admin.from('invite')
+    .insert({ email: STRANDED, project_id: PROJECT_A, invited_by: userA })).error);
+  await createUser(STRANDED);
+  const rescued = await rpc(admin, 'create_invite', { p_email: STRANDED, p_project_id: PROJECT_A, p_invited_by: userA });
+  is('re-inviting them consumes the stranded invite', (rescued.data as { status?: string } | null)?.status, 'added');
+  is('...one membership, not two', await count('project_member', 'project_id', PROJECT_A), 4);
+  is('...and no second invite row', await count('invite', 'email', STRANDED), 1);
+  const strandedRow = (await admin.from('invite').select('status').eq('email', STRANDED).single()).data;
+  is('...the planted one now reads accepted', strandedRow?.status, 'accepted');
+
+  // `accept_invite` is the back door `consume_invites()` was written argument-free to avoid: it is
+  // SECURITY DEFINER and takes the user as a parameter, so a signed-in caller who could reach it
+  // could name any project and their own id and be in it. The migration revokes EXECUTE from
+  // `authenticated` by name — a bare `revoke ... from public` leaves Supabase's default grant
+  // standing, which is how `project_training_revision` shipped as a cross-hunt oracle.
+  //
+  // The probe first: the service role calls it with a fabricated invite id, which the claim inside
+  // matches nothing for, so the answer is `gone` and nothing is written. That is what makes the
+  // refusal below mean something — a call that PostgREST could not resolve at all would error too,
+  // and would pass a denial assertion while proving nothing.
+  const probe = await rpc(admin, 'accept_invite', {
+    p_invite: { id: MISSING_INVITE, project_id: PROJECT_B, email: OUTSIDER, status: 'pending',
+                expires_at: new Date(Date.now() + 86_400_000).toISOString() },
+    p_user: userB,
+    p_email: OUTSIDER,
+  });
+  // A function with OUT parameters is one row, which PostgREST may hand back as the object or as a
+  // one-element array. Both are the same answer, and pinning the wrong one would fail this for a
+  // shape rather than for the boundary it is about.
+  const probed = (Array.isArray(probe.data) ? probe.data[0] : probe.data) as { o_outcome?: string } | null;
+  is('accept_invite: reachable, and an invite that is not there is claimed by nobody',
+     probed?.o_outcome, 'gone');
+  is('...having written no membership', await count('project_member', 'project_id', PROJECT_B), 1);
+
+  // The realistic attacker: a legitimate session in a different hunt, naming this one.
+  const beforeForge = await count('project_member', 'project_id', PROJECT_A);
+  denied("accept_invite: a member of another hunt joining this one by naming it", await rpc(b, 'accept_invite', {
+    p_invite: { id: MISSING_INVITE, project_id: PROJECT_A, email: EMAIL_B, status: 'pending',
+                expires_at: new Date(Date.now() + 86_400_000).toISOString() },
+    p_user: userB,
+    p_email: EMAIL_B,
+  }));
+  is('...and the hunt has the members it had', await count('project_member', 'project_id', PROJECT_A), beforeForge);
+
+  // The same attacker at the front door. A member calling create_invite directly is asserted above
+  // as `a`, before B has a session; this is the cross-project form, which is the one that would
+  // matter — inviting yourself into somebody else's hunt.
+  denied('create_invite: a member of another hunt inviting themselves into this one',
+         await rpc(b, 'create_invite', { p_email: EMAIL_B, p_project_id: PROJECT_A, p_invited_by: userB }));
+  is('...leaving the membership alone', await count('project_member', 'project_id', PROJECT_A), beforeForge);
 
   // A platform invite carries no project and promises one.
   must('planting a platform invite', (await admin.from('invite')
