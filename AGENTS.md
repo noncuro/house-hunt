@@ -90,8 +90,11 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   It used to be a hand copy, which is a step that does not get done: it sat at 0.1.0 through three
   bumps while the site said 0.3.1 and told everybody who downloaded it that they were out of date,
   which is the message they had just acted on. `pnpm package` still works and is what to run if you
-  want the zip now; `pnpm check:zip` says when it is behind, as a note on a pull request and a
-  failure anywhere else.
+  want the zip now; `pnpm check:zip` says when it is behind — a failure on your own machine, where
+  running `pnpm package` is the answer, and a note in CI, where `package.yml` is already doing it.
+  Its other three assertions are fatal everywhere: the three version strings agree, the archive
+  holds every file its own manifest names, the stamp is of this archive. A forgotten bump is still
+  nothing a repackage fixes. Why the stale half is a note in CI is on the code (`tools/check-zip.ts`).
 - **Rightmove's own mark may be used on the buttons that go to Rightmove**, and nowhere else. It
   labels an outbound link with the thing it opens, which is what a trademark is for, and it is the
   owner's decision on the owner's product. What stays forbidden is unchanged and is a different

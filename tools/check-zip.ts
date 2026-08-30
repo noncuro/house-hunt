@@ -19,12 +19,18 @@ import { EXPECTED_EXTENSION_VERSION } from '../apps/web/src/lib/extension-versio
 import { ROOT, STAMP, ZIP, hashOf, stampNow, type Stamp } from './package-stamp';
 import { checkArchiveIsComplete } from './manifest-paths';
 
-// Advisory on a pull request, fatal everywhere else. On a branch that bumps the extension, the zip
-// and its stamp are legitimately behind — `package.yml` rebuilds and commits them when the change
-// reaches main, which is the whole point of having a workflow do it — so failing here would block
-// every extension PR on a step the robot is about to take anyway. Locally and on main it is a real
-// failure: there is nothing else coming.
-const advisory = process.env.GITHUB_EVENT_NAME === 'pull_request';
+// A stale archive is fatal on your own machine, a note in CI. It was the other way round, on the
+// reasoning that "on main there is nothing else coming" — but `package.yml` triggers on the same
+// push and repairs the archive concurrently, and its commit is pushed with `GITHUB_TOKEN`, which by
+// design triggers no workflow, so `check` never re-runs on the corrected tree. Main was red from
+// #113 to #116 on that alone. Locally the reasoning holds: nothing is coming, `pnpm package` is the
+// answer, and the person reading it can run it.
+//
+// The packaging job is not re-armed because drift is unreachable there — it runs this straight
+// after `pnpm package` has written the stamp from the tree. What has no CI check now is "the zip on
+// main is a build of main" when `package.yml` did not run at all, which its `paths:` filter
+// decides: #120.
+const advisory = Boolean(process.env.GITHUB_ACTIONS);
 
 let failures = 0;
 /** `stale` marks a check that a pending repackage will fix by itself, which is the whole set of
@@ -35,7 +41,7 @@ function check(what: string, got: unknown, want: unknown, stale = false): void {
   const ok = got === want;
   if (!ok && !(stale && advisory)) failures++;
   const how = ok ? 'ok  ' : stale && advisory ? 'note' : 'FAIL';
-  const why = stale && advisory ? ' (main will rebuild it on merge)' : '';
+  const why = stale && advisory ? ' (package.yml rebuilds it on main)' : '';
   console.log(`  ${how} ${what}${ok ? '' : ` — got ${got}, want ${want}${why}`}`);
 }
 
@@ -103,7 +109,10 @@ const changed = Object.keys(now.files)
 if (changed.length > 0) {
   if (!advisory) failures++;
   const how = advisory ? 'note' : 'FAIL';
-  console.log(`  ${how} ${changed.length} source file(s) changed since it was packaged${advisory ? ' — main will rebuild it on merge' : ' — run `pnpm package`'}:`);
+  console.log(
+    `  ${how} ${changed.length} source file(s) changed since it was packaged` +
+      `${advisory ? ' — package.yml rebuilds it on main' : ' — run `pnpm package`'}:`,
+  );
   for (const path of changed.slice(0, 12)) console.log(`         ${path}`);
   if (changed.length > 12) console.log(`         …and ${changed.length - 12} more`);
 } else {
