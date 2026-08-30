@@ -23,8 +23,9 @@ const RETRY_DELAYS_MS = [400, 1200, 3000];
 
 /** Fetch with retries on the failures that pass. TfL rate-limits, has the occasional 5xx,
  *  and the service worker's network drops out; none of those mean anything about the journey.
- *  A 404 ("No journey found") and a 300 (ambiguous location) are real answers and are not
- *  retried — retrying them just makes the panel slower at being wrong. */
+ *  A 404 ("No journey found") is a real answer and is not retried — retrying it just makes the
+ *  panel slower at being wrong. A 300 is not retried either, but for a different reason: it is
+ *  not an answer, and `journeyTime` says so rather than remembering it as one. */
 async function tflFetch(url: string, what: string): Promise<Response> {
   let last = '';
 
@@ -337,6 +338,17 @@ export function nextWeekdayMorning(now = new Date()): { date: string; time: stri
  *  geocoder did not know last month it now knows. So they expire, and positives do not. */
 export const NO_ROUTE_RETRY_DAYS = 30;
 
+/** What a settled no-route row says when it recorded nothing about what settled it.
+ *
+ *  Every row written before the `reason` column exists like this — 96% of them, when the column
+ *  was three weeks old — and the read path used to fill the gap with "TfL found no journey for
+ *  this mode". That is a blank wearing TfL's name: a fabricated attribution on thousands of rows,
+ *  some of which were a 300 that TfL never turned into a verdict, and it is why the poisoned rows
+ *  went unnoticed for months. Nobody investigates a dash that explains itself. The honest sentence
+ *  is that we do not know, and it is the one sentence that invites somebody to re-ask. */
+export const NO_REASON_RECORDED =
+  'no journey was recorded here and the row does not say why — it predates us writing the reason down';
+
 /** Why a walking leg is not worth asking TfL about, or null when it is.
  *
  *  A reason rather than a boolean, for the same purpose `staleTravel` returns one: this decides not
@@ -414,9 +426,18 @@ export async function journeyTime(
   const response = await tflFetch(url, `journey ${fromPostcode} -> ${toPostcode} by ${mode}`);
 
   if (!response.ok) {
-    // 300 means the planner wants disambiguation — usually a postcode it can't resolve.
+    // 300 is the planner asking for disambiguation, and it used to be read as "TfL could not
+    // resolve an endpoint" and cached as a permanent no-route. The database disagreed: every 300
+    // in production landed on the same afternoon, and for five of the six the same origin and the
+    // same destination routed fine by another mode within the same second. A 300 is TfL unable to
+    // answer for that mode at that moment, not a verdict on the journey — and because an origin is
+    // shared by every leg from a flat, one such moment blanked all twelve of them for a month.
+    //
+    // Transient, then, which keeps it out of the cache and hands it to the backfill's backoff. Not
+    // retried here: `retryable()` above governs the hot retries and does not list 300, so this is
+    // not a loop, only a refusal to remember the answer.
     if (response.status === 300) {
-      throw new TflError(`TfL could not resolve "${fromPostcode}" or "${toPostcode}"`, false);
+      throw new TflError(`TfL wanted disambiguation for "${fromPostcode}" -> "${toPostcode}" (HTTP 300)`, true);
     }
     // 404 is TfL's "no journey found" — a settled answer, and the one case worth remembering.
     if (response.status === 404) throw new TflError('TfL found no journey for this mode', false);

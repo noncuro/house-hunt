@@ -31,6 +31,7 @@ import { body, HttpError, requireEnv, rest, rpc, serve } from '../_shared/http.t
 import { requireCaller, type Caller } from '../_shared/caller.ts';
 import {
   journeyTime,
+  NO_REASON_RECORDED,
   resolveStation,
   staleTravel,
   TflError,
@@ -421,9 +422,10 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
               mode,
               seconds: 0,
               changes: null,
-              // The row's own words where it has them; the old sentence only where it does not,
-              // which is a row written before reasons were stored and genuinely knows no more.
-              error: row.reason ?? 'TfL found no journey for this mode',
+              // The row's own words where it has them, and an admission where it does not: a row
+              // written before reasons were stored knows no more, and saying so is the difference
+              // between a dash somebody re-asks and one they believe.
+              error: row.reason ?? NO_REASON_RECORDED,
               transient: false,
               cached: true,
             };

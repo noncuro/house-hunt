@@ -13,7 +13,17 @@
  *  backfilled, forever, with every check green. Comparing the two texts is the only way to see it. */
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { NO_ROUTE_RETRY_DAYS, TRAVEL_BASIS, nextWeekdayMorning, staleTravel, stationCore, stationMatches, tooFarToWalk } from '../packages/core/src/tfl';
+import {
+  journeyTime,
+  NO_ROUTE_RETRY_DAYS,
+  TflError,
+  TRAVEL_BASIS,
+  nextWeekdayMorning,
+  staleTravel,
+  stationCore,
+  stationMatches,
+  tooFarToWalk,
+} from '../packages/core/src/tfl';
 import { distanceMiles } from '../packages/core/src/hubs';
 import { TRAVEL_MODES, WALKING_LIMIT_MILES, WALKING_LIMIT_SECONDS } from '../packages/core/src/types';
 
@@ -236,25 +246,26 @@ function modes(name: string, sql: string, expected: string[] | string) {
   check(name, 'modes' in found ? found.modes : found.problem, expected);
 }
 
-/** The migration that *currently* defines `travel_gaps`, found rather than named.
+/** The migration that *currently* defines a function, found rather than named.
  *
  *  Migrations are applied in filename order and each `create function` supersedes the one before,
  *  so the definition that runs is the one in the last file to write it. Naming that file by hand
  *  is a check that goes stale silently: the next migration to redefine the function leaves this
  *  reading a definition the database no longer has, green, about SQL that no longer runs — which
  *  is precisely the failure the mode comparison exists to catch, one level up. */
-function latestTravelGapsMigration(): { path: string; sql: string } {
+function latestMigrationDefining(fn: string): { path: string; sql: string } {
   const dir = resolve(import.meta.dirname, '..', 'supabase/migrations');
+  const pattern = new RegExp(`create\\s+(?:or\\s+replace\\s+)?function\\s+public\\.${fn}\\b`, 'i');
   const defines = readdirSync(dir)
     .filter((f) => f.endsWith('.sql'))
     .sort()
-    .filter((f) => /create\s+(?:or\s+replace\s+)?function\s+public\.travel_gaps\b/i.test(readFileSync(resolve(dir, f), 'utf8')));
+    .filter((f) => pattern.test(readFileSync(resolve(dir, f), 'utf8')));
   const last = defines.at(-1);
-  if (last === undefined) throw new Error('no migration creates public.travel_gaps — did it move?');
+  if (last === undefined) throw new Error(`no migration creates public.${fn} — did it move?`);
   return { path: `supabase/migrations/${last}`, sql: readFileSync(resolve(dir, last), 'utf8') };
 }
 
-const { path: MIGRATION, sql: migration } = latestTravelGapsMigration();
+const { path: MIGRATION, sql: migration } = latestMigrationDefining('travel_gaps');
 console.log(`travel_gaps modes (${MIGRATION})`);
 modes('the migration routes exactly the modes TRAVEL_MODES names', migration, [...TRAVEL_MODES].sort());
 
@@ -336,6 +347,32 @@ check('a word on the front is a different station, however shortened the query',
 check('and not a bare substring either', core2('Old Hampstead Road', 'Hampstead', true), false);
 check('a longer word is not the query plus a word', core2('Hampsteadish', 'Hampstead', true), false);
 
+
+/* What a 300 is. TfL's planner answers it when it wants disambiguation, and it used to be cached as
+ * "there is no route" — permanently, and for every leg from the flat, since the origin is shared.
+ * Production showed the same origin and destination routing fine by another mode in the same second
+ * the 300 landed (#47), so it is TfL being unable to answer for a moment, and a moment must not be
+ * remembered as a verdict. Run against a stubbed `fetch`: `tflFetch` returns a 300 and a 404 without
+ * a retry, so no delay is waited out here. */
+console.log('journeyTime classification');
+async function classified(status: number, body: unknown = null): Promise<{ transient: boolean } | { seconds: number }> {
+  const real = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(body === null ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  try {
+    const journey = await journeyTime('NW6 4AA', '51.5,-0.2', 'walking', undefined);
+    return { seconds: journey.seconds };
+  } catch (e) {
+    if (e instanceof TflError) return { transient: e.transient };
+    throw e;
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+check('a 300 is not a verdict on the journey', await classified(300), { transient: true });
+check('a 404 is TfL saying there is no journey, and stays settled', await classified(404), { transient: false });
+check('an empty journey list is settled too', await classified(200, { journeys: [] }), { transient: false });
+check('a journey is a journey', await classified(200, { journeys: [{ duration: 12, legs: [] }] }), { seconds: 720 });
 
 if (failures > 0) {
   console.error(`\n${failures} failing`);
