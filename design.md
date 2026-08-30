@@ -74,7 +74,9 @@ time either refreshes. The loser is signed out days later, with nothing on scree
 explaining why.
 
 The extension therefore never receives a session. It has a bridge — a content script on
-the website's origin that relays a few messages between the page and the extension. The
+the website's origin that relays the messages named in `packages/core/src/bridge.ts` — that
+file is the contract, and a count written here would drift from it — between the page and the
+extension. The
 website's sign-in form posts the email and password across it, once; the background
 worker then performs an ordinary sign-in of its own. The credentials are held in a local
 variable and never stored. Someone who installs the extension after signing in on the

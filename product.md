@@ -85,8 +85,9 @@ The clearest pair we had:
   explanation**. They predate the column that records *why*, and the read path fills the gap with a
   confident sentence asserting what the planner said, on rows that recorded nothing of the kind.
 
-  That is two defects behind one number: a few hundred journeys that are wrong, and several
-  thousand that are probably right but explain themselves with an invented reason. Both are silent,
+  That is two defects behind one number: about 250 journeys that are demonstrably wrong, and
+  96% of roughly 3,700 no-route rows that are probably right but explain themselves with an
+  invented reason. Both are silent,
   they need different fixes, and the ticket's single headline figure hid the split.
 
 Both are bugs. Only one changes which flat you go and see on Saturday.

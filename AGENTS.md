@@ -213,8 +213,9 @@ could silently violate. Accepted gaps are GitHub issues labelled `accepted-gap` 
 ## Issues are the backlog — all of it
 
 **Everything not-yet-done is a GitHub issue.** No second list, no new TODO file. Labels:
-`accepted-gap` (known, deliberately unfixed — each states what would change the answer, usually
-growth past a handful of invited members; when that changes, re-read them all), `bug`,
+`accepted-gap` (known, deliberately unfixed — each must state a trigger somebody can check,
+not a feeling: for most of them it is membership beyond the six-member cap or a second admin;
+when a trigger fires, re-read them all), `bug`,
 `enhancement`.
 
 - **Close what you fix, in the PR that fixes it** (`Closes #N`). A pass over 17 open issues found 10
