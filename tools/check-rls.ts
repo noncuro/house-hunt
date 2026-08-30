@@ -178,6 +178,10 @@ const LISTING_A = 'rlscheck-a';
 const LISTING_B = 'rlscheck-b';
 /** Deliberately never seeded: the case where no `property` row and no link exist yet. */
 const LISTING_NEW = 'rlscheck-new';
+/** A flat only project B has opened. Its whole purpose is that A is *not* linked to it at
+ *  setup, which is what makes "the stale write still made the link" an assertion rather than a
+ *  restatement of the fixture. */
+const LISTING_STALE = 'rlscheck-stale';
 const EMAIL_A = 'rls-check-a@example.test';
 const EMAIL_B = 'rls-check-b@example.test';
 const INVITEE = 'rls-check-invitee@example.test';
@@ -208,8 +212,8 @@ async function tearDown() {
   // A platform invite makes a project of its own, named after the local part of the address, and
   // it belongs to nothing this teardown otherwise reaches.
   await admin.from('project').delete().like('name', 'rls-check-%');
-  await admin.from('property_analysis').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW]);
-  await admin.from('property').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW]);
+  await admin.from('property_analysis').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW, LISTING_STALE]);
+  await admin.from('property').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW, LISTING_STALE]);
   // `property_price` cascades from `property` above; these three do not — they are keyed on a
   // postcode or a station name, which is the whole reason they need a policy of their own.
   await admin.from('travel_time').delete().in('origin_postcode', ['RLS 1AA', 'RLS 1BB']);
@@ -272,11 +276,19 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
   must('creating the listings', (await admin.from('property').insert([
     { rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street', postcode: 'RLS 1AA' },
     { rightmove_id: LISTING_B, url: 'https://example.test/b', display_address: 'B Street', postcode: 'RLS 1BB' },
+    // `observed_at` is set by hand rather than left to the column default, because the stale
+    // test below turns on this row being *newer* than what A submits. A default that changed
+    // to null would make the comparison vacuous instead of failing.
+    {
+      rightmove_id: LISTING_STALE, url: 'https://example.test/stale', display_address: 'Stale Street',
+      postcode: 'RLS 1BB', price: '£3,300 pcm', observed_at: new Date().toISOString(),
+    },
   ])).error);
 
   must('linking the listings', (await admin.from('project_property').insert([
     { project_id: PROJECT_A, rightmove_id: LISTING_A },
     { project_id: PROJECT_B, rightmove_id: LISTING_B },
+    { project_id: PROJECT_B, rightmove_id: LISTING_STALE },
   ])).error);
 
   must('seeding shared facts', (await admin.from('property_analysis').insert([
@@ -300,6 +312,11 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
     .insert({ origin_postcode: 'RLS 1BB', dest_postcode: 'RLS 2BB', mode: 'transit', seconds: 1100, basis: 'weekday-0900' })).error);
   must("seeding B's price history", (await admin.from('property_price')
     .insert({ rightmove_id: LISTING_B, price: '£3,000 pcm' })).error);
+  // And one for A. Without it the only `property_price` assertion in this file is that A sees
+  // nothing, which a policy returning nothing at all satisfies — the same argument the
+  // whole-table read below makes for `property`, and the reason both halves are written.
+  must("seeding A's price history", (await admin.from('property_price')
+    .insert({ rightmove_id: LISTING_A, price: '£1,900 pcm' })).error);
 
   // Project B's opinions — the rows A must never see or touch.
   must("seeding B's place", (await admin.from('place')
@@ -473,6 +490,7 @@ async function main() {
   nothing("property: a listing only B has opened", await a.from('property').select('*').eq('rightmove_id', LISTING_B).maybeSingle());
   nothing("property_analysis: the analysis B paid for", await a.from('property_analysis').select('*').eq('rightmove_id', LISTING_B).maybeSingle());
   nothing("property_price: what B's flat has cost", await a.from('property_price').select('*').eq('rightmove_id', LISTING_B));
+  sees("property_price: what A's own flat has cost", await a.from('property_price').select('rightmove_id').eq('rightmove_id', LISTING_A));
   nothing("travel_time: a journey from B's flat", await a.from('travel_time').select('*').eq('origin_postcode', 'RLS 1BB'));
   nothing("station_walk: the walk from B's flat", await a.from('station_walk').select('*').eq('postcode', 'RLS 1BB'));
   nothing("station_point: a station only B's flat is near", await a.from('station_point').select('*').eq('name', 'RLS Other Station'));
@@ -481,8 +499,20 @@ async function main() {
   // directions on purpose — a policy that returns nothing passes every "cannot see B" test in this
   // file and is a database that has stopped working.
   const wholeTable = await a.from('property').select('rightmove_id');
-  const listed = ((wholeTable.data ?? []) as Array<{ rightmove_id: string }>).map((r) => r.rightmove_id);
+  // Read rather than asserted. `as Array<{ rightmove_id: string }>` claimed the shape instead of
+  // checking it, so a reply whose rows lacked the column mapped to a list of `undefined` — which
+  // contains neither listing, and quietly satisfies the "B is not enumerated" branch while the
+  // "A is present" branch reports a scoping failure that is really a shape change.
+  const rows: unknown[] = wholeTable.data ?? [];
+  const listed = rows
+    .map((r) => (r as { rightmove_id?: unknown }).rightmove_id)
+    .filter((id): id is string => typeof id === 'string');
   if (wholeTable.error) fail('property: selecting the whole table', `errored rather than scoping: ${wholeTable.error.message}`);
+  else if (listed.length !== rows.length)
+    fail(
+      'property: selecting the whole table',
+      `${rows.length - listed.length} of ${rows.length} row(s) carried no string rightmove_id — the reply shape has changed and the assertions below are reading nothing`,
+    );
   else if (listed.includes(LISTING_B)) fail('property: selecting the whole table', `enumerated B's listing among ${listed.length} row(s)`);
   else if (!listed.includes(LISTING_A)) fail('property: selecting the whole table', "A's own listing is missing — scoped past the point of working");
   else ok('property: selecting the whole table shows this hunt and no other');
@@ -578,7 +608,29 @@ async function main() {
   else is('record_property: a page read yesterday says it kept the newer reading', stale.data, false);
   is('...and the newer price is still on the row', (await admin.from('property').select('price').eq('rightmove_id', LISTING_A).single()).data?.price, '£2,000 pcm');
   // Refusing the numbers is not refusing the visit: this project did open the flat.
-  is('...and the flat is still linked to the project that just looked at it', await count('project_property', 'rightmove_id', LISTING_A), 1);
+  //
+  // On a listing A has never opened, because the version of this that used LISTING_A proved
+  // nothing: setup links that one to A already, so the count was 1 before the call and 1 after,
+  // whether or not `record_property` made a link at all.
+  const staleUnseen = await rpc(a, 'record_property', {
+    p_project_id: PROJECT_A,
+    p_property: {
+      rightmove_id: LISTING_STALE, url: 'https://example.test/stale', display_address: 'Stale Street',
+      postcode: 'RLS 1BB', price: '£7 pcm', observed_at: yesterday,
+    },
+  });
+  if (staleUnseen.error) fail("record_property: yesterday's reading of a flat A has not opened", `refused outright: ${staleUnseen.error.message}`);
+  else is("record_property: yesterday's reading of a flat A has not opened keeps the newer one", staleUnseen.data, false);
+  is("...and B's newer price survived it", (await admin.from('property').select('price').eq('rightmove_id', LISTING_STALE).single()).data?.price, '£3,300 pcm');
+  const staleLinks = await admin.from('project_property').select('project_id').eq('rightmove_id', LISTING_STALE);
+  const linkedTo = ((staleLinks.data ?? []) as unknown[])
+    .map((r) => (r as { project_id?: unknown }).project_id)
+    .filter((id): id is string => typeof id === 'string');
+  is(
+    '...and the flat is now linked to the project that just looked at it',
+    linkedTo.sort().join(','),
+    [PROJECT_A, PROJECT_B].sort().join(','),
+  );
 
   const fresh = await rpc(a, 'record_property', {
     p_project_id: PROJECT_A,
