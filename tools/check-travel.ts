@@ -414,8 +414,18 @@ console.log('journey lock');
 for (const fn of ['cache_travel', 'record_travel_failure']) {
   const { path, sql } = latestMigrationDefining(fn);
   const start = sql.search(new RegExp(`function\\s+public\\.${fn}\\b`));
-  // Up to the body's own terminator, so the next function's lock cannot answer for this one.
-  const body = sql.slice(start, sql.indexOf('\n$$;', start));
+  // Up to the body's own terminator, so the next function's lock cannot answer for this one — and
+  // both ends asserted rather than assumed. `search` and `indexOf` answer -1 when they find
+  // nothing, and `slice(start, -1)` is a perfectly legal call returning everything to the last
+  // character: a renamed function or a change of dollar-quoting would hand this the rest of the
+  // file, where some *other* function's lock satisfies the test. The check would pass, in green,
+  // for a function that never took the lock — which is the failure it exists to catch.
+  const end = sql.indexOf('\n$$;', start);
+  if (start < 0 || end < 0) {
+    check(`${fn} has a body this check can read (${path})`, false, true);
+    continue;
+  }
+  const body = sql.slice(start, end);
   check(`${fn} takes the journey lock (${path})`, /perform\s+public\.lock_travel_journey\(/.test(body), true);
 }
 
