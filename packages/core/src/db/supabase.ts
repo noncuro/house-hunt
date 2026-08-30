@@ -29,6 +29,7 @@ import type {
   Invite,
   InviteResult,
   LocationResult,
+  PlacePatch,
   ProjectMember,
   ProjectSummary,
   RedeemResult,
@@ -737,6 +738,13 @@ const PLACE_COLUMNS =
   'id, label, postcode, lat, lon, rightmove_location_id, display_location_id, sweep_radius_miles, max_days_since_added, travel_timed';
 
 function toPlace(r: any): Place {
+  // The one column here whose absence is indistinguishable from a deliberate answer. `undefined` is
+  // falsy, and `travelDestinations` filters on it, so a select that dropped `travel_timed` would
+  // stop timing journeys to every place in the hunt and look exactly like somebody having switched
+  // them all off. Every other field is either nullable already or fails visibly when it is missing.
+  if (typeof r.travel_timed !== 'boolean') {
+    throw new Error('place row has no travel_timed — was it left out of PLACE_COLUMNS?');
+  }
   return {
     id: r.id,
     label: r.label,
@@ -793,16 +801,7 @@ export async function addPlace(label: string, postcode: string): Promise<Place> 
  *  Deliberately not a general-purpose row patcher. The label and the postcode are what the place
  *  *is* — changing either means resolving a coordinate again, which `addPlace` does on the way in —
  *  and everything here is what the hunt *does with* it. */
-export async function updatePlace(
-  id: string,
-  patch: {
-    locationIdentifier?: string | null;
-    displayLocationIdentifier?: string | null;
-    sweepRadiusMiles?: number | null;
-    maxDaysSinceAdded?: number | null;
-    travelTimed?: boolean;
-  },
-): Promise<Place> {
+export async function updatePlace(id: string, patch: PlacePatch): Promise<Place> {
   const projectId = await activeProjectId();
   const row: Record<string, unknown> = {};
   if (patch.locationIdentifier !== undefined) row.rightmove_location_id = patch.locationIdentifier;

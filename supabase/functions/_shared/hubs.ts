@@ -278,7 +278,10 @@ export function isSwept(place: Place): boolean {
 export function travelDestinations<T extends { postcode: string | null; travelTimed: boolean }>(
   places: T[],
 ): T[] {
-  return places.filter((p) => p.postcode !== null && p.travelTimed);
+  // `trim()` because the SQL copy says `nullif(trim(pl.postcode), '')`, and a place whose postcode
+  // is a couple of spaces would otherwise be a destination here and not there — the views would ask
+  // for a journey the backlog never derives, so it would read as "no route" for ever.
+  return places.filter((p) => p.postcode !== null && p.postcode.trim() !== '' && p.travelTimed);
 }
 
 /** The places a straight line can be drawn to, and where they are.
