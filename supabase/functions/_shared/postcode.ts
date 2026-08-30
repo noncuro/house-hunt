@@ -42,7 +42,14 @@ export async function lookupPostcode(postcode: string): Promise<PostcodeLookup> 
   return { point: null };
 }
 
-function parseLatLon(input: string): Point | null {
+/** Coordinates pasted from Google Maps, or null for anything else — including a postcode.
+ *
+ *  Exported because "is this string a postcode or is it a point?" is a question the `postcode`
+ *  column forces on every reader of it: the field takes either, so a caller that assumes the first
+ *  is wrong about one place in ten. Asking here means the answer cannot drift between callers, and
+ *  `locationLookupFor` in particular depends on getting it right — it decides what gets sent to
+ *  Rightmove, which has no idea what to do with a pair of decimals. */
+export function parseLatLon(input: string): Point | null {
   const match = /^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/.exec(input);
   if (!match) return null;
   const lat = Number(match[1]);

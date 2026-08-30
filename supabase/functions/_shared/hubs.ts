@@ -46,7 +46,7 @@
  *  moved north-west. Their coordinates are in the git history if they come back. */
 
 import type { Place } from './types.ts';
-import type { Point } from './postcode.ts';
+import { parseLatLon, type Point } from './postcode.ts';
 
 export interface Hub {
   name: string;
@@ -213,6 +213,34 @@ export function hubsFromProject(places: Place[]): Hub[] {
       ? []
       : [{ name: p.label, lat: p.lat, lon: p.lon, fromPlace: p.sweepRadiusMiles === null }],
   );
+}
+
+/** What to ask Rightmove when looking up the area a sweep of this place should search: the
+ *  postcode when there is one, and the label only when there is not.
+ *
+ *  The label is a nickname. It is chosen to be recognised in this hunt's own list — "Work",
+ *  "Mum's", "the gym" — and Rightmove's gazetteer has never heard of it. What it does instead of
+ *  saying so is answer anyway: asked about "Work" it returns `REGION^1486`, which is Worksop in
+ *  Nottinghamshire, 130 miles from the office in EC1V that the place actually is. That is exactly
+ *  the failure the header of `resolve-location` warns about — a confident identifier, a page of
+ *  entirely plausible flats, and nothing on screen wrong except the county — arriving through the
+ *  front door, because we asked the question with the wrong string.
+ *
+ *  A postcode cannot fail that way. It is exact, Rightmove resolves it to a `POSTCODE^` identifier
+ *  centred on the postcode itself, and a radius search from that point returns what a search around
+ *  the station next door returns (measured: 344 listings against 347, from points a fifth of a mile
+ *  apart). So the string somebody typed *because it identifies the place* is the one we ask with,
+ *  and the string they typed to recognise it in a list is not.
+ *
+ *  The `postcode` column also holds coordinates pasted from Google Maps, which name nothing
+ *  Rightmove can look up, so those fall back to the label like a place with no postcode at all.
+ *
+ *  There is deliberately no fall back from a postcode that fails to resolve *to* the label. That
+ *  would be the nickname lookup again, taken silently, on the one path that has just demonstrated
+ *  it has nothing better — and a wrong area is worse than no area, because a sweep runs on it. */
+export function locationLookupFor(place: Pick<Place, 'label' | 'postcode'>): string {
+  if (place.postcode === null || parseLatLon(place.postcode) !== null) return place.label;
+  return place.postcode;
 }
 
 /** Whether this place is one the hunt goes looking around. Both halves of the identifier and a
