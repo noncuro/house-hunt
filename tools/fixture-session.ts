@@ -630,6 +630,19 @@ export async function createInvite(
   return { status: reply.status ?? 'unknown', code: reply.code ?? null };
 }
 
+/** Take a member back out of the fixture project, service-role, so a harness can invite an address
+ *  that already has an account — the path that adds them straight back rather than minting a code. */
+export async function dropMembership(email: string): Promise<void> {
+  const { data: profile, error } = await db.from('profile').select('id').eq('email', email).maybeSingle();
+  must(`reading the profile for ${email}`, error);
+  if (!profile) throw new Error(`fixture: dropping membership for ${email}: no such profile`);
+  must('dropping the membership', (await db.from('project_member')
+    .delete().eq('project_id', FIXTURE_PROJECT).eq('user_id', profile.id)).error);
+  // Their active project points at a hunt they are no longer in, exactly as if they had left it.
+  must('clearing the active project', (await db.from('profile')
+    .update({ active_project_id: null }).eq('id', profile.id)).error);
+}
+
 export interface FixtureHub {
   name: string;
   locationIdentifier: string | null;

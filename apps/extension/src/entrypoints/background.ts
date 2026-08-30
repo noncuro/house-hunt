@@ -26,7 +26,6 @@ import {
   authState,
   activeProjectId,
   cachedTravelTimes,
-  consumeInvites,
   createInvite,
   forgetActiveProject,
   forgetSightings,
@@ -190,14 +189,10 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
     case 'auth:sign-in': {
       const result = await signIn(request.email, request.password);
       if (result.status !== 'signed-in') return result;
-      // Consume the invite HERE, and before reading the state. This line is the whole invite flow:
-      // without it a newly invited person signs in and lands in no project forever. A comment on
-      // this spot used to claim consumption happened, and nothing did it.
-      //
-      // It runs on EVERY sign-in and not only the first, which is what makes an invite into a
-      // second house hunt work: somebody who already has an account is never sent a code, they just
-      // sign in, and this is the line that notices they were asked somewhere new.
-      await consumeInvites();
+      // Invites are consumed inside `authState()` now, on every read rather than only at this
+      // moment — a comment on this spot once claimed consumption happened when nothing did it, and
+      // then the sign-in-only version left anybody already signed in waiting forever. The read
+      // below is therefore also the consume.
       forgetActiveProject();
       return { status: 'signed-in', state: await readAuthState() };
     }
