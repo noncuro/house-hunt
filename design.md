@@ -207,12 +207,17 @@ invitee chooses a password against that code.
 Data is read by `supabase-js` in the browser under RLS — the same trust model as the
 extension, so the data layer is shared without a security rethink. No server components
 reading Supabase, no `@supabase/ssr`, no cookie sessions: that would be a second trust
-model for loading behaviour nobody needs on a private six-person tool. The route-handler
-surface is empty because the secrets live on the server; a route handler added for
-convenience rather than for a secret is the wrong door.
+model for loading behaviour nobody needs on a private six-person tool.
 
-**Still true because** `apps/web/src/app/` contains no route handlers and `apps/web`
-imports no `@supabase/ssr`.
+The route handlers under `apps/web/src/app/api/` are not an exception to this and were not
+here when it was written: each exists because it holds a secret or the service role — the
+OpenAI key, the TfL key, the write to `project_model` that must not be a browser's to
+make. A route handler added for convenience rather than for a secret is still the wrong
+door, and `pnpm check:routes` is what makes each one declare which it is.
+
+**Still true because** `apps/web` imports no `@supabase/ssr`, has no server component
+reading Supabase, and every route under `app/api/` is an `authedRoute` or a `publicRoute`
+with a stated reason.
 
 ### D8 (multi-tenant) — `is_admin()` / `is_member()` are `SECURITY DEFINER`, or RLS recurses
 

@@ -170,7 +170,7 @@ export async function startWebApp(credentials: {
   // server up and healthy behind it.
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`next dev exited with code ${child.exitCode}`);
+    if (child.exitCode !== null) throw new Error(`next start exited with code ${child.exitCode}`);
     try {
       const response = await fetch(ORIGIN, { signal: AbortSignal.timeout(2_000) });
       if (response.ok) {

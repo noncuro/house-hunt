@@ -27,7 +27,7 @@ pnpm smoke .fixtures/88023648.html            # the listing panel
 pnpm smoke:search                             # the search badges and sweep panel
 ```
 
-## The four things a test client needs
+## The three things a test client needs
 
 **1. A local Supabase.** `supabase start` in the repo root. This project's stack sits on **5434x**
 because another project holds the default 54321-54324. It applies every migration from scratch, so
@@ -41,20 +41,20 @@ does not exist for the hosted project. A signed-in harness is a local-stack harn
 construction. `tools/fixture-session.ts` explains why that is an improvement rather than a
 concession.
 
-**2. Nothing.** There used to be a `supabase/.env` here, holding the environment for the local Edge
-Runtime. Everything this app runs server-side is a route on the website now, so what a harness needs
-is the workspace-root `.env` — which it already has — and the local stack's own keys, which
-`tools/supabase-local.ts` reads out of `supabase status`. Both browser harnesses build and serve the
-website themselves.
+There used to be a second thing here: `supabase/.env`, copied from its template, holding the
+environment for the local Edge Runtime. There is no Edge Runtime. Everything this app runs
+server-side is a route on the website, so what a harness needs is the workspace-root `.env` — which
+it already has — and the local stack's own keys, which `tools/supabase-local.ts` reads out of
+`supabase status` and hands to the website it starts. Nothing to copy and nothing to fill in.
 
-**3. A smoke build of the extension.** `pnpm build:smoke`, which writes
+**2. A smoke build of the extension.** `pnpm build:smoke`, which writes
 `apps/extension/.output/smoke/chrome-mv3` pointed at the local stack. Which database the extension
 talks to is compiled in, so this cannot be arranged at runtime. It is a separate output directory
 from `pnpm build` on purpose — repointing the extension you have loaded in Chrome at a database
 that is empty whenever Docker is down would turn a working install into an empty one with nothing
 on screen to say why. The harnesses refuse to run against a build aimed anywhere else.
 
-**4. The saved Rightmove pages.** Two, and only the last two harnesses need them:
+**3. The saved Rightmove pages.** Two, and only the last two harnesses need them:
 
 | Command | Writes | Needed by |
 |---|---|---|

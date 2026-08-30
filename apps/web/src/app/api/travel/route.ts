@@ -932,6 +932,64 @@ async function runBackfill(ask: SystemAsk) {
   return { attempted: gaps.length, routed, noRoute, failed: failures.length, outstanding };
 }
 
+/** Narrow a parsed body into an `Ask`, or say what is wrong with it.
+ *
+ *  `jsonBody` is a cast and nothing more, so without this a JSON `null`, a bare string, or a
+ *  `journeys` ask with no `destinations` array reaches a field access in one of the resolvers as a
+ *  TypeError and leaves through the 500 path — a broken request reported as a broken server, which
+ *  is the one distinction the reply convention exists to keep. The backfill branch above has always
+ *  guarded its own body for exactly that reason; this is the same guard on the branch a person
+ *  reaches.
+ *
+ *  Narrowed field by field rather than parsed against a schema. That is what this repository does at
+ *  every network boundary — `listing.ts` and `resolve-location` both read each field, check its
+ *  type, and fall to a stated outcome — and the alternative names a library that is not a dependency
+ *  here (#119). What it must not do is get looser: an unknown `mode` is refused rather than passed
+ *  through, because `journeyTime` would fall to the planner's default and cache a transit number
+ *  under whatever label came in.
+ */
+function checkAsk(body: unknown): Ask {
+  const bad = (why: string): never => {
+    throw new HttpError(400, 'bad-request', why);
+  };
+  if (typeof body !== 'object' || body === null) bad('the body must be a JSON object');
+  const ask = body as Partial<Ask> & { kind?: unknown };
+
+  const modes = (value: unknown): TravelMode[] => {
+    if (!Array.isArray(value) || value.length === 0) bad('`modes` must be a non-empty array');
+    const unknown = (value as unknown[]).filter((m) => !TRAVEL_MODES.includes(m as TravelMode));
+    if (unknown.length > 0) bad(`not a mode we route: ${unknown.map((m) => JSON.stringify(m)).join(', ')}`);
+    return value as TravelMode[];
+  };
+
+  switch (ask.kind) {
+    case 'journeys': {
+      if (typeof ask.origin !== 'string') bad('a journey needs an origin postcode');
+      if (!Array.isArray(ask.destinations)) bad('`destinations` must be an array');
+      for (const destination of ask.destinations as unknown[]) {
+        if (typeof destination !== 'object' || destination === null || typeof (destination as { postcode?: unknown }).postcode !== 'string') {
+          bad('every destination needs a postcode');
+        }
+      }
+      modes(ask.modes);
+      return ask as Extract<Ask, { kind: 'journeys' }>;
+    }
+    case 'stations': {
+      if (typeof ask.postcode !== 'string') bad('a station walk needs a postcode');
+      if (!Array.isArray(ask.names) || (ask.names as unknown[]).some((n) => typeof n !== 'string')) {
+        bad('`names` must be an array of station names');
+      }
+      return ask as Extract<Ask, { kind: 'stations' }>;
+    }
+    case 'postcode': {
+      if (typeof ask.postcode !== 'string') bad('a lookup needs a postcode');
+      return ask as Extract<Ask, { kind: 'postcode' }>;
+    }
+    default:
+      return bad(`unknown kind ${JSON.stringify(ask.kind)}`);
+  }
+}
+
 function toCached(row: TravelRow) {
   return {
     destPostcode: row.dest_postcode,
@@ -971,7 +1029,7 @@ export const POST = publicRoute(
     const caller = await requireCaller(request);
     // No rate check here any more. What one ask costs is only knowable once its body has been read
     // and the cache consulted, so each resolver below claims its own capacity — see `claimCalls`.
-    const ask = await jsonBody<Ask>(request);
+    const ask = checkAsk(await jsonBody<Ask>(request));
 
     switch (ask.kind) {
       case 'journeys':
@@ -981,7 +1039,12 @@ export const POST = publicRoute(
       case 'postcode':
         return await resolvePostcode(caller, ask);
       default:
-        throw new HttpError(400, 'bad-request', `unknown kind ${String((ask as { kind?: unknown }).kind)}`);
+        // Unreachable: `checkAsk` refuses an unknown kind with a 400 before this. Kept so that
+        // adding a kind to `Ask` without adding a case here is a type error rather than a silent
+        // fall-through, and typed `never` so it cannot quietly become a second, looser validator.
+        return ((unhandled: never) => {
+          throw new HttpError(500, 'failed', `no case for ${JSON.stringify(unhandled)}`);
+        })(ask);
     }
   },
 );
