@@ -3,9 +3,11 @@
 import { useMemo, useState } from 'react';
 import { Icon, type IconName } from '@house-hunt/ui';
 import {
+  FUNNEL_LATEST_FIRST,
   GROUP_LABEL,
   enthusiasm,
   groupOf,
+  stageMeta,
   type Group,
   type Hub,
   type HuntPreferences,
@@ -21,7 +23,15 @@ import { Compare } from '@/screens/Compare';
 import { HeadToHead } from '@/screens/HeadToHead';
 import { ShortlistMap } from '@/screens/Map';
 import type { SetStage } from '@/lib/actions';
-import { chipsFor, lensLabel, sameLens, DEFAULT_LENS, type Lens } from '@/lib/lens';
+import {
+  chipsFor,
+  groupingFor,
+  lensLabel,
+  sameLens,
+  DEFAULT_LENS,
+  type Grouping,
+  type Lens,
+} from '@/lib/lens';
 import type { PlacesView } from '@/lib/view';
 
 /** Every flat this hunt has looked at, narrowed once and drawn four ways.
@@ -200,7 +210,7 @@ export function Places({
       ) : view === 'cards' ? (
         <Cards
           entries={entries}
-          grouped={lens.kind !== 'group'}
+          grouping={groupingFor(lens)}
           places={places}
           travel={travel}
           hubs={hubs}
@@ -301,15 +311,24 @@ function Empty({ lens, setLens, total }: { lens: Lens; setLens: (next: Lens) => 
   );
 }
 
-/** The default rendering: the photographs, three across, grouped by what you thought of them.
+/** Both of you keen beats one of you keen; within that, most recently looked at first.
  *
- *  Grouped rather than one flat run because the first question on opening this screen is "what are
- *  we excited about", and a single grid sorted by anything at all buries that under the two hundred
- *  nobody has judged. When the lens is already one verdict the grouping would be a single heading
- *  over everything, so it goes. */
+ *  One comparator for both groupings. Under the funnel the headings already carry the progress
+ *  order, so inside a step the question falls back to the one the cards have always answered —
+ *  which of these do we like best — and a second rule there would only let the two piles disagree
+ *  about it. */
+const byKeenness = (a: ShortlistEntry, b: ShortlistEntry) =>
+  enthusiasm(b.verdicts) - enthusiasm(a.verdicts) || b.lastSeenAt.localeCompare(a.lastSeenAt);
+
+/** The default rendering: the photographs, three across, in piles.
+ *
+ *  Piled rather than one flat run because a single grid sorted by anything at all buries the few
+ *  that matter under the two hundred nobody has judged. What the piles *are* depends on the lens
+ *  (`groupingFor`): the funnel's steps when the screen is showing what is in play, and otherwise
+ *  what you thought of them. */
 function Cards({
   entries,
-  grouped,
+  grouping,
   places,
   travel,
   hubs,
@@ -318,7 +337,7 @@ function Cards({
   onOpen,
 }: {
   entries: ShortlistEntry[];
-  grouped: boolean;
+  grouping: Grouping;
   places: Place[];
   travel: Record<string, TravelTime[]> | undefined;
   hubs: Hub[] | null | undefined;
@@ -327,25 +346,49 @@ function Cards({
   onOpen: (rightmoveId: string) => void;
 }) {
   const piles = useMemo(() => {
-    if (!grouped) return [{ group: null, entries }];
+    if (grouping === null) return [{ key: 'all', heading: null, entries }];
+
+    if (grouping === 'stage') {
+      const by = new Map<Stage, ShortlistEntry[]>(FUNNEL_LATEST_FIRST.map((stage) => [stage, []]));
+      // The known steps first, then anything else in the order it turns up. A stage from a newer
+      // build passes the in-play filter, so a map keyed only on the steps this build knows would
+      // let it through the lens and then draw it nowhere — the silent blank `stageRank` already
+      // refuses to produce for the table.
+      const order: Stage[] = [...FUNNEL_LATEST_FIRST];
+      for (const entry of entries) {
+        // Every flat under this lens has a stage — that is what the lens means — so this drops
+        // nothing. It is here because the type says the field is nullable and it is.
+        const stage = entry.stage?.stage;
+        if (!stage) continue;
+        const pile = by.get(stage);
+        if (pile) pile.push(entry);
+        else {
+          by.set(stage, [entry]);
+          order.push(stage);
+        }
+      }
+      for (const pile of by.values()) pile.sort(byKeenness);
+      return order
+        .filter((stage) => (by.get(stage)?.length ?? 0) > 0)
+        .map((stage) => ({ key: stage, heading: stageMeta(stage).label, entries: by.get(stage)! }));
+    }
+
     const by: Record<Group, ShortlistEntry[]> = { excited: [], maybe: [], unrated: [], rejected: [] };
     for (const entry of entries) by[groupOf(entry.verdicts)].push(entry);
-    // Both of you keen beats one of you keen; within that, most recently looked at first.
-    for (const pile of Object.values(by)) {
-      pile.sort(
-        (a, b) =>
-          enthusiasm(b.verdicts) - enthusiasm(a.verdicts) || b.lastSeenAt.localeCompare(a.lastSeenAt),
-      );
-    }
-    return ORDER.filter((g) => by[g].length > 0).map((group) => ({ group, entries: by[group] }));
-  }, [entries, grouped]);
+    for (const pile of Object.values(by)) pile.sort(byKeenness);
+    return ORDER.filter((g) => by[g].length > 0).map((group) => ({
+      key: group,
+      heading: GROUP_LABEL[group],
+      entries: by[group],
+    }));
+  }, [entries, grouping]);
 
   return (
     <>
       {piles.map((pile) => (
         <Pile
-          key={pile.group ?? 'all'}
-          group={pile.group}
+          key={pile.key}
+          heading={pile.heading}
           entries={pile.entries}
           places={places}
           travel={travel}
@@ -359,12 +402,13 @@ function Cards({
   );
 }
 
-/** The order the piles are read in: what you are keen on, then what is still open, then what is
- *  done with. `rejected` last because it is the only one that is not work. */
+/** The order the verdict piles are read in: what you are keen on, then what is still open, then
+ *  what is done with. `rejected` last because it is the only one that is not work. The funnel's
+ *  own order is `FUNNEL_LATEST_FIRST`, which runs the other way — latest first. */
 const ORDER: Group[] = ['excited', 'maybe', 'unrated', 'rejected'];
 
 function Pile({
-  group,
+  heading,
   entries,
   places,
   travel,
@@ -373,7 +417,8 @@ function Pile({
   scores,
   onOpen,
 }: {
-  group: Group | null;
+  /** What this pile is called, or null when there is only one and a heading would say nothing. */
+  heading: string | null;
   entries: ShortlistEntry[];
   places: Place[];
   travel: Record<string, TravelTime[]> | undefined;
@@ -386,10 +431,10 @@ function Pile({
   const paging = usePaging(entries);
   return (
     <section className="pile">
-      {group && (
+      {heading && (
         <h2 className="pile-head">
           <span>
-            {GROUP_LABEL[group]} · {entries.length}
+            {heading} · {entries.length}
           </span>
           <span className="pile-rule" aria-hidden="true" />
         </h2>

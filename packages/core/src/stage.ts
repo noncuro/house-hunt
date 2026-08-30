@@ -29,6 +29,15 @@ export const STAGES: Array<{ value: Stage; label: string; hint: string }> = [
   { value: 'archived', label: 'Archived', hint: 'Out of the running, for a reason worth recording.' },
 ];
 
+/** The funnel a flat can still be moving through — every step except the one that means it has
+ *  stopped. Latest first, which is the order a hunt is actually read in: an offer in is the thing
+ *  you want to see before the fourteen places nobody has rung about yet.
+ *
+ *  Derived from `STAGES` rather than written out again, so a new step joins both orders at once. */
+export const FUNNEL_LATEST_FIRST: Stage[] = STAGES.filter((s) => s.value !== 'archived')
+  .map((s) => s.value)
+  .reverse();
+
 /** Where an archived flat went. Deliberately a small closed set rather than free text: "gone" and
  *  "we passed" are the two that mean opposite things about your taste, and a funnel that cannot
  *  tell them apart cannot answer the only question anybody asks it a month later. The note beside
@@ -90,13 +99,20 @@ export function stageSentence(stage: PropertyStage): string {
 }
 
 /** Which slice of the funnel a view is showing. `none` is the pile outside it — everything nobody
- *  has liked yet, which on a fresh sweep is most of the shortlist. */
-export type StageFilter = 'all' | 'none' | Stage;
+ *  has liked yet, which on a fresh sweep is most of the shortlist. `live` is the opposite end of
+ *  the same question: everything that is in the funnel and has not stopped moving through it.
+ *
+ *  `live` exists because the single-step filters could not answer "what is on". Each of them is an
+ *  exact match, so a flat you rang about left `shortlisted` the moment you rang — and the screen
+ *  that opens on `shortlisted` hid it. The further a place got, the less likely you were to see it,
+ *  which is precisely backwards. */
+export type StageFilter = 'all' | 'live' | 'none' | Stage;
 
-export const STAGE_FILTERS: StageFilter[] = ['all', ...STAGES.map((s) => s.value), 'none'];
+export const STAGE_FILTERS: StageFilter[] = ['all', 'live', ...STAGES.map((s) => s.value), 'none'];
 
 export const FILTER_LABEL: Record<StageFilter, string> = {
   all: 'Everything',
+  live: 'In play',
   none: 'Not in the funnel',
   ...(Object.fromEntries(STAGES.map((s) => [s.value, s.label])) as Record<Stage, string>),
 };
@@ -104,6 +120,10 @@ export const FILTER_LABEL: Record<StageFilter, string> = {
 export function matchesStage(stage: PropertyStage | null, filter: StageFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'none') return stage === null;
+  // In the funnel and not finished with. Archived is the one step that means it has stopped, and it
+  // is deliberately not "everything with a stage": a flat you lost is in the funnel for good, and a
+  // list of what is on cannot be a list that grows forever.
+  if (filter === 'live') return stage !== null && stage.stage !== 'archived';
   return stage?.stage === filter;
 }
 
@@ -118,6 +138,10 @@ export function funnelCounts(entries: Array<{ stage: PropertyStage | null }>): F
     counts.all += 1;
     if (entry.stage) counts[entry.stage.stage] += 1;
     else counts.none += 1;
+    // Through `matchesStage` rather than repeating the rule, so the chip's number and the list it
+    // produces cannot come apart — a count that promised flats the filter then withheld is the
+    // failure this whole file is arranged to avoid.
+    if (matchesStage(entry.stage, 'live')) counts.live += 1;
   }
   return counts;
 }

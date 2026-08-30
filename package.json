@@ -16,6 +16,8 @@
     "compile": "tsc --noEmit -p apps/extension && tsc --noEmit -p apps/web",
     "lint": "oxlint",
     "check": "oxlint && pnpm compile",
+    "sweep": "tsx tools/sweep-runner.ts",
+    "sweep:sign-in": "tsx tools/sweep-runner.ts --sign-in",
     "check:one-client": "tsx tools/check-one-client.ts",
     "check:routes": "tsx tools/check-routes.ts",
     "check:bridge": "tsx tools/check-bridge.ts",

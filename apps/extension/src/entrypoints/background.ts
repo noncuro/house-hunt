@@ -484,6 +484,14 @@ async function requestAnalysis(rightmoveId: string): Promise<AnalysisRequest> {
     // there is a result to read now. `in-progress` is a claim somebody else holds; the panel polls.
     if (status === 'cached' || status === 'analysed') return { status: 'cached' };
     if (status === 'in-progress') return { status: 'queued' };
+    // A refusal the function answers 200 to: the listing's last analysis failed, and it is either
+    // waiting out its backoff or has spent its attempts. Without this it fell through to `queued`
+    // below and the panel waited for a result that was never coming.
+    if (status === 'failed') {
+      const message = typeof body?.error === 'string' ? body.error : 'the analysis failed';
+      logWarn('analysis', `${rightmoveId} has a failed analysis`, { message });
+      return { status: 'failed', message };
+    }
 
     if (!response.ok) {
       // Worth recording rather than swallowing: this is the difference between "the analysis is

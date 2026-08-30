@@ -301,6 +301,41 @@ export function rightmoveSearchStart(place: {
   return `https://www.rightmove.co.uk/property-to-rent/search.html?${parameters.toString()}`;
 }
 
+/** What a scanned listing still needs before the fill-in run should stop offering it.
+ *
+ *  The worklist's rule, in one place, because it is a rule about *what re-opening a tab can
+ *  produce* and it is wrong in a way nothing looks wrong: a listing that can never satisfy it is
+ *  re-opened on every run, for ever, and the count of work left never reaches zero.
+ *
+ *  `getSweepKnowledge` already states the principle, about the geocode it deliberately does not
+ *  gate on — "gating on it would leave every opened-but-not-yet-geocoded flat permanently in the
+ *  opener's worklist, which re-opening can never clear". The photo analysis is the same case
+ *  whenever there are no photos. `analysis.ts` throws `no images to analyse` on an empty list, the
+ *  Edge Function writes `status = 'failed'`, and `claim_analysis` re-claims a failed row on the
+ *  next attempt — which is right, because most failures are a timeout or a bad gateway and the
+ *  retry is how they come good. A listing with no pictures is the one failure that is not a retry
+ *  away from anything: opened, analysed, failed, and re-opened tomorrow to fail identically.
+ *
+ *  So the analysis is required only of a listing that has an image to analyse. Two real ones had
+ *  been going round that loop, one of them since the twelfth of August.
+ *
+ *  Not the same thing as forgiving a failure. A listing *with* photos whose analysis failed is
+ *  still missing something a re-open can supply, and is still offered. */
+export function missingFor(known: {
+  postcode: string | null;
+  /** How many photographs the listing carries. Zero is a fact, not an absence: `image_urls` is
+   *  `not null default '[]'`, so an empty list means the page had none rather than that nobody
+   *  has looked. */
+  imageCount: number;
+  /** Whether any analysis of it finished. */
+  analysed: boolean;
+}): string[] {
+  const missing: string[] = [];
+  if (!known.postcode) missing.push('no postcode read from the listing');
+  if (known.imageCount > 0 && !known.analysed) missing.push('photos not analysed yet');
+  return missing;
+}
+
 /** A listing's page, from its id. The one URL both apps build, so it is built in one place. */
 export function listingUrl(rightmoveId: string): string {
   return `https://www.rightmove.co.uk/properties/${rightmoveId}`;
