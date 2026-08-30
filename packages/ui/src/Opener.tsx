@@ -78,19 +78,21 @@ export function Opener({
   if (run) {
     const at = Math.min(run.opened, run.targets.length - 1);
     return (
-      <div className="rm-open-run">
+      <div className="rm-open-run" data-testid="opener-run">
         <div className="rm-open-run-head">
-          <span>
+          {/* Named for the harness as well as the reader: `smoke:web sweep` watches this count go up
+              one at a time, which is the assertion the pacing has no other evidence for. */}
+          <span data-testid="opener-progress">
             Opening {Math.min(run.opened + 1, run.targets.length)} of {run.targets.length}
           </span>
-          <button type="button" className="rm-open-stop" onClick={() => setRun(null)}>
+          <button type="button" className="rm-open-stop" data-testid="opener-stop" onClick={() => setRun(null)}>
             Stop
           </button>
         </div>
         <progress value={run.opened} max={run.targets.length} />
         {/* Which one, by name. A bar filling over a count tells you it is working; the address
             tells you what it is working on, which is what you look at a long run to find out. */}
-        <div className="rm-open-at">{run.targets[at]?.label}</div>
+        <div className="rm-open-at" data-testid="opener-at">{run.targets[at]?.label}</div>
       </div>
     );
   }
@@ -117,7 +119,12 @@ export function Opener({
   // hover — and this button commits the browser to several minutes of opening tabs.
   return (
     <div className="rm-open-idle">
-      <button type="button" className="rm-open-go" onClick={() => setRun({ targets, opened: 0 })}>
+      <button
+        type="button"
+        className="rm-open-go"
+        data-testid="opener-go"
+        onClick={() => setRun({ targets, opened: 0 })}
+      >
         <span>
           Open the {targets.length} {what}
         </span>

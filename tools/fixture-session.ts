@@ -231,6 +231,23 @@ const STATIONS = [
   { name: 'Belsize Park Station', types: ['LONDON_UNDERGROUND'], distance: 0.6, unit: 'miles' },
 ];
 
+/** Cards a sweep found and nobody has opened, which is the fill-in run's whole worklist.
+ *
+ *  No `property` row for any of them, deliberately. That is what "never opened" is — `pendingSightings`
+ *  asks `property` what it knows about each sighted id and keeps the ones it cannot answer for — and it
+ *  is also what makes these safe: the run opens a tab per listing and a real fetch is what the harness
+ *  must never do, so there is nothing here for anything to complete against. The stub extension answers
+ *  `open-tab` and records the URL; no page is loaded.
+ *
+ *  Staggered by a minute each because the run goes newest-sighting-first across all hubs, and an order
+ *  that is only usually right is an assertion that is only usually meaningful. Two hubs, because the
+ *  screen groups the count by hub and one hub would not show that it does. */
+const SIGHTINGS = [
+  { id: fixtureId(91), address: '3 Willow Road, Hampstead, London', hub: 'Hampstead', minutesAgo: 1 },
+  { id: fixtureId(92), address: '19 Duncan Terrace, Islington, London', hub: 'Angel', minutesAgo: 2 },
+  { id: fixtureId(93), address: '55 Regents Park Road, London', hub: 'Primrose Hill', minutesAgo: 3 },
+];
+
 function must(context: string, error: { message: string } | null): void {
   if (error) throw new Error(`fixture: ${context}: ${error.message}`);
 }
@@ -238,6 +255,7 @@ function must(context: string, error: { message: string } | null): void {
 async function tearDown(alsoCache: ExtraCache[] = []): Promise<void> {
   const postcodes = [...PROPERTIES.map((p) => p.postcode), ...alsoCache.map((c) => c.postcode)];
 
+  await db.from('search_sighting').delete().eq('project_id', FIXTURE_PROJECT);
   await db.from('api_usage').delete().eq('project_id', FIXTURE_PROJECT);
   await db.from('verdict_history').delete().eq('project_id', FIXTURE_PROJECT);
   await db.from('project').delete().eq('id', FIXTURE_PROJECT);
@@ -298,6 +316,8 @@ export interface FixtureData {
   /** Every listing id the fixture owns, newest sighting first. */
   listingIds: string[];
   unratedCount: number;
+  /** Swept but never opened, newest first — the order a fill-in run works through them in. */
+  pendingSightings: Array<{ rightmoveId: string; label: string }>;
 }
 
 /** An origin the harness wants already in the travel cache, beyond the fixture's own flats.
@@ -492,6 +512,19 @@ async function seed(alsoCache: ExtraCache[]): Promise<FixtureData> {
     ),
   )).error);
 
+  must('seeding the sightings', (await db.from('search_sighting').insert(
+    SIGHTINGS.map((s) => ({
+      project_id: FIXTURE_PROJECT,
+      rightmove_id: s.id,
+      hub: s.hub,
+      url: `https://www.rightmove.co.uk/properties/${s.id}`,
+      display_address: s.address,
+      price: '£2,400 pcm',
+      last_seen_at: new Date(now - s.minutesAgo * 60_000).toISOString(),
+      first_seen_at: new Date(now - s.minutesAgo * 60_000).toISOString(),
+    })),
+  )).error);
+
   return {
     projectId: FIXTURE_PROJECT,
     userId,
@@ -499,6 +532,7 @@ async function seed(alsoCache: ExtraCache[]): Promise<FixtureData> {
     hubCount: SEED_HUBS.length,
     listingIds: PROPERTIES.map((p) => p.id),
     unratedCount: PROPERTIES.filter((p) => !p.verdict).length,
+    pendingSightings: SIGHTINGS.map((s) => ({ rightmoveId: s.id, label: s.address })),
   };
 }
 

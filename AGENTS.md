@@ -352,7 +352,7 @@ problem is collected and reported together.
 
 `smoke:web` takes names too, one level down: `pnpm smoke:web list rating` runs those sections and
 `pnpm smoke:web joining` runs that one, in the order the file declares them (`session`, `list`,
-`rating`, `funnel`, `offmarket`, `table`, `map`, `triage`, `tabs`, `refusals`, `joining`). The setup is not optional — the
+`rating`, `funnel`, `offmarket`, `table`, `map`, `triage`, `sweep`, `tabs`, `refusals`, `joining`). The setup is not optional — the
 fixture and a production build of the website happen either way — so a subset
 saves the browser work and a few seconds of a forty-second run, which is the difference worth having
 while you iterate on one assertion. A name that matches no section stops the run and prints the

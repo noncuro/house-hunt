@@ -123,8 +123,16 @@ fake clock so the *order* can be asserted: page 2 is not opened until page 1 is 
 `hub_sweep`, a half-sweep abandoned last week does not answer for today's page 1, a page that never
 records stops the run and names itself, and Stop counts only what was confirmed. Every one of those
 is a run that would otherwise finish green having lost a page of sightings. The tabs it opens are
-the same `open-tab` bridge call the paced opener makes, and are not covered any further than that
-one is — see below.
+the same `open-tab` bridge call the fill-in run makes, and are covered exactly as far — to the call
+and no further, which is as far as anything here can go: what is on the other side of it is a
+Rightmove page, and no harness may fetch one (`tools/offline.ts`).
+
+**The fill-in run** (`smoke:web sweep`) — the opener, driven end to end against a stub that answers
+the `open-tab` bridge call and records what it was asked to open. The worklist is read out of
+Postgres, the run is offered only because something answered `hello`, and the tabs are asked for one
+at a time, newest sighting first, with the gaps measured. `check:full-sweep` asserts the same
+sequencing against a fake clock, which is the right way to check pacing and no way at all to check
+that the button is wired to it.
 
 ## Not covered
 
@@ -138,7 +146,6 @@ worth work there is an issue, and the issue is where the argument for doing it b
 | **The gallery's gestures** (#135). `smoke` opens it from the panel and asserts it paints over Rightmove; nothing drives the swipe, and nothing opens it on the website at all. | The swipe was checked by hand in a mobile-emulated Chromium driving real touch input through CDP — Playwright's own `touchscreen` only taps — and the cases worth keeping are the ones that are not the happy path: a short drag must not advance *or* dismiss, a cancelled gesture must not advance either, the arrows must still work after a pointer capture, and a tap on the photo must not close it. `smoke:web` could open it from a card's photo strip. |
 | **The Admin tab** (#128). | Never opened by anything. It is admin-only, so the fixture would need an admin — one row in `admin_email`. Users, projects, invites and spend all render there against real queries. |
 | **The extension↔website bridge** (#136). `check:bridge` covers the contract as a pure function; nothing drives the actual handover. | It is how signing in on the website signs the extension in. It fails silently by design (`handOver` swallows), so a break shows up as "the extension is signed out" days later. |
-| **The paced opener** (#75, Sweep's fill-in run, and the unattended sweep that drives it and the search pages through the same bridge call). | It was covered by `smoke:sweep` before the split, and that harness was deleted rather than ported. It opens tabs one at a time; the old harness stubbed its worklist so the pacing assertion could not silently skip. |
 | **The Detail view** and the flat-by-URL deep link (`#card-<id>`) (#137). | The reason the app moved off `chrome-extension://` at all. |
 | **The rest of the sign-in refusals** (#129). A wrong password and a code nobody was sent are now checked; expired, already-registered and rate-limited are not. | Every refusal is its own sentence on purpose — the design note at the top of `SignIn.tsx` — and the three left over are the ones that cost something to provoke: `already-registered` needs an account the fixture then has to work around, and `rate-limited` means hammering the endpoint the real joining check depends on. |
 | **`analyse`.** No harness analyses anything. **The one row here with no issue, deliberately.** | It costs money per run, which is a real reason to leave it uncovered rather than a gap waiting on somebody. The cap arithmetic around it is covered by `check:spend`. |
