@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { EXPECTED_EXTENSION_VERSION } from '../apps/web/src/lib/extension-version';
-import { ROOT, STAMP, ZIP, hashOf, stampNow, type Stamp } from './package-stamp';
+import { INPUTS, ROOT, STAMP, ZIP, hashOf, stampNow, type Stamp } from './package-stamp';
 import { checkArchiveIsComplete } from './manifest-paths';
 
 // A stale archive is fatal on your own machine, a note in CI. It was the other way round, on the
@@ -27,9 +27,9 @@ import { checkArchiveIsComplete } from './manifest-paths';
 // answer, and the person reading it can run it.
 //
 // The packaging job is not re-armed because drift is unreachable there — it runs this straight
-// after `pnpm package` has written the stamp from the tree. What has no CI check now is "the zip on
-// main is a build of main" when `package.yml` did not run at all, which its `paths:` filter
-// decides: #120.
+// after `pnpm package` has written the stamp from the tree. The case that is not about drift at all
+// — `package.yml` never running, so nothing repairs the archive and the note is permanent — is what
+// the last section below rules out.
 const advisory = Boolean(process.env.GITHUB_ACTIONS);
 
 let failures = 0;
@@ -117,6 +117,83 @@ if (changed.length > 0) {
   if (changed.length > 12) console.log(`         …and ${changed.length - 12} more`);
 } else {
   console.log(`  ok   all ${Object.keys(now.files).length} source files match the stamp`);
+}
+
+// --------------------------------------------------------------------------------------------- //
+/** Everything the zip is built from is a path that triggers the rebuild.
+ *
+ *  Two lists that have to agree and are written in different languages in different files:
+ *  `INPUTS` here, and `paths:` in `.github/workflows/package.yml`. An input outside the filter is a
+ *  file that can change on main without `package.yml` running — so the archive is genuinely a build
+ *  of an older tree, the check above says so on every subsequent run, and nothing is coming to fix
+ *  it. That is the failure this whole file exists to prevent, arrived at from the other side: not a
+ *  forgotten `pnpm package`, but a workflow that was never asked.
+ *
+ *  Four of them were outside it when this was written — both package manifests, `tsconfig.base.json`
+ *  and `pnpm-lock.yaml` — which is a dependency bump changing the bundle and leaving the download
+ *  behind (#120).
+ *
+ *  Read out of the workflow rather than restated, for the same reason `check:travel` reads its
+ *  clause out of the live migration: a copy of the list is a third list. */
+console.log('\nand every input to it triggers the rebuild');
+
+const workflow = resolve(ROOT, '.github/workflows/package.yml');
+if (!existsSync(workflow)) {
+  failures++;
+  console.log('  FAIL .github/workflows/package.yml is missing — nothing rebuilds the archive');
+} else {
+  const paths = pathsFilter(readFileSync(workflow, 'utf8'));
+  if (paths === null) {
+    failures++;
+    console.log("  FAIL could not find the push `paths:` list in package.yml — the filter this holds INPUTS against");
+  } else {
+    const uncovered = INPUTS.filter((input) => !paths.some((pattern) => covers(pattern, input)));
+    if (uncovered.length > 0) {
+      failures++;
+      console.log(
+        `  FAIL ${uncovered.length} build input(s) are outside package.yml's \`paths:\`, so a change to ` +
+          'one lands on main without rebuilding the zip:',
+      );
+      for (const input of uncovered) console.log(`         ${input}`);
+    } else {
+      console.log(`  ok   all ${INPUTS.length} build inputs are covered by ${paths.length} path pattern(s)`);
+    }
+  }
+}
+
+/** The `paths:` under `on.push`, and nothing else in the file that happens to be a YAML list.
+ *
+ *  Anchored on the line rather than parsed as YAML: adding a parser to read seven strings is more
+ *  moving parts than the thing being checked, and a `paths:` that this cannot find is a failure
+ *  above rather than a silent pass. */
+function pathsFilter(yaml: string): string[] | null {
+  const lines = yaml.split('\n');
+  const at = lines.findIndex((line) => /^\s*paths:\s*$/.test(line));
+  if (at === -1) return null;
+  const found: string[] = [];
+  for (const line of lines.slice(at + 1)) {
+    const item = /^\s*-\s*'([^']+)'\s*$/.exec(line) ?? /^\s*-\s*"([^"]+)"\s*$/.exec(line);
+    if (!item) {
+      if (/^\s*(#.*)?$/.test(line)) continue;
+      break;
+    }
+    found.push(item[1]!);
+  }
+  return found.length === 0 ? null : found;
+}
+
+/** Whether one `paths:` pattern would fire for a change under one input.
+ *
+ *  Only the two forms the file uses — an exact path, and a directory with `/**` after it. A pattern
+ *  this does not understand covers nothing, which fails loudly rather than passing an input off as
+ *  handled by a glob nobody read. */
+function covers(pattern: string, input: string): boolean {
+  if (pattern === input) return true;
+  if (pattern.endsWith('/**')) {
+    const dir = pattern.slice(0, -3);
+    return input === dir || input.startsWith(`${dir}/`);
+  }
+  return false;
 }
 
 console.log(failures === 0 ? '\nall ok' : `\n${failures} failed`);
