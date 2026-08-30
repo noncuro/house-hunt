@@ -30,16 +30,22 @@
 import { body, HttpError, requireEnv, rest, rpc, serve } from '../_shared/http.ts';
 import { requireCaller, type Caller } from '../_shared/caller.ts';
 import {
+  implausibleWalk,
+  journeyCallsNeeded,
   journeyTime,
+  NO_REASON_RECORDED,
   resolveStation,
   staleTravel,
+  stationCallsNeeded,
   TflError,
   tooFarToWalk,
   TRAVEL_BASIS,
+  TRAVEL_CALLS_PER_MINUTE,
+  TRAVEL_RATE_WINDOW_SECONDS,
   walkTo,
   type StationInfo,
 } from '../_shared/tfl.ts';
-import { lookupPostcode } from '../_shared/postcode.ts';
+import { lookupPostcode, type Point } from '../_shared/postcode.ts';
 import { TRAVEL_MODES, type JourneyOption, type TravelMode } from '../_shared/types.ts';
 import { distanceMiles } from '../_shared/hubs.ts';
 
@@ -160,68 +166,86 @@ interface JourneyAnswer {
 }
 
 // ------------------------------------------------------------------------------------------------
-// Rate limiting.
+// Rate limiting, as a reservation rather than a check.
 //
 // The key is ours now rather than the caller's, so a caller who opens two hundred listings is
-// spending our quota. `api_usage` already exists for the OpenAI spend cap and already has an index
-// on (user_id, occurred_at); counting rows in it is enough here, because unlike the analysis cap
-// this is about call volume rather than money — a journey costs nothing but TfL's goodwill.
+// spending our quota. This used to read the minute's usage, return, and write afterwards — which is
+// two holes rather than a limit. Concurrent requests all saw the pre-write count, and the check ran
+// once before the body was parsed while nothing downstream bounded how many legs the body asked for.
+//
+// So capacity is claimed before dispatch and given back afterwards. `claim_travel_calls` is where
+// the read and the write become one step; the argument for that shape is in the migration beside it,
+// and it is `claim_analysis`'s argument on a different resource. The two rules here are: claim the
+// whole independent batch in one go, and let a refusal propagate.
 // ------------------------------------------------------------------------------------------------
 
-/** Per minute rather than per hour, which is a change of shape and not only of number.
+/** Reserve `calls` of the caller's allowance, or refuse the request.
  *
- *  The old cap was 600 an hour, justified as "roughly forty listings an hour with five places and
- *  three modes each, which is more than anybody browsing does". That stopped being true when Places
- *  became one screen over the whole pile: opening the table asks for every flat at once, so fifty
- *  flats with five places and three modes is 750 legs in one legitimate page load. The person who
- *  did nothing wrong then spent the *rest of the hour* refused, which is the failure — an hour-long
- *  window turns one honest burst into an hour of a broken-looking app.
- *
- *  What the cap is actually protecting is TfL, and TfL's own limit is per minute (500 keyed, 50
- *  unkeyed — see `TFL_APP_KEY`), so a per-minute window is the one that measures the thing being
- *  protected. 300 sits under the keyed allowance with room for the backfill alongside, absorbs any
- *  single page load whole, and still stops a loop dead: a runaway caller is refused within seconds
- *  and recovers a minute later rather than an hour later.
- *
- *  `MAX_TFL_CONCURRENCY` is what keeps a burst from arriving all at once; this is what bounds the
- *  total. The two are not substitutes and neither implies the other. */
-const CALLS_PER_MINUTE = 300;
-
-const RATE_WINDOW_MS = 60 * 1000;
-
-async function checkRate(caller: Caller): Promise<void> {
-  const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
-  const used = await rpc<number>('travel_calls_since', { p_user_id: caller.userId, p_since: since });
-  if ((used ?? 0) >= CALLS_PER_MINUTE) {
-    // A stated state, not a 500: the interface says how many and over what, and — unlike the hourly
-    // version — waiting a moment is genuinely the fix, so saying so is not a brush-off.
+ *  A stated state, not a 500: the reply says how many and over what, and waiting a minute is the
+ *  fix. Refusing the whole ask rather than trimming it is deliberate — a half-answered grid with no
+ *  way to tell which half is missing is the failure the "fail loudly" rule is about. */
+async function claimCalls(caller: Caller, calls: number): Promise<number> {
+  const claim = await rpc<{ status: string; reservation?: number; used?: number; held?: number; limit?: number }>(
+    'claim_travel_calls',
+    {
+      p_user_id: caller.userId,
+      p_project_id: caller.activeProjectId,
+      p_calls: calls,
+      p_limit: TRAVEL_CALLS_PER_MINUTE,
+      p_window: `${TRAVEL_RATE_WINDOW_SECONDS} seconds`,
+    },
+  );
+  if (claim?.status === 'claimed' && typeof claim.reservation === 'number') return claim.reservation;
+  if (claim?.status === 'too-large') {
+    // 400 against an allowance of 300. Not a 429 and not a wait: nothing the caller can do with time
+    // fixes it, so it is a 400 with the arithmetic in it rather than an invitation to retry.
+    throw new HttpError(
+      400,
+      'too-large',
+      `this asks for ${calls} TfL lookups at once and nobody may spend more than ` +
+        `${claim.limit ?? TRAVEL_CALLS_PER_MINUTE} in a minute — ask for fewer places or fewer modes`,
+    );
+  }
+  if (claim?.status === 'rate-limited') {
     throw new HttpError(
       429,
       'rate-limited',
-      `${used} travel lookups in the last minute, limit ${CALLS_PER_MINUTE} — try again in a minute`,
+      `this asks for ${calls} TfL lookups and ${(claim.used ?? 0) + (claim.held ?? 0)} of the ` +
+        `last minute's ${claim.limit ?? TRAVEL_CALLS_PER_MINUTE} are already spoken for — try again in a minute`,
     );
   }
+  throw new Error(`claim_travel_calls answered ${JSON.stringify(claim)}`);
 }
 
-/** One row per request that actually made TfL calls, carrying how many. Cache hits are not
- *  recorded — they cost nothing and would drown the thing this exists to measure.
+/** Give the reservation back and record what was spent.
  *
- *  `input_tokens` holds the count. There are no tokens here and the cost is zero; the column is
- *  reused so this needed no schema change, and the meaning is written down on
- *  `travel_calls_since` and in the migration beside it. Failing to record must not fail the
- *  request: the answer is already correct and the caller has already spent the call. */
-async function recordCalls(caller: Caller, made: number): Promise<void> {
-  if (made <= 0) return;
-  await rpc('record_api_usage', {
-    p_project_id: caller.activeProjectId,
+ *  `made` is the calls that left for TfL; everything reserved and unspent is released, which is what
+ *  keeps a cache-heavy page load from being billed for the calls it saved. `api_usage` gets one row
+ *  per request that made calls — cache hits are not recorded, because they cost nothing and would
+ *  drown the thing this exists to measure — and `input_tokens` holds the count, which is written
+ *  down on `travel_calls_since` and in the migration beside it.
+ *
+ *  Called from a `finally`, so it runs on the throwing paths too: `lookupPostcode` sits between the
+ *  claim and the work, and an unreleased claim holds that much of the person's allowance until it
+ *  goes stale — which reads to them as a rate limit they did not earn.
+ *
+ *  Failing to release must not fail the request: the answer is already correct and the caller has
+ *  already spent the calls. `false` back means the claim had already been swept as stale, which is
+ *  a request that outran the window rather than an error — the calls were still recorded. */
+async function releaseCalls(caller: Caller, reservation: number | null, made: number): Promise<void> {
+  if (reservation === null && made === 0) return;
+  await rpc<boolean>('release_travel_calls', {
+    p_reservation: reservation,
     p_user_id: caller.userId,
-    p_model: 'tfl',
-    p_input_tokens: made,
-    p_cached_input_tokens: 0,
-    p_output_tokens: 0,
-    p_rightmove_id: null,
-    p_kind: 'travel',
-  }).catch((e) => console.warn('could not record travel usage:', e instanceof Error ? e.message : e));
+    p_project_id: caller.activeProjectId,
+    p_made: made,
+  })
+    .then((held) => {
+      if (held === false && reservation !== null) {
+        console.warn(`travel reservation ${reservation} had already gone stale — the request outran its claim`);
+      }
+    })
+    .catch((e) => console.error('could not release the travel reservation:', e instanceof Error ? e.message : e));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -320,6 +344,11 @@ async function resolveLeg(
     // asked (design D4). Through the queue so one request's fifteen legs, and a grid's worth of
     // requests at once, do not all hit TfL in the same instant.
     const journey = await withTflSlot(() => journeyTime(origin, to, mode, TFL_APP_KEY));
+    // Transient, deliberately, so it goes out uncached and is reported in its own words: a walk
+    // TfL's graph could not have measured honestly is a fault in the planner, not a fact about the
+    // journey, and a no-route row would make a 17-minute detour into a dash that outlives the fix.
+    const detour = implausibleWalk(mode, journey.seconds, straightLineMiles);
+    if (detour) throw new TflError(detour, true);
     // A failed cache write must not turn a good answer into a permanent "no route", which is what
     // happened when this sat inside the catch. It must still be *loud*: a write that silently fails
     // means every lookup costs a fresh TfL call forever, and the only visible symptom is that
@@ -389,118 +418,133 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
 
   const cache = ask.refresh ? new Map<string, TravelRow>() : await cachedJourneys(origin);
 
-  // Where the flat is, for the walking refusal — which needs a point at each end, and gets the
-  // origin as a postcode string, because a postcode is the right thing to route from and the wrong
-  // thing to measure with. The backfill has the point handed to it by `travel_gaps`; here nobody
-  // has asked for it, so it is looked up rather than taken off Rightmove's own map pin, which is
-  // deliberately fuzzed.
+  // Every leg the cache cannot answer, claimed in one go before any of them is dispatched. Legs
+  // that turn out not to need a call — a walk refused on distance — are released unspent below.
   //
-  // Only when a walking leg is actually going to be resolved. A grid on the website mounts one
-  // request per flat and most of them are answered entirely from the cache, so placing the origin
-  // unconditionally would add a postcodes.io round trip per flat to a page load that needed none.
-  // A postcode that will not resolve leaves this null, and the leg is asked exactly as it was.
-  const placingOrigin =
-    ask.modes.includes('walking') &&
-    ask.destinations.some((d) => answeredBy(cache, d.postcode, 'walking') === null);
-  const originPoint = placingOrigin ? (await lookupPostcode(origin)).point : null;
+  // A fully cached ask claims nothing and is answered whatever the caller has spent this minute.
+  // That is a change: the old check refused it. Refusing a request that makes no call spends
+  // nothing and protects nothing, and it is the shape of a grid revisiting flats it already has.
+  const needed = journeyCallsNeeded(ask.destinations, ask.modes, (postcode, mode) => answeredBy(cache, postcode, mode) !== null);
+  const reservation = needed > 0 ? await claimCalls(caller, needed) : null;
 
+  // Released in a `finally`: the postcode lookup below reaches the network, and a claim left
+  // holding after it throws is that much of the person's next minute spent on nothing.
   let made = 0;
-  // Collected rather than thrown: the answers are already correct and the caller should get them.
-  // Reported at the end, because "we resolved fifteen legs and cached none of them" is a broken
-  // system that otherwise looks like a working one.
-  const cacheWriteFailures: string[] = [];
+  try {
+    // Where the flat is, for the walking refusal — which needs a point at each end, and gets the
+    // origin as a postcode string, because a postcode is the right thing to route from and the wrong
+    // thing to measure with. The backfill has the point handed to it by `travel_gaps`; here nobody
+    // has asked for it, so it is looked up rather than taken off Rightmove's own map pin, which is
+    // deliberately fuzzed.
+    //
+    // Only when a walking leg is actually going to be resolved. A grid on the website mounts one
+    // request per flat and most of them are answered entirely from the cache, so placing the origin
+    // unconditionally would add a postcodes.io round trip per flat to a page load that needed none.
+    // A postcode that will not resolve leaves this null, and the leg is asked exactly as it was.
+    const placingOrigin =
+      ask.modes.includes('walking') &&
+      ask.destinations.some((d) => answeredBy(cache, d.postcode, 'walking') === null);
+    const originPoint = placingOrigin ? (await lookupPostcode(origin)).point : null;
 
-  const answers = await Promise.all(
-    ask.destinations.flatMap((destination) =>
-      ask.modes.map(async (mode): Promise<JourneyAnswer> => {
-        const row = answeredBy(cache, destination.postcode, mode);
-        if (row) {
-          if (row.no_route) {
+    // Collected rather than thrown: the answers are already correct and the caller should get them.
+    // Reported at the end, because "we resolved fifteen legs and cached none of them" is a broken
+    // system that otherwise looks like a working one.
+    const cacheWriteFailures: string[] = [];
+
+    const answers = await Promise.all(
+      ask.destinations.flatMap((destination) =>
+        ask.modes.map(async (mode): Promise<JourneyAnswer> => {
+          const row = answeredBy(cache, destination.postcode, mode);
+          if (row) {
+            if (row.no_route) {
+              return {
+                destPostcode: destination.postcode,
+                mode,
+                seconds: 0,
+                changes: null,
+                // The row's own words where it has them, and an admission where it does not: a row
+                // written before reasons were stored knows no more, and saying so is the difference
+                // between a dash somebody re-asks and one they believe.
+                error: row.reason ?? NO_REASON_RECORDED,
+                transient: false,
+                cached: true,
+              };
+            }
+            return {
+              destPostcode: destination.postcode,
+              mode,
+              seconds: row.seconds ?? 0,
+              changes: row.changes,
+              options: row.journeys ?? undefined,
+              cached: true,
+            };
+          }
+
+          // Coordinates, not the postcode string, wherever we have them — see the type above.
+          const to =
+            destination.lat !== null && destination.lat !== undefined && destination.lon !== null && destination.lon !== undefined
+              ? `${destination.lat},${destination.lon}`
+              : destination.postcode;
+
+          const leg = await resolveLeg(origin, destination.postcode, to, mode, apartMiles(originPoint, destination));
+          // After the fact rather than before it, so a refusal is not billed as a call.
+          if (leg.askedTfl) made++;
+          if (leg.cacheWriteFailure) cacheWriteFailures.push(leg.cacheWriteFailure);
+          if (leg.error) {
             return {
               destPostcode: destination.postcode,
               mode,
               seconds: 0,
               changes: null,
-              // The row's own words where it has them; the old sentence only where it does not,
-              // which is a row written before reasons were stored and genuinely knows no more.
-              error: row.reason ?? 'TfL found no journey for this mode',
-              transient: false,
-              cached: true,
+              error: leg.error,
+              transient: !leg.settled,
+              cached: false,
             };
           }
           return {
             destPostcode: destination.postcode,
             mode,
-            seconds: row.seconds ?? 0,
-            changes: row.changes,
-            options: row.journeys ?? undefined,
-            cached: true,
-          };
-        }
-
-        // Coordinates, not the postcode string, wherever we have them — see the type above.
-        const to =
-          destination.lat !== null && destination.lat !== undefined && destination.lon !== null && destination.lon !== undefined
-            ? `${destination.lat},${destination.lon}`
-            : destination.postcode;
-
-        const leg = await resolveLeg(origin, destination.postcode, to, mode, apartMiles(originPoint, destination));
-        // After the fact rather than before it, so a refusal is not billed as a call.
-        if (leg.askedTfl) made++;
-        if (leg.cacheWriteFailure) cacheWriteFailures.push(leg.cacheWriteFailure);
-        if (leg.error) {
-          return {
-            destPostcode: destination.postcode,
-            mode,
-            seconds: 0,
-            changes: null,
-            error: leg.error,
-            transient: !leg.settled,
+            seconds: leg.seconds ?? 0,
+            changes: leg.changes,
+            options: leg.options,
             cached: false,
           };
-        }
-        return {
-          destPostcode: destination.postcode,
-          mode,
-          seconds: leg.seconds ?? 0,
-          changes: leg.changes,
-          options: leg.options,
-          cached: false,
-        };
-      }),
-    ),
-  );
-
-  await recordCalls(caller, made);
-  // Transient leg errors — TfL or postcodes.io unreachable, a parse failure — come back to the
-  // caller inside a 200 and are invisible in the log otherwise: "15 from TfL" reads the same whether
-  // all fifteen answered or all fifteen threw. A settled no-route carries `transient: false` and is
-  // a real answer, not a fault, so it is not counted here.
-  const brokenLegs = answers.filter((a) => a.error && a.transient);
-  // Counted rather than subtracted: legs are now cached, asked, or settled without asking, and
-  // "everything that was not a call was a cache hit" stopped being true the moment the third
-  // category existed.
-  const fromCache = answers.filter((a) => a.cached).length;
-  const refused = answers.length - fromCache - made;
-  console.log(
-    `travel ${origin}: ${answers.length} legs, ${fromCache} cached, ${made} from TfL` +
-      (refused > 0 ? `, ${refused} too far to walk` : '') +
-      (brokenLegs.length > 0 ? `, ${brokenLegs.length} failed` : ''),
-  );
-  if (brokenLegs.length > 0) {
-    const sample = brokenLegs.slice(0, 3).map((a) => `${a.destPostcode} ${a.mode}: ${a.error}`);
-    const line = `${brokenLegs.length} of ${answers.length} travel legs failed for ${origin}:\n  ${sample.join('\n  ')}`;
-    // Every attempted leg failing is an upstream outage, not a bad destination — say so loudly.
-    if (made > 0 && brokenLegs.length >= made) console.error(`ALL TfL legs failed — upstream likely down. ${line}`);
-    else console.warn(line);
-  }
-  if (cacheWriteFailures.length > 0) {
-    console.error(
-      `CACHE NOT WRITTEN for ${cacheWriteFailures.length} of ${answers.length} legs — every lookup ` +
-        `will cost a TfL call until this is fixed:\n  ${cacheWriteFailures.join('\n  ')}`,
+        }),
+      ),
     );
+
+    // Transient leg errors — TfL or postcodes.io unreachable, a parse failure — come back to the
+    // caller inside a 200 and are invisible in the log otherwise: "15 from TfL" reads the same whether
+    // all fifteen answered or all fifteen threw. A settled no-route carries `transient: false` and is
+    // a real answer, not a fault, so it is not counted here.
+    const brokenLegs = answers.filter((a) => a.error && a.transient);
+    // Counted rather than subtracted: legs are now cached, asked, or settled without asking, and
+    // "everything that was not a call was a cache hit" stopped being true the moment the third
+    // category existed.
+    const fromCache = answers.filter((a) => a.cached).length;
+    const refused = answers.length - fromCache - made;
+    console.log(
+      `travel ${origin}: ${answers.length} legs, ${fromCache} cached, ${made} from TfL` +
+        (refused > 0 ? `, ${refused} too far to walk` : '') +
+        (brokenLegs.length > 0 ? `, ${brokenLegs.length} failed` : ''),
+    );
+    if (brokenLegs.length > 0) {
+      const sample = brokenLegs.slice(0, 3).map((a) => `${a.destPostcode} ${a.mode}: ${a.error}`);
+      const line = `${brokenLegs.length} of ${answers.length} travel legs failed for ${origin}:\n  ${sample.join('\n  ')}`;
+      // Every attempted leg failing is an upstream outage, not a bad destination — say so loudly.
+      if (made > 0 && brokenLegs.length >= made) console.error(`ALL TfL legs failed — upstream likely down. ${line}`);
+      else console.warn(line);
+    }
+    if (cacheWriteFailures.length > 0) {
+      console.error(
+        `CACHE NOT WRITTEN for ${cacheWriteFailures.length} of ${answers.length} legs — every lookup ` +
+          `will cost a TfL call until this is fixed:\n  ${cacheWriteFailures.join('\n  ')}`,
+      );
+    }
+    return { answers, cacheWriteFailures: cacheWriteFailures.length };
+  } finally {
+    await releaseCalls(caller, reservation, made);
   }
-  return { answers, cacheWriteFailures: cacheWriteFailures.length };
 }
 
 /** Walking time to each nearby station, and the lines it carries.
@@ -517,59 +561,100 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
   );
   const knownWalks = new Map(walkRows.map((r) => [r.station_name, r.seconds]));
 
-  const out: Record<string, { seconds?: number; lines: string[] }> = {};
+  // The upper bound, claimed before any of it is dispatched: a placing call per name and a walk per
+  // name we have not measured. The point cache is read inside the loop rather than in bulk, so a
+  // station we have already placed is reserved for and released unspent — see `stationCallsNeeded`.
+  const needed = stationCallsNeeded(ask.names, new Set(knownWalks.keys()));
+  const reservation = needed > 0 ? await claimCalls(caller, needed) : null;
+
   let made = 0;
-  const failures: string[] = [];
+  try {
+    const out: Record<string, { seconds?: number; lines: string[] }> = {};
+    const failures: string[] = [];
 
-  await Promise.all(
-    ask.names.map(async (name) => {
-      try {
-        const points = await rest<Array<{ lat: number | null; lon: number | null; lines: string[] | null }>>(
-          `station_point?name=eq.${encodeURIComponent(name)}&select=lat,lon,lines`,
-        );
-        let station: StationInfo | null;
-        if (points.length > 0) {
-          const p = points[0]!;
-          station = p.lat === null || p.lon === null ? null : { lat: p.lat, lon: p.lon, lines: p.lines ?? [] };
-        } else {
+    // Where the flat is, for the detour check on a walk — looked up once, and only if some station
+    // needs a walk measured, for the reason `resolveJourneys` gives: most asks are answered from the
+    // cache and owe postcodes.io nothing. A postcode that will not resolve leaves this null and the
+    // walk is kept as it always was; the check needs a measurement and does not guess one.
+    let originPoint: Promise<Point | null> | undefined;
+    const placeOrigin = () =>
+      (originPoint ??= lookupPostcode(postcode)
+        .then((r) => r.point)
+        // Rejecting here would throw from the `await` below, which runs *after* `walkTo` has spent a
+        // TfL call and produced a number — discarding a good measurement, leaving the walk uncached,
+        // and drawing the station with its line dots and no time. Null is what the comment above
+        // promises; this is what makes it true.
+        .catch((e: unknown) => {
+          console.warn(
+            `could not place ${postcode} for the walk detour check: ` +
+              `${e instanceof Error ? e.message : e} — the walk is kept unchecked`,
+          );
+          return null;
+        }));
+
+    await Promise.all(
+      ask.names.map(async (name) => {
+        try {
+          const points = await rest<Array<{ lat: number | null; lon: number | null; lines: string[] | null }>>(
+            `station_point?name=eq.${encodeURIComponent(name)}&select=lat,lon,lines`,
+          );
+          let station: StationInfo | null;
+          if (points.length > 0) {
+            const p = points[0]!;
+            station = p.lat === null || p.lon === null ? null : { lat: p.lat, lon: p.lon, lines: p.lines ?? [] };
+          } else {
+            made++;
+            station = await withTflSlot(() => resolveStation(name, TFL_APP_KEY));
+            await rpc('cache_station_point', {
+              p_name: name,
+              p_lat: station?.lat ?? null,
+              p_lon: station?.lon ?? null,
+              p_lines: station?.lines ?? [],
+            });
+          }
+          if (!station) return; // TfL does not know it — omit rather than invent a number.
+
+          // The lines as soon as the point resolves, the walk only if it succeeds. They used to
+          // be written together, so a walk that threw took the line dots with it and a station that
+          // had resolved perfectly rendered as though the cache had never heard of it — which is how
+          // an origin postcode TfL would not route from was diagnosed by a database query instead of
+          // by a glance at a row with dots and no time.
+          const entry: { seconds?: number; lines: string[] } = { lines: station.lines };
+          out[name] = entry;
+
+          const known = knownWalks.get(name);
+          if (known !== undefined) {
+            entry.seconds = known;
+            return;
+          }
+
           made++;
-          station = await withTflSlot(() => resolveStation(name, TFL_APP_KEY));
-          await rpc('cache_station_point', {
-            p_name: name,
-            p_lat: station?.lat ?? null,
-            p_lon: station?.lon ?? null,
-            p_lines: station?.lines ?? [],
-          });
+          // A `let` loses its post-guard non-null narrowing inside a closure, so capture the
+          // resolved station in a const before handing it to the queue.
+          const at = station;
+          const seconds = await withTflSlot(() => walkTo(postcode, at, TFL_APP_KEY));
+          // Not cached and not shown: the straight-line distance beside the station stands in, which
+          // is what a station with no walk already shows. See `implausibleWalk` for the ratio.
+          const detour = implausibleWalk('walking', seconds, apartMiles(await placeOrigin(), at));
+          if (detour) throw new TflError(detour, true);
+          await rpc('cache_station_walk', { p_postcode: postcode, p_station_name: name, p_seconds: seconds });
+          entry.seconds = seconds;
+        } catch (e) {
+          // A missing walk degrades one row; the straight-line distance is still shown. Logged as an
+          // error rather than swallowed or warned, because "every station is missing its walk" is a
+          // broken system that renders as a slightly sparser list.
+          failures.push(`${name}: ${e instanceof Error ? e.message : e}`);
         }
-        if (!station) return; // TfL does not know it — omit rather than invent a number.
+      }),
+    );
 
-        const known = knownWalks.get(name);
-        if (known !== undefined) {
-          out[name] = { seconds: known, lines: station.lines };
-          return;
-        }
-
-        made++;
-        // A `let` loses its post-guard non-null narrowing inside a closure, so capture the
-        // resolved station in a const before handing it to the queue.
-        const at = station;
-        const seconds = await withTflSlot(() => walkTo(postcode, at, TFL_APP_KEY));
-        await rpc('cache_station_walk', { p_postcode: postcode, p_station_name: name, p_seconds: seconds });
-        out[name] = { seconds, lines: station.lines };
-      } catch (e) {
-        // A missing walk degrades one row; the straight-line distance is still shown. Logged as an
-        // error rather than swallowed or warned, because "every station is missing its walk" is a
-        // broken system that renders as a slightly sparser list.
-        failures.push(`${name}: ${e instanceof Error ? e.message : e}`);
-      }
-    }),
-  );
-
-  await recordCalls(caller, made);
-  if (failures.length > 0) {
-    console.error(`${failures.length} of ${ask.names.length} stations failed:\n  ${failures.join('\n  ')}`);
+    if (failures.length > 0) {
+      console.error(`${failures.length} of ${ask.names.length} stations failed:\n  ${failures.join('\n  ')}`);
+    }
+    return { walks: out, failures: failures.length };
+  } finally {
+    await releaseCalls(caller, reservation, made);
   }
-  return { walks: out, failures: failures.length };
 }
 
 /** Where a postcode is.
@@ -577,11 +662,20 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
  *  Not cached in the database, unlike the travel times: postcodes.io is free, keyless and instant,
  *  and a round trip to the database to avoid one would cost more than it saves. It is here rather
  *  than in the client only because a browser page cannot reach postcodes.io either. */
-async function resolvePostcode(ask: Extract<Ask, { kind: 'postcode' }>) {
+async function resolvePostcode(caller: Caller, ask: Extract<Ask, { kind: 'postcode' }>) {
   const postcode = ask.postcode.trim();
   if (!postcode) throw new HttpError(400, 'bad-request', 'a lookup needs a postcode');
-  const { point } = await lookupPostcode(postcode);
-  return { point };
+  // One call's worth of capacity, released having spent nothing: postcodes.io is not TfL and does
+  // not belong in the ledger, but the old check stood in front of all three kinds of ask and a
+  // caller who has exhausted the minute should still be refused here. Reserving and releasing is
+  // how that survives the ledger becoming the record of TfL calls alone.
+  const reservation = await claimCalls(caller, 1);
+  try {
+    const { point } = await lookupPostcode(postcode);
+    return { point };
+  } finally {
+    await releaseCalls(caller, reservation, 0);
+  }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -825,7 +919,8 @@ serve(async (request) => {
   }
 
   const caller = await requireCaller(request);
-  await checkRate(caller);
+  // No rate check here any more. What one ask costs is only knowable once its body has been read
+  // and the cache consulted, so each resolver below claims its own capacity — see `claimCalls`.
   const ask = await body<Ask>(request);
 
   switch (ask.kind) {
@@ -834,7 +929,7 @@ serve(async (request) => {
     case 'stations':
       return await resolveStations(caller, ask);
     case 'postcode':
-      return await resolvePostcode(ask);
+      return await resolvePostcode(caller, ask);
     default:
       throw new HttpError(400, 'bad-request', `unknown kind ${String((ask as { kind?: unknown }).kind)}`);
   }

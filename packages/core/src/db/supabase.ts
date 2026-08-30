@@ -15,13 +15,20 @@
  *    `station_walk` and `travel_time` are SELECT-only for `authenticated`; the writes go through
  *    `SECURITY DEFINER` RPCs that validate their arguments. This file already funnelled those
  *    writes through a handful of named functions, so what changed is what they call.
+ *
+ *  And a third that used to be a convention here and is now enforced underneath it: a shared fact
+ *  is readable only for a listing one of your projects has opened (`20260830190000`). Every read
+ *  below already joined through `project_property` and so is unchanged — but a new one that forgets
+ *  to now comes back empty rather than with the whole table.
  */
 import { db, ensureSession } from './client';
 import { accessToken, requireSession } from './session';
 import { MIN_PASSWORD_LENGTH } from '../contracts';
 import { rightmoveListingId } from '../listing';
+import { logWarn } from '../log';
 import type {
   AddListingResult,
+  AdminAction,
   AdminProject,
   AdminUser,
   AuthState,
@@ -29,6 +36,7 @@ import type {
   Invite,
   InviteResult,
   LocationResult,
+  PlacePatch,
   ProjectMember,
   ProjectSummary,
   RedeemResult,
@@ -45,7 +53,7 @@ import { locatePostcode, locatePostcodes } from './travel';
 import { MODEL_VERSION, type LabelMode, type Model, type ModelMetrics } from '../predict';
 import type { PricePoint } from '../recheck';
 import type { SearchCard } from '../search-card';
-import { missingFor, sweepProgress } from '../sweep';
+import { criteriaFingerprint, missingFor, sweepProgress, type SweepCriteria } from '../sweep';
 import { type StationInfo } from '../tfl';
 import type { ArchiveReason, PropertyStage, Stage } from '../stage';
 import { toSleepingSeparation } from '../types';
@@ -160,6 +168,12 @@ async function readMemberships(): Promise<ProjectSummary[]> {
  *  more than one, the picker asks. */
 export async function authState(): Promise<AuthState> {
   const session = await requireSession();
+  // Before the memberships are read, not only on sign-in. An invite that waits for the next
+  // sign-in waits for good on a phone that stays signed in for months — which is how somebody
+  // with an account was invited to a hunt and never saw it. An existing account is now added
+  // outright by `create_invite`, so this is one cheap no-op most of the time; it is still what
+  // lands a platform invite, and any pending row written before that change.
+  await consumeInvites();
   const profile = await readProfile(session.user.id, session.user.email ?? '');
   const projects = await readMemberships();
 
@@ -337,11 +351,17 @@ async function displayNames(userIds: Array<string | null>): Promise<Map<string, 
  *
  *  `record_property` does both writes in one transaction now. What guards the shared row is not
  *  the ordering but the function itself: it is `SECURITY DEFINER`, it checks `is_member` against
- *  the project it is asked to write as, and no client holds a delete path. */
-export async function recordProperty(listing: Listing): Promise<void> {
+ *  the project it is asked to write as, and no client holds a delete path.
+ *
+ *  Returns false when the shared row already held a *newer* reading of the page and was kept — a
+ *  stale tab no longer overwrites this morning's numbers for everybody. The project's link and its
+ *  `last_seen_at` are written either way, so a refusal never costs anybody the flat; it costs only
+ *  the older numbers. Logged as well as returned, because the one caller that most needs to know is
+ *  a background worker with nowhere to put a return value. */
+export async function recordProperty(listing: Listing): Promise<boolean> {
   const projectId = await activeProjectId();
 
-  const { error } = await db().rpc('record_property', {
+  const { data, error } = await db().rpc('record_property', {
     p_project_id: projectId,
     p_property: {
       rightmove_id: listing.rightmoveId,
@@ -365,9 +385,22 @@ export async function recordProperty(listing: Listing): Promise<void> {
       // `last_seen_at` is not passed: `record_property` stamps it itself, in the same transaction
       // as the project link, so a client clock cannot disagree with the row it wrote.
       description: listing.description,
+      // And this one is passed for the opposite reason: it is a fact about the *page*, not about
+      // the write, and the server has no way to learn it. Capped at the server's now() there, so a
+      // wrong clock can refuse this client's own writes but cannot pin the row against everyone.
+      observed_at: listing.observedAt,
     },
   });
   fail('recording property', error);
+
+  const wrote = data !== false;
+  if (!wrote) {
+    logWarn(
+      'record',
+      `kept a newer reading of ${listing.rightmoveId} — this page was read at ${listing.observedAt}`,
+    );
+  }
+  return wrote;
 }
 
 /** Add a flat from a URL somebody pasted, shared or typed.
@@ -728,9 +761,16 @@ export async function setProjectSettings(preferences: HuntPreferences): Promise<
 // ------------------------------------------------------------------------------------------------
 
 const PLACE_COLUMNS =
-  'id, label, postcode, lat, lon, rightmove_location_id, display_location_id, sweep_radius_miles, max_days_since_added';
+  'id, label, postcode, lat, lon, rightmove_location_id, display_location_id, sweep_radius_miles, max_days_since_added, travel_timed';
 
 function toPlace(r: any): Place {
+  // The one column here whose absence is indistinguishable from a deliberate answer. `undefined` is
+  // falsy, and `travelDestinations` filters on it, so a select that dropped `travel_timed` would
+  // stop timing journeys to every place in the hunt and look exactly like somebody having switched
+  // them all off. Every other field is either nullable already or fails visibly when it is missing.
+  if (typeof r.travel_timed !== 'boolean') {
+    throw new Error('place row has no travel_timed — was it left out of PLACE_COLUMNS?');
+  }
   return {
     id: r.id,
     label: r.label,
@@ -746,6 +786,7 @@ function toPlace(r: any): Place {
       ? null
       : Number(r.sweep_radius_miles),
     maxDaysSinceAdded: r.max_days_since_added ?? null,
+    travelTimed: r.travel_timed,
   };
 }
 
@@ -780,20 +821,13 @@ export async function addPlace(label: string, postcode: string): Promise<Place> 
   return toPlace(data);
 }
 
-/** Change what a place is *for*: whether it is swept around, how far, and how often.
+/** Change what a place is *for*: whether journeys are timed to it, whether it is swept around, how
+ *  far, and how often.
  *
  *  Deliberately not a general-purpose row patcher. The label and the postcode are what the place
  *  *is* — changing either means resolving a coordinate again, which `addPlace` does on the way in —
  *  and everything here is what the hunt *does with* it. */
-export async function updatePlace(
-  id: string,
-  patch: {
-    locationIdentifier?: string | null;
-    displayLocationIdentifier?: string | null;
-    sweepRadiusMiles?: number | null;
-    maxDaysSinceAdded?: number | null;
-  },
-): Promise<Place> {
+export async function updatePlace(id: string, patch: PlacePatch): Promise<Place> {
   const projectId = await activeProjectId();
   const row: Record<string, unknown> = {};
   if (patch.locationIdentifier !== undefined) row.rightmove_location_id = patch.locationIdentifier;
@@ -802,6 +836,7 @@ export async function updatePlace(
   }
   if (patch.sweepRadiusMiles !== undefined) row.sweep_radius_miles = patch.sweepRadiusMiles;
   if (patch.maxDaysSinceAdded !== undefined) row.max_days_since_added = patch.maxDaysSinceAdded;
+  if (patch.travelTimed !== undefined) row.travel_timed = patch.travelTimed;
   if (Object.keys(row).length === 0) throw new Error('nothing to change about this place');
 
   const { data, error } = await db()
@@ -1438,6 +1473,10 @@ export interface HubSweep {
    *  `sweepWindow` already reads null as "use the widest window", which is the answer that cannot
    *  drop listings on the floor. */
   lastSweptAt: string | null;
+  /** What that sweep searched for (`criteriaFingerprint`), or null for one recorded before sweeps
+   *  were stamped. Read `lastSweptAt` through `lastSweptFor`, never directly: a complete pass of a
+   *  different search dates nothing. */
+  criteriaFingerprint: string | null;
   lastResultCount: number | null;
   lastWindowDays: number | null;
   locationIdentifier: string | null;
@@ -1458,7 +1497,7 @@ export interface HubSweep {
 // `check:rls` (which asks about the boundary, not about embeds), and the failure arrives as a
 // toast rather than an exception, so the page looks like it is working.
 const SWEEP_COLUMNS =
-  'hub, place_id, last_swept_at, last_result_count, last_window_days, location_identifier, pages_total, pages_seen, place!hub_sweep_place_id_fkey(label)';
+  'hub, place_id, last_swept_at, criteria_fingerprint, last_result_count, last_window_days, location_identifier, pages_total, pages_seen, place!hub_sweep_place_id_fkey(label)';
 
 function toHubSweep(r: any): HubSweep {
   const place = Array.isArray(r.place) ? r.place[0] : r.place;
@@ -1469,6 +1508,7 @@ function toHubSweep(r: any): HubSweep {
     hub: place?.label ?? r.hub ?? '',
     placeId: r.place_id ?? null,
     lastSweptAt: r.last_swept_at,
+    criteriaFingerprint: r.criteria_fingerprint ?? null,
     lastResultCount: r.last_result_count,
     lastWindowDays: r.last_window_days,
     locationIdentifier: r.location_identifier,
@@ -1524,7 +1564,17 @@ async function placeIdFor(projectId: string, hub: string, placeId?: string): Pro
  *  Nothing narrows a window on the strength of a partial pass. */
 export async function recordSweepPage(
   hub: string,
-  details: { page: number; totalPages: number; resultCount: number; windowDays: number; locationIdentifier: string },
+  details: {
+    page: number;
+    totalPages: number;
+    resultCount: number;
+    windowDays: number;
+    locationIdentifier: string;
+    /** The filters the page was actually served with, off its own URL — not the saved settings,
+     *  which may have changed since the tab was opened. `criteriaFingerprint` says why a sweep has
+     *  to know what it was a sweep of. */
+    criteria: SweepCriteria;
+  },
   placeId?: string,
 ): Promise<HubSweep | null> {
   const projectId = await activeProjectId();
@@ -1532,7 +1582,7 @@ export async function recordSweepPage(
 
   const { data: existing, error: readError } = await db()
     .from('hub_sweep')
-    .select('pages_total, pages_seen, last_swept_at')
+    .select('pages_total, pages_seen, last_swept_at, criteria_fingerprint')
     .eq('place_id', id)
     .maybeSingle();
   fail('reading this hub\'s sweep progress', readError);
@@ -1545,7 +1595,11 @@ export async function recordSweepPage(
     details.totalPages,
   );
 
+  // The date and the stamp move together, on a complete pass only. A partial pass of a new search
+  // leaves both as the last complete pass wrote them, so the row keeps saying which search its date
+  // is a date for.
   const sweptAt = complete ? new Date().toISOString() : (existing?.last_swept_at ?? null);
+  const sweptFor = complete ? criteriaFingerprint(details.criteria) : (existing?.criteria_fingerprint ?? null);
   const row = {
     place_id: id,
     // The name this search was filed under. Kept beside the id rather than derived from it, so a
@@ -1555,6 +1609,7 @@ export async function recordSweepPage(
     // Only a complete pass sets the mark. A partial one leaves whatever the last complete sweep
     // wrote — usually null — so the next window stays as wide as it needs to be.
     last_swept_at: sweptAt,
+    criteria_fingerprint: sweptFor,
     last_result_count: details.resultCount,
     last_window_days: details.windowDays,
     location_identifier: details.locationIdentifier,
@@ -1717,12 +1772,13 @@ export async function createInvite(email: string, projectId: string | null): Pro
       return {
         status: 'invited',
         invite: toInvite(body.invite),
-        userExisted: Boolean(body.userExisted),
         // Read straight through and never stored. The function minted it, the database holds only
         // its hash, and this reply is the one place it exists in the clear — a copy kept here would
         // be a copy that outlives the screen it is shown on.
         code: String(body.code ?? ''),
       };
+    case 'added':
+      return { status: 'added', invite: toInvite(body.invite) };
     case 'at-capacity':
       return {
         status: 'at-capacity',
@@ -1754,11 +1810,12 @@ export async function revokeInvite(inviteId: string): Promise<void> {
 
 /** Turn every live invite for the signed-in address into membership.
  *
- *  Call this immediately after a successful sign-in and before reading the session, because until
- *  it runs a newly invited person is a real account in no project at all — which the picker can
- *  only render as "you are not a member of any project yet". It takes no arguments: the function
- *  reads the caller and their address from the JWT, so there is nothing to point at somebody
- *  else's invite. Safe to call on every sign-in; it is a no-op when there is nothing pending. */
+ *  `authState` calls this before it reads the memberships, so every surface that asks who is
+ *  signed in has already taken up whatever was waiting — until it runs a newly invited person is a
+ *  real account in no project at all, which the picker can only render as "you are not a member of
+ *  any project yet". It takes no arguments: the function reads the caller and their address from
+ *  the JWT, so there is nothing to point at somebody else's invite. A no-op when nothing is pending,
+ *  which since `create_invite` started adding existing accounts directly is nearly always. */
 export async function consumeInvites(): Promise<void> {
   const { error } = await db().rpc('consume_invites');
   fail('joining the house hunt you were invited to', error);
@@ -2055,6 +2112,48 @@ export async function adminProjects(): Promise<AdminProject[]> {
     createdAt: r.created_at,
     spentThisMonthUsd: spentByProject.get(r.id) ?? 0,
   }));
+}
+
+/** What admins have changed, newest first.
+ *
+ *  RLS returns nothing at all to a non-admin — unlike every other read here, where a member sees
+ *  their own rows — because the answer is which admin did it, and that is not the subject's to read.
+ *  `LIMIT` rather than the keyset walk `usageSince` does: nothing is summed from these rows, so a
+ *  page of the most recent is the whole question.
+ *
+ *  The total comes back with the page, and that is not a nicety. Without it the only number the
+ *  screen had was the page length, so a deployment with five hundred changes said "200" — a cap
+ *  presented as a count, on the one screen whose job is to say what has actually happened.
+ *  `count: 'exact'` is answered by the same request the rows come from, so it costs no round
+ *  trip. */
+export const ADMIN_ACTION_PAGE = 200;
+
+export async function adminActions(): Promise<{ actions: AdminAction[]; total: number }> {
+  const { data, error, count } = await db()
+    .from('admin_action')
+    .select(
+      'id, occurred_at, actor_id, action, subject_user_id, subject_project_id, previous_value, new_value',
+      { count: 'exact' },
+    )
+    .order('id', { ascending: false })
+    .limit(ADMIN_ACTION_PAGE);
+  fail('reading what admins have changed', error);
+
+  const actions = ((data ?? []) as any[]).map((r) => ({
+    id: String(r.id),
+    occurredAt: r.occurred_at,
+    actorId: r.actor_id ?? null,
+    action: r.action,
+    subjectUserId: r.subject_user_id ?? null,
+    subjectProjectId: r.subject_project_id ?? null,
+    previousValue: r.previous_value === null ? null : Number(r.previous_value),
+    newValue: Number(r.new_value),
+  }));
+
+  // A null count means PostgREST did not answer with one. Falling back to the page length is the
+  // old wrong answer, so it falls back to the only other thing that is certainly true: what we
+  // are holding.
+  return { actions, total: count ?? actions.length };
 }
 
 export async function adminSetUserCap(userId: string, capUsd: number): Promise<void> {

@@ -71,24 +71,26 @@ export function Hint({
   /** Tap somewhere else and it goes away — the other half of tap-to-open, and the only close
    *  gesture a finger has.
    *
-   *  Listening on the anchor's root node rather than on `document`, for the reason `portalTarget`
-   *  gives below: in the panel the anchor is inside a shadow root, and an event that leaves it is
-   *  retargeted to the host, so a document listener cannot tell a tap on the hint from a tap on
-   *  anything else in the panel and would close the bubble the tap had just opened. `composedPath`
-   *  is what still sees through the boundary. `pointerdown` rather than `click` so the explanation
-   *  is gone before whatever was tapped next gets on with its own job. */
+   *  On the anchor's `ownerDocument`, not its root node. In the panel the anchor is inside a shadow
+   *  root, and a listener on that root only ever sees events whose path runs through it — which is
+   *  every tap inside the panel and no tap outside it. So the one gesture this exists for, tapping
+   *  away onto the Rightmove page, never reached it and the bubble stayed open. The document sees
+   *  all of them, and `composedPath` is what still identifies a tap on the hint itself: a composed
+   *  event carries its shadow-DOM path even after retargeting, so the anchor is in that list when
+   *  the tap was on it and absent when it was not. `pointerdown` rather than `click` so the
+   *  explanation is gone before whatever was tapped next gets on with its own job. */
   useEffect(() => {
     if (!open) return;
-    const root = anchor.current?.getRootNode();
-    if (!root) return;
+    const ownerDocument = anchor.current?.ownerDocument;
+    if (!ownerDocument) return;
     const away = (event: Event) => {
       const here = anchor.current;
       if (here && event.composedPath().includes(here)) return;
       clearTimeout(timer.current);
       setOpen(false);
     };
-    root.addEventListener('pointerdown', away);
-    return () => root.removeEventListener('pointerdown', away);
+    ownerDocument.addEventListener('pointerdown', away);
+    return () => ownerDocument.removeEventListener('pointerdown', away);
   }, [open]);
 
   if (!text) return <>{children}</>;

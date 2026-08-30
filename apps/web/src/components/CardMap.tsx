@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { nearestHub, type Hub, type Point } from '@house-hunt/core';
-import { CopyLocation } from '@house-hunt/ui';
+import { CopyLocation, Icon } from '@house-hunt/ui';
+import { mapsUrl } from '@/lib/geo';
 import { cssToken } from '@/lib/pin';
 
 /** A map of one flat, in the pane that flat is being read in, behind a button.
@@ -130,6 +131,8 @@ export function CardMap({
     };
   }, [open, lat, lon, hubs, colour]);
 
+  const maps = mapsUrl(point, postcode, approximate);
+
   return (
     <div className="card-map-wrap">
       <div className="card-map-bar">
@@ -144,6 +147,15 @@ export function CardMap({
           <span className="card-map-missing dim">No pin on this listing — nothing to map.</span>
         )}
         <CopyLocation postcode={postcode} point={point} />
+        {/* The other half of "where is it, exactly": the maps app the reader already uses, where
+            the directions and the street view are. One plain https link for every device — see
+            `mapsUrl` for why it is not `geo:`. Absent rather than dead when there is nothing to
+            point it at. */}
+        {maps && (
+          <a className="card-map-open" href={maps} target="_blank" rel="noreferrer">
+            <Icon name="external" size={12} /> Open in Maps
+          </a>
+        )}
       </div>
       {open && point && (
         <>

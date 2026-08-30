@@ -23,8 +23,9 @@ const RETRY_DELAYS_MS = [400, 1200, 3000];
 
 /** Fetch with retries on the failures that pass. TfL rate-limits, has the occasional 5xx,
  *  and the service worker's network drops out; none of those mean anything about the journey.
- *  A 404 ("No journey found") and a 300 (ambiguous location) are real answers and are not
- *  retried — retrying them just makes the panel slower at being wrong. */
+ *  A 404 ("No journey found") is a real answer and is not retried — retrying it just makes the
+ *  panel slower at being wrong. A 300 is not retried either, but for a different reason: it is
+ *  not an answer, and `journeyTime` says so rather than remembering it as one. */
 async function tflFetch(url: string, what: string): Promise<Response> {
   let last = '';
 
@@ -96,7 +97,12 @@ export interface StationInfo extends Point {
 }
 
 /** Official TfL line colours. Anything unknown (a National Rail operator, say) falls back to the
- *  generic rail purple, so a new line never renders as an invisible dot. */
+ *  generic rail purple, so a new line never renders as an invisible dot.
+ *
+ *  Also load-bearing for something other than colour: `dedupeStations` recognises a bracketed
+ *  qualifier as a line — rather than part of the station's name — by membership here. A line this
+ *  map has not learned fails closed there (two rows instead of one merged), so a missing entry
+ *  costs a wasted station slot as well as a purple dot. */
 /** Bus routes are numbered, not named, so they never match a line id — they take the London bus
  *  red as a group. */
 export const BUS_COLOUR = '#E1251B';
@@ -337,6 +343,132 @@ export function nextWeekdayMorning(now = new Date()): { date: string; time: stri
  *  geocoder did not know last month it now knows. So they expire, and positives do not. */
 export const NO_ROUTE_RETRY_DAYS = 30;
 
+// ------------------------------------------------------------------------------------------------
+// What one person may spend of TfL's goodwill, and how much a single ask can cost.
+//
+// The key is ours rather than the caller's, so a caller who opens two hundred listings is spending
+// our quota. The `travel` function is the only thing that enforces this, but the numbers live here
+// with the rest of the travel policy — beside `TRAVEL_BASIS` and `NO_ROUTE_RETRY_DAYS` — because a
+// limit nothing can import is a limit nothing can check, and the two functions below are the ones
+// that say what an ask will cost *before* it is dispatched.
+// ------------------------------------------------------------------------------------------------
+
+/** Per minute rather than per hour, which is a change of shape and not only of number.
+ *
+ *  The old cap was 600 an hour, justified as "roughly forty listings an hour with five places and
+ *  three modes each, which is more than anybody browsing does". That stopped being true when Places
+ *  became one screen over the whole pile: opening the table asks for every flat at once. The person
+ *  who did nothing wrong then spent the *rest of the hour* refused — an hour-long window turns one
+ *  burst into an hour of a broken-looking app.
+ *
+ *  What the cap protects is TfL, and TfL's own limit is per minute (500 keyed, 50 unkeyed), so a
+ *  per-minute window is the one that measures the thing being protected. 300 sits under the keyed
+ *  allowance with room for the backfill alongside, and still stops a loop dead: a runaway caller is
+ *  refused within seconds and recovers a minute later rather than an hour later.
+ *
+ *  **300 does not absorb a cold Places table, and no longer pretends to.** Fifty flats with five
+ *  places and three modes is 750 legs; every one of them uncached is 750 calls, and the reservation
+ *  in `claim_travel_calls` is what makes that arithmetic bind rather than being outrun by fifty
+ *  requests reading the same pre-write count. So the first load of a large hunt with an empty cache
+ *  is now partly refused inside the minute and finishes on a retry, where before it made every call
+ *  and refused the *next* minute instead. That is the limit doing what its message has always said.
+ *  The scheduled backfill — exempt, it runs as `service_role` — is what keeps that pile small enough
+ *  that the case is rare, and raising this number is the wrong answer to seeing it: 300 is chosen
+ *  against TfL's 500, not against our page.
+ *
+ *  `MAX_TFL_CONCURRENCY` in the travel function is what keeps a burst from arriving all at once;
+ *  this is what bounds the total. The two are not substitutes and neither implies the other. */
+export const TRAVEL_CALLS_PER_MINUTE = 300;
+
+export const TRAVEL_RATE_WINDOW_SECONDS = 60;
+
+/** What a journey ask can cost: every destination-and-mode pair the cache cannot already answer.
+ *
+ *  Counted before anything is dispatched, because that is the only moment at which a limit can
+ *  refuse a batch. The old guard checked the minute's usage once, before the body was even parsed,
+ *  and nothing downstream bounded what the body asked for — so one request naming 301 destinations
+ *  was 301 calls made by a request that had just been told it was inside a 300-call allowance. */
+export function journeyCallsNeeded(
+  destinations: ReadonlyArray<{ postcode: string }>,
+  modes: readonly TravelMode[],
+  answered: (destPostcode: string, mode: TravelMode) => boolean,
+): number {
+  let needed = 0;
+  for (const destination of destinations) {
+    for (const mode of modes) if (!answered(destination.postcode, mode)) needed++;
+  }
+  return needed;
+}
+
+/** What a station ask can cost: placing each station, and measuring the walk to each one we have
+ *  not measured. 151 names is up to 302 calls.
+ *
+ *  An upper bound rather than an exact figure. The walks are known in bulk before anything is
+ *  dispatched, but a station's coordinates are read one name at a time as each walk is resolved, so
+ *  a station already in the point cache is reserved for here and released unspent. Over-reserving is
+ *  the safe direction: the reservation is given back, whereas under-reserving is the hole this is
+ *  here to close. */
+export function stationCallsNeeded(names: readonly string[], measuredWalks: ReadonlySet<string>): number {
+  return names.length + names.filter((name) => !measuredWalks.has(name)).length;
+}
+
+/** What a settled no-route row says when it recorded nothing about what settled it.
+ *
+ *  Every row written before the `reason` column exists like this — 96% of them, when the column
+ *  was three weeks old — and the read path used to fill the gap with "TfL found no journey for
+ *  this mode". That is a blank wearing TfL's name: a fabricated attribution on thousands of rows,
+ *  some of which were a 300 that TfL never turned into a verdict, and it is why the poisoned rows
+ *  went unnoticed for months. Nobody investigates a dash that explains itself. The honest sentence
+ *  is that we do not know, and it is the one sentence that invites somebody to re-ask. */
+export const NO_REASON_RECORDED =
+  'no journey was recorded here and the row does not say why — it predates us writing the reason down';
+
+/** The pace TfL's planner walks at, in metres per second. Measured, not chosen: 4.43–4.52 km/h
+ *  across every leg in the #81 survey. Used only to turn a duration back into the distance TfL
+ *  must have routed, for the detour check below — never to estimate a walk. */
+const TFL_WALK_PACE_MPS = 4.5 * 1000 / 3600;
+
+/** How much longer than the straight line a walking route may be before it is not believed.
+ *
+ *  TfL's pedestrian graph is missing links at railway bridges: two points 105 m apart on Kilburn
+ *  High Road, either side of the Brondesbury bridge, are routed 1,297 m round via Willesden Lane,
+ *  and the 17-minute walk that produces is drawn beside an 11-minute station as though it were a
+ *  measurement. Over 51 real station walks the honest routes never exceeded 1.98 times the crow's
+ *  flight; the three broken ones were 2.14, 2.42 and 4.59. The line goes between, and it is thin:
+ *  this catches the bridges with one false positive and is triage rather than a destination —
+ *  the destination is a router whose foot graph crosses railways, which is its own issue. */
+export const MAX_WALK_DETOUR_RATIO = 2.1;
+
+/** Under this, in metres, the ratio is not asked. A walk round one block from next door is an
+ *  honest four or five times the straight line. */
+const MIN_METRES_FOR_DETOUR_CHECK = 50;
+
+/** Why a walk TfL returned is not to be believed, or null when it is.
+ *
+ *  Same shape as `tooFarToWalk`, and for the same reason: this decides not to *store* a number,
+ *  and the sentence it returns is what the caller reports in place of it. A refused walk is left
+ *  uncached rather than written as a no-route — it is not a fact about the journey, only about
+ *  the planner — so the straight-line distance beside a station stands in, and a later router or
+ *  a fixed graph is free to answer.
+ *
+ *  Only walking: the cycling graph crosses those bridges (it routes the Kilburn pair in 120 m), and
+ *  transit legs walk only to the nearest stop. Strictly greater than the ratio, so a route sitting
+ *  on it is kept. `null` miles means one end could not be placed, and a check needs a measurement.
+ *  Very short straight lines are skipped rather than compared: two points in the same building a
+ *  few metres apart can honestly need a walk round the block, and the ratio there says nothing. */
+export function implausibleWalk(mode: TravelMode, seconds: number, straightLineMiles: number | null): string | null {
+  if (mode !== 'walking' || straightLineMiles === null) return null;
+  const straightMetres = straightLineMiles * 1609.344;
+  if (straightMetres < MIN_METRES_FOR_DETOUR_CHECK) return null;
+  const routedMetres = seconds * TFL_WALK_PACE_MPS;
+  const ratio = routedMetres / straightMetres;
+  if (ratio <= MAX_WALK_DETOUR_RATIO) return null;
+  return (
+    `TfL's ${Math.round(seconds / 60)}-minute walk is ${ratio.toFixed(1)}× the ${Math.round(straightMetres)} m ` +
+    'straight line — its pedestrian map is probably missing a crossing here, so the number is not kept'
+  );
+}
+
 /** Why a walking leg is not worth asking TfL about, or null when it is.
  *
  *  A reason rather than a boolean, for the same purpose `staleTravel` returns one: this decides not
@@ -414,9 +546,18 @@ export async function journeyTime(
   const response = await tflFetch(url, `journey ${fromPostcode} -> ${toPostcode} by ${mode}`);
 
   if (!response.ok) {
-    // 300 means the planner wants disambiguation — usually a postcode it can't resolve.
+    // 300 is the planner asking for disambiguation, and it used to be read as "TfL could not
+    // resolve an endpoint" and cached as a permanent no-route. The database disagreed: every 300
+    // in production landed on the same afternoon, and for five of the six the same origin and the
+    // same destination routed fine by another mode within the same second. A 300 is TfL unable to
+    // answer for that mode at that moment, not a verdict on the journey — and because an origin is
+    // shared by every leg from a flat, one such moment blanked all twelve of them for a month.
+    //
+    // Transient, then, which keeps it out of the cache and hands it to the backfill's backoff. Not
+    // retried here: `retryable()` above governs the hot retries and does not list 300, so this is
+    // not a loop, only a refusal to remember the answer.
     if (response.status === 300) {
-      throw new TflError(`TfL could not resolve "${fromPostcode}" or "${toPostcode}"`, false);
+      throw new TflError(`TfL wanted disambiguation for "${fromPostcode}" -> "${toPostcode}" (HTTP 300)`, true);
     }
     // 404 is TfL's "no journey found" — a settled answer, and the one case worth remembering.
     if (response.status === 404) throw new TflError('TfL found no journey for this mode', false);

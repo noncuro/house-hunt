@@ -59,8 +59,25 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   `packages/core/src/facts.ts`. Never re-implement a fact in a view.
 - **Only `background.ts` constructs a Supabase client** (extension side). One session holder is
   what keeps an MV3 session alive; `pnpm check:one-client` enforces it.
-- **Change anything under `apps/extension/` and bump `apps/extension/package.json`'s `version`,
-  and `EXPECTED_EXTENSION_VERSION` in `apps/web/src/lib/extension-version.ts` to match.** The two
+- **A migration's `YYYYMMDDHHMMSS` must be a minute no other migration uses — on main *or on any
+  branch in flight*.** Supabase keys `supabase_migrations.schema_migrations` on that prefix, not on
+  the file, so when two share one the first to run records the version and `supabase db push` reads
+  the second as already applied and skips it. There is no error and no log line: the column,
+  function or policy is absent, in production only, because CI starts from an empty database
+  and applies both files happily. It nearly landed twice in one day, both times between two branches
+  open at once — each author checked `origin/main`, correctly found the minute free, and could not
+  see the other branch. `pnpm check:migrations` is what catches it, run against the merge result:
+  red on the second pull request when that branch is current with main, and otherwise red on the
+  `main` push right after it lands. A `pull_request` tick is not recomputed when the base moves,
+  so rebase before merging when another migration is in flight.
+- **Change anything that ends up inside the built extension — `apps/extension/`, and the
+  `packages/core` and `packages/ui` source bundled into it — and bump
+  `apps/extension/package.json`'s `version`, and `EXPECTED_EXTENSION_VERSION` in
+  `apps/web/src/lib/extension-version.ts` to match.** A shared-package fix ships in somebody's
+  browser exactly as an `apps/extension/` one does, so without a bump their stale copy reports
+  itself current; `pnpm check:zip` counts those files as "source file(s) changed since it was
+  packaged" and `package.yml` rebuilds on "extension or shared-package source" for the same
+  reason. The two
   are compared over the bridge on `hello`, and that comparison is the only thing that can tell
   somebody the copy in their Chrome is older than the code. Nothing enforces it: Vercel builds
   only `apps/web`, so a forgotten bump ships as a confident "up to date" on a browser running
@@ -124,6 +141,18 @@ script in your own browser. So:
   project, not a client argument. RLS is `to authenticated` everywhere; `anon` holds nothing.
   Shared fact tables are written only through `SECURITY DEFINER` functions; `DELETE` is
   `service_role` only.
+- **A shared fact is shared, but the list of them is not.** `property`, `property_analysis`,
+  `station_point`, `station_walk`, `travel_time` and `property_price` hold facts about a listing
+  rather than about a hunt, which is what makes a flat analysed once across the platform instead of
+  once per project. They were also `select ... using (true)`, so any member of any hunt could list
+  the whole `property` table and read every address every other household had opened. The policies
+  ask `listing_is_mine` / `postcode_is_mine` now (`20260830190000`): a row is readable once a project
+  you are in has opened the listing it is about, which is the predicate every read here already
+  carried in its own query. Two consequences worth knowing before "fixing" something: a new read
+  path that forgets to join `project_property` comes back **empty rather than wrong**, and the
+  cache is still one cache — opening a flat another hunt found still costs nobody a second
+  analysis. `pnpm check:rls` asserts both directions, including that a scoped-to-nothing policy
+  fails rather than passes.
 - **The MV3 session lives only in `background.ts`** (chrome.storage adapter, explicit
   `ensureSession()`, alarms heartbeat) — a second client holder silently kills the session.
 - **`SEED_HUBS` is for dev tools/checks only** — hubs are project data (`project_hub`), and a
@@ -197,6 +226,16 @@ script in your own browser. So:
   never fetched anything for a flat nobody opened, which is how adding a place left a column of
   dashes that filled in only by hand.
 
+  **Which places count as destinations is written twice — `travelDestinations` in
+  `packages/core/src/hubs.ts` and the `where` clause of `travel_gaps` — and both have to say the
+  same thing.** A postcode and `place.travel_timed`, two clauses, because "cannot be routed to" and
+  "not worth routing to" are different facts and the screen says different things about them. The
+  SQL copy is the one that gets forgotten and the one the money runs through: a clause missing there
+  is the backfill fetching journeys nobody wants forever, three legs per flat, with every screen
+  looking right. `pnpm check:travel` reads the clause out of the live migration for that reason.
+  Switching a place off never deletes a `travel_time` row — that table is keyed on a pair of
+  postcodes and has never known what a place is — so switching it back on is the whole undo.
+
   **The schedule lives in the database, and the credentials it uses live in the project's vault.** It
   was a GitHub Actions workflow first, which is a reasonable place for a cron and was the wrong one
   here: it needed two repository secrets nobody knew were missing, so it failed at its own guard 40
@@ -265,11 +304,15 @@ pnpm check:all      # + every pure-function check (seconds)
 ```
 
 Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `listing` (which URLs are a
-listing, and what a share hands over), `hubs`, `stage`, `shortlist`, `sweep`, `travel`,
+listing, and what a share hands over), `invite` (what state an invitation is in, once, for both
+screens that show one), `hubs`, `stage`, `shortlist`, `sweep`, `travel` (what a cached journey means,
+and what one ask may cost before it is dispatched),
+`geo` (the sentence a refused position gets, and a maps link that is not a guess about the phone),
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint), `sync` (the
 `_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a
 shared fix could sit unshipped with every check green),
-`one-client`, `bridge`, `withdrawn`, `recheck`, `full-sweep` (the unattended sweep's sequencing,
+`one-client`, `migrations` (no two migrations claim the same version string),
+`bridge`, `withdrawn`, `recheck`, `full-sweep` (the unattended sweep's sequencing,
 against a fake extension and clock). Each pins reasoning invisible when wrong — a bad bearing still
 looks like a bearing.
 

@@ -13,7 +13,9 @@ import {
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
 import { FlatCard } from '@/components/FlatCard';
-import { pinColour } from '@/lib/pin';
+import { LOCATE_OPTIONS, locateProblem, zoomForLocate } from '@/lib/geo';
+import { cssToken, pinColour } from '@/lib/pin';
+import { useIsMobile } from '@/lib/platform';
 
 /** Every place on one map, coloured by what the two of you said.
  *
@@ -30,7 +32,14 @@ import { pinColour } from '@/lib/pin';
  *  shortlist, scrolled to a card — which threw the map away, and coming back re-fitted it. Since
  *  looking at a map is almost always looking at several flats in the same few streets, that was the
  *  gesture being punished. The card docks at the foot instead, the map stays where you put it, and
- *  the arrow keys walk the pins in the order they run west to east. */
+ *  the arrow keys walk the pins in the order they run west to east.
+ *
+ *  A phone gets neither of those. There are no arrow keys, and the column beside the map is a
+ *  stacked row *under* it — off the bottom of the screen — so tapping a pin appeared to do nothing
+ *  at all. There, a tap opens the flat's own panel, which is the phone's renderer for a flat and
+ *  arrives over the map without disturbing it. And what a phone gets that a desktop never needed is
+ *  the button that puts the reader on the map: "which of these is near me" is the question a map in
+ *  a pocket is being asked, and it was the one thing this screen could not answer. */
 
 const LONDON: [number, number] = [51.5074, -0.1278];
 
@@ -139,6 +148,9 @@ export function ShortlistMap({
    *  re-frame as often as the layout changes, which costs nothing when the view is already right. */
   const chosen = useRef(false);
 
+  // A hook rather than a call in the render — see the note at the foot of `lib/platform`.
+  const phone = useIsMobile();
+
   const [ownAt, setOwnAt] = useState<string | null>(null);
   const controlled = selected !== undefined;
   const at = controlled ? selected : ownAt;
@@ -170,7 +182,14 @@ export function ShortlistMap({
   // function identity, while still never calling a stale one.
   const walk = useRef<(delta: number) => void>(() => {});
   const choose = useRef<(id: string) => void>(() => {});
-  choose.current = setAt;
+  choose.current = (rightmoveId) => {
+    setAt(rightmoveId);
+    // On a phone the flat itself is what a tap on its pin is asking for. The dock is not there to
+    // receive it — see the top of this file — and a selection nobody can see is a gesture that did
+    // nothing. On triage this stays one act rather than two: `onSelect` and `onOpen` are the same
+    // `setAt` there, because choosing a flat is all that screen has to do with one.
+    if (phone) onOpen(rightmoveId);
+  };
 
   const countInView = useCallback(() => {
     const instance = map.current;
@@ -178,6 +197,68 @@ export function ShortlistMap({
     const bounds = instance.getBounds();
     setInView(located.filter((e) => bounds.contains([e.lat!, e.lon!])).length);
   }, [located]);
+
+  /** Where you are, once you have asked to be shown. Only ever on the button: a page that reaches
+   *  for a position nobody asked it for is a permission prompt with no question attached.
+   *
+   *  A failure is a sentence on the screen and there is no fallback view — see `locateProblem`. A
+   *  map that quietly stayed where it was, or slid to the middle of London, would be
+   *  indistinguishable from a slow fix and from a right answer respectively. */
+  const [locating, setLocating] = useState(false);
+  const [locateError, setLocateError] = useState<string | null>(null);
+  const you = useRef<L.LayerGroup | null>(null);
+
+  const locate = useCallback(() => {
+    const instance = map.current;
+    if (!instance) return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setLocateError('This browser will not say where you are.');
+      return;
+    }
+    setLocateError(null);
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocating(false);
+        // The map can have been torn down while the phone was thinking — a change of hunt, or the
+        // reader going somewhere else. Adding a layer to a removed map throws.
+        if (map.current !== instance) return;
+        const at: L.LatLngLiteral = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        you.current?.remove();
+        // The dot, and the circle it is somewhere inside. The circle is the honest half: a fix off
+        // a wifi lookup can be two kilometres wide and a GPS one five metres, and a bare dot draws
+        // both as the same certainty.
+        you.current = L.layerGroup([
+          L.circle(at, {
+            radius: position.coords.accuracy,
+            color: cssToken('--ink', '#241f1a'),
+            weight: 1,
+            fillOpacity: 0.08,
+          }),
+          L.circleMarker(at, {
+            radius: 6,
+            color: cssToken('--white', '#fff'),
+            weight: 2,
+            fillColor: cssToken('--ink', '#241f1a'),
+            fillOpacity: 1,
+          }),
+        ]).addTo(instance);
+        // Going to where you are is taking the view, as much as a pan is. Without this the resize
+        // observer re-frames the pins over it the next time the layout moves — which on a phone is
+        // every rotation, and reads as the map throwing you back across London.
+        chosen.current = true;
+        instance.setView(at, zoomForLocate(instance.getZoom()), { animate: false });
+      },
+      (error) => {
+        setLocating(false);
+        setLocateError(locateProblem(error));
+      },
+      LOCATE_OPTIONS,
+    );
+  }, []);
 
   useEffect(() => {
     if (!host.current || map.current) return;
@@ -365,9 +446,13 @@ export function ShortlistMap({
   const missing = entries.length - located.length;
   const fuzzed = located.filter((e) => !e.exactLocation).length;
   const current = at ? (located.find((e) => e.rightmoveId === at) ?? null) : null;
+  // The card beside the map, and only where there is a beside. A phone has one column, so the
+  // "column" is a card under the fold that a tap on a pin scrolls nothing towards; there the tap
+  // opens the flat itself instead.
+  const dock = panel === 'card' && !phone;
 
   return (
-    <div className={panel === 'card' ? 'mapview-split' : 'mapview-only'}>
+    <div className={dock ? 'mapview-split' : 'mapview-only'}>
       <div className="mapview" data-testid="map">
         <div className="map" ref={host} />
 
@@ -389,12 +474,35 @@ export function ShortlistMap({
             </span>
           )}
         </div>
+
+        {/* The other top corner, because where the reader is standing is not one of the facts about
+            this hunt. Offered on every device rather than only on a phone: a laptop's answer is
+            coarser and still answers "which of these is near me". */}
+        <div className="map-tools">
+          <button
+            type="button"
+            className="map-locate"
+            data-testid="map-locate"
+            disabled={locating}
+            onClick={locate}
+          >
+            <Icon name="pin" size={12} /> {locating ? 'Finding you…' : 'Where I am'}
+          </button>
+          {/* Said out loud, over the map, and left saying it. This is what makes the button safe to
+              offer at all: both ways it fails — a refusal, and a fix that never comes — look
+              exactly like a map that has not moved yet. */}
+          {locateError && (
+            <p className="map-locate-error error" role="alert" data-testid="map-locate-error">
+              {locateError}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Beside the map rather than floating over its foot. The dock covered the pins nearest the
           thing you had just clicked, which are the ones you are comparing it against — and it made
           the map narrower exactly when you wanted it wider. */}
-      {panel === 'card' && (
+      {dock && (
         <aside className="map-side" data-testid="map-dock">
           {current ? (
             <>
