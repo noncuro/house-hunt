@@ -17,8 +17,7 @@
     "apps/web/next-env.d.ts",
     "node_modules",
     ".fixtures",
-    ".working",
-    "supabase/functions"
+    ".working"
   ],
   "rules": {
     "no-unused-vars": [

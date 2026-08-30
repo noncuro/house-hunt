@@ -29,7 +29,7 @@
 import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawnSync, type ChildProcess } from 'node:child_process';
 import { chromium, type Browser, type ConsoleMessage, type Locator, type Page } from 'playwright';
 import {
   createInvite,

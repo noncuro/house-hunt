@@ -16,7 +16,7 @@
  *  route that answers 400 where a 200 is expected turns a sentence somebody can act on into
  *  "something went wrong".
  *
- *  Why the gate is here rather than in the platform or in middleware: `docs/vercel-migration.md`.
+ *  Why the gate is here rather than in the platform or in middleware: `docs/server-side.md`.
  */
 import { type Caller, requireCaller } from './caller';
 import { corsHeaders, preflight } from './cors';

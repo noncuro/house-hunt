@@ -16,16 +16,17 @@ Timings are a warm run on a laptop, measured with `pnpm smoke:all`, and exclude 
 | `pnpm check:rls` | ~25s | 180 assertions on the security boundary. |
 | `pnpm check:spend` | ~15s | 53 assertions on the cap arithmetic. |
 
-The spread on `smoke` is the Edge Function runtime: whichever harness starts it first waits about
-half a minute for Deno to come up, and the ones after it do not. Nothing is wrong when a single run
-of it takes thirty seconds.
+The spread on `smoke` is the `next build`: everything this app runs server-side is a route on the
+website, the panel asks `/api/travel` for its station walks the moment it renders, so the harness
+builds and serves the site like `smoke:web` does. Nothing is wrong when a single run takes half a
+minute.
 
-`supabase start` is the only thing you have to have running. Both browser harnesses that need the
-Edge Functions now serve them themselves (`tools/edge-functions.ts`) and stop them again. `pnpm
-smoke` did not, for a while, and passed anyway — because a `supabase functions serve` left over
-from something else was answering. That is the worst shape a green tick can have: it goes red the
-first time somebody runs it on a clean machine, and it says "panel never left its loading state",
-which is a sentence about a spinner for what is really a process nobody started.
+`supabase start` is the only thing you have to have running. Both browser harnesses that need a
+server start it themselves (`startWebApp` in `tools/servers.ts`) and stop it again. `pnpm smoke` did
+not, for a while, and passed anyway — because a `supabase functions serve` left over from something
+else was answering. That is the worst shape a green tick can have: it goes red the first time
+somebody runs it on a clean machine, and it says "panel never left its loading state", which is a
+sentence about a spinner for what is really a process nobody started.
 
 The same thing arrives by the other door when a harness leaves a server behind, and `smoke:web` did:
 `next start` under `pnpm` survived the kill and kept 3199, so the run after it quietly asserted
@@ -41,8 +42,8 @@ because three findings from one run beat three runs.
 `smoke:web` takes names of its own, for the same reason and with the same rule about a name that
 matches nothing: `pnpm smoke:web list rating`, or `pnpm smoke:web joining`. The sections are
 `session`, `list`, `rating`, `funnel`, `table`, `map`, `triage`, `tabs`, `refusals` and `joining`, and they
-always run in that order. What a subset cannot skip is the setup — the fixture, the Edge Functions
-and a production build of the website — so the saving is the browser work: six seconds for the list
+always run in that order. What a subset cannot skip is the setup — the fixture and a production
+build of the website — so the saving is the browser work: six seconds for the list
 and the rating against forty for all of it, and nearly all of those six are the setup. Every
 section is written to stand on its own against that setup, which is what makes running one of them
 mean anything.

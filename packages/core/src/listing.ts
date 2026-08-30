@@ -8,8 +8,9 @@
  *  did not learn about it does not fail — it returns a flat with no postcode, which is a flat with
  *  no travel times and no explanation.
  *
- *  Deliberately Deno-clean (no `node:` imports, no `import.meta.env`), because
- *  `tools/sync-edge-function.ts` copies it into `supabase/functions/_shared/`.
+ *  Read in two places on purpose — the content script and `apps/web/src/app/api/listing` — because
+ *  one page shape read two ways is a fork, and the day Rightmove renames a field the copy that did
+ *  not learn about it is the one that returns the flat with no postcode.
  */
 import type { FloorArea, Floorplan, Listing, Station } from './types';
 

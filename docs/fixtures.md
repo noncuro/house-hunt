@@ -41,14 +41,11 @@ does not exist for the hosted project. A signed-in harness is a local-stack harn
 construction. `tools/fixture-session.ts` explains why that is an improvement rather than a
 concession.
 
-**2. `supabase/.env`.** Copy it from `supabase/.env.example`. It carries `WEB_APP_ORIGIN`, which
-the Edge Functions compare the caller's `Origin` against; without a match they answer
-`Access-Control-Allow-Origin: null` and the browser discards every reply. `smoke:web` serves the
-functions itself with this file (`supabase functions serve --env-file`) — the runtime that
-`supabase start` brings up is built with no environment of its own and cannot be given one.
-
-Nothing in the template is secret. `OPENAI_API_KEY` is left empty on purpose: no harness analyses
-anything, so none of them needs it.
+**2. Nothing.** There used to be a `supabase/.env` here, holding the environment for the local Edge
+Runtime. Everything this app runs server-side is a route on the website now, so what a harness needs
+is the workspace-root `.env` — which it already has — and the local stack's own keys, which
+`tools/supabase-local.ts` reads out of `supabase status`. Both browser harnesses build and serve the
+website themselves.
 
 **3. A smoke build of the extension.** `pnpm build:smoke`, which writes
 `apps/extension/.output/smoke/chrome-mv3` pointed at the local stack. Which database the extension

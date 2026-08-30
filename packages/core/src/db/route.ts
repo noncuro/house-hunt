@@ -1,8 +1,8 @@
 /** Calling one of the website's own API routes.
  *
- *  The functions this app runs server-side are moving off Supabase's Edge runtime and onto routes in
- *  `apps/web/src/app/api/` (`docs/vercel-migration.md`). A route is reached with a plain `fetch`
- *  rather than `db().functions.invoke(...)`, which changes two things worth naming:
+ *  Everything this app runs server-side is a route in `apps/web/src/app/api/`
+ *  (`docs/server-side.md`), reached with a plain `fetch` rather than
+ *  `db().functions.invoke(...)`. Two things about that are worth naming:
  *
  *  - **The URL is relative wherever there is a page**, so it follows whichever origin that page is
  *    served from — production, a Vercel preview, or localhost — instead of becoming another copy of
@@ -14,8 +14,8 @@
  *    with a sentence rather than left to that 404.
  *  - **A refusal arrives as an ordinary body.** supabase-js collapsed every non-2xx to the string
  *    "Edge Function returned a non-2xx status code" and hid the real one inside
- *    `FunctionsHttpError.context`, which is why `refusalFrom` exists. With `fetch` the body is
- *    simply there, so the sentence the server wrote is the sentence the caller throws.
+ *    `FunctionsHttpError.context`, so every caller needed a helper to dig it back out. With `fetch`
+ *    the body is simply there, and the sentence the server wrote is the sentence the caller throws.
  *
  *  The reply convention is unchanged and is the reason this returns rather than throws on a 200:
  *  every *product-level* outcome — `rate-limited`, `withdrawn`, `unreadable`, `insufficient` — is a

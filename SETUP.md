@@ -107,22 +107,15 @@ Two things that look like bugs and are not:
   $20 a month against the owner's OpenAI key. Past that, analysis stops until the month rolls over;
   everything else — travel times, verdicts, the shortlist, sweeping — keeps working.
 
-## Deploying the travel function (admins only)
+## Deploying the server side (admins only)
 
-```bash
-pnpm sync:function --check          # the function's copy of packages/core must be current
-pnpm deploy:function                # does the check, then deploys
-```
+There is nothing to deploy but the website. `analyse`, `invite`, `password`, `resolve-location`,
+`listing`, `predict` and `travel` are all routes under `apps/web/src/app/api/`, so a Vercel deploy
+is the whole of it — no `supabase functions deploy`, no second artefact, and one place to look when
+something server-side is wrong.
 
-One function is left. `analyse`, `invite`, `password`, `resolve-location`, `listing` and `predict`
-are routes on the website and ship with a Vercel deploy — see below, and
-`docs/vercel-migration.md`.
-
-`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected into *Edge Functions* by the platform;
-don't set them there.
-
-**A route on the website is a different matter, and this is a trap worth reading twice.** Vercel
-injects neither. Anything under `apps/web/src/app/api/` reads the project URL from
+**The environment is the trap, and it is worth reading twice.** Supabase used to inject
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` into every Edge Function. Vercel injects neither. Anything under `apps/web/src/app/api/` reads the project URL from
 `NEXT_PUBLIC_SUPABASE_URL`, which is already set — but the privileged key has no such substitute and
 has to be added to the Vercel project (Settings → Environment Variables), and to the workspace-root
 `.env` for `pnpm dev:web`.
@@ -132,8 +125,20 @@ Set it as **`SUPABASE_SECRET_KEY`** (an `sb_secret_…`), which is the counterpa
 `SUPABASE_SERVICE_ROLE_KEY`, because that is the name the Supabase↔Vercel integration syncs — so a
 project with that integration connected has a working key already, under a name nobody chose.
 
-Without either, the failure is a 500 at the moment somebody presses the button. `docs/vercel-migration.md`
-says why these are moving.
+Without either, the failure is a 500 at the moment somebody presses the button.
+
+**With `travel`:** `TFL_PRIMARY_KEY` (with `TFL_SECONDARY_KEY` and `TFL_APP_KEY` read after it, in
+that order), and `TRAVEL_BACKFILL_TOKEN` — the same value the `travel_backfill_token` vault secret
+holds, because the scheduled backfill sends it and the route compares it. Rotating it means changing
+both, in either order, with one failed run in between. The TfL key is optional and degrades rather
+than breaks: unkeyed is 50 requests a minute against 500 keyed.
+
+**The schedule points at the website now.** `run_travel_backfill` posts to
+`<travel_functions_url>/travel`, so that vault secret holds the site origin plus `/api`, with no
+trailing slash. `travel_publishable_key` existed only to get past Supabase's gateway and a Vercel
+route ignores it — delete the secret rather than leave one nothing reads. If Vercel's Deployment
+Protection is ever enabled on the project, an unauthenticated `pg_net` POST is bounced by the
+platform before the route sees it, and the symptom is a column of dashes.
 
 ### The analysis key goes on Vercel, not on Supabase
 
@@ -148,7 +153,8 @@ caps before it is made, and it defaults to $0.10. Set it on Vercel only if a lis
 drifted far enough from that for the reservation to stop bounding anything.
 
 A phone whose **Add a flat** button fails, or an analysis that never starts, is therefore a website
-problem — a missing environment variable on Vercel — and not a missed `deploy:function`.
+problem — a missing environment variable on Vercel — and there is no longer any second deploy it
+could be instead.
 
 **Analysis verifies its caller.** It used to deploy `--no-verify-jwt`, which was defensible when
 there was no auth and the worst a stranger could do was make us re-analyse a flat we had already

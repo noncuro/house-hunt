@@ -127,7 +127,7 @@ capped, revocable.
 
 ### D4 (split-web-app) — Travel, stations and postcodes resolve server-side
 
-The `travel` Edge Function is the only writer of the travel and station caches; the three
+The `travel` route is the only writer of the travel and station caches; the three
 cache RPCs are revoked from `authenticated`. The client could only ever be trusted for
 plausibility, not truth: the truth is whatever TfL said, and only whoever asked TfL
 knows it. A wrong number in a global cache pollutes every project at once. The TfL key
@@ -136,7 +136,7 @@ journey is measured on the same basis — a pinned weekday-09:00 departure — e
 one place: `journeyTime` pins it itself, so the basis is a property of the system, not
 of whoever asked.
 
-**Still true because** `supabase/functions/travel/index.ts:318-322`,
+**Still true because** `apps/web/src/app/api/travel/route.ts`,
 `supabase/migrations/20260810010000_travel_writes_server_side.sql`, and `AGENTS.md`'s
 architecture table ("sole writer of the travel cache").
 
@@ -208,7 +208,7 @@ Data is read by `supabase-js` in the browser under RLS — the same trust model 
 extension, so the data layer is shared without a security rethink. No server components
 reading Supabase, no `@supabase/ssr`, no cookie sessions: that would be a second trust
 model for loading behaviour nobody needs on a private six-person tool. The route-handler
-surface is empty because the secrets live in Edge Functions; a route handler added for
+surface is empty because the secrets live on the server; a route handler added for
 convenience rather than for a secret is the wrong door.
 
 **Still true because** `apps/web/src/app/` contains no route handlers and `apps/web`
@@ -237,7 +237,7 @@ colour); and the two apps do not import each other.
 
 ### D9 — Spend accounting and the $20/month cap
 
-One `api_usage` row per OpenAI call, written by the Edge Function in the same step as
+One `api_usage` row per OpenAI call, written by the route in the same step as
 the analysis. A failed call that produced tokens still records spend: the `catch` path
 records usage before releasing the claim. Prices live in `model_price`; `cost_usd` is
 **stored, never recomputed**, so a repricing cannot retroactively change what last
@@ -275,7 +275,7 @@ identity, not write authority.
 
 **Still true because** `apps/web/src/server/caller.ts:22`,
 `apps/web/src/server/handler.ts:35`, `apps/web/src/app/api/analyse/route.ts:13-21`,
-`supabase/functions/_shared/caller.ts:7`.
+`apps/web/src/server/caller.ts`.
 
 ### D11 — Hubs are project data
 
@@ -308,7 +308,7 @@ because a shortlist with no project is not an empty shortlist — each state has
 testid.
 
 **Still true because** `apps/extension/src/entrypoints/panel.content/index.tsx:23,143`,
-`supabase/functions/_shared/caller.ts:22`, `apps/web/src/app/page.tsx:70`,
+`apps/web/src/server/caller.ts`, `apps/web/src/app/page.tsx:70`,
 `apps/web/src/screens/Project.tsx:60,661`.
 
 ### D14 — Deferred: any signed-in user can enumerate the shared fact tables
@@ -318,7 +318,7 @@ of any project can enumerate every listing anyone has analysed. Accepted deliber
 the data is public Rightmove content with no opinion attached — the leak is "which flats
 have been looked at, by someone". The written-down fix, if it is ever needed: gate
 `SELECT` on a `project_property` row for one of the caller's projects, inserted
-server-side on first sighting; the Edge Function keeps the service role, so
+server-side on first sighting; the route keeps the service role, so
 cache-before-spend and pay-once-per-listing are unaffected. The write half was closed
 before shipping and lives in D4.
 

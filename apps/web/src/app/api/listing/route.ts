@@ -36,7 +36,7 @@
  *  from us.
  *  ---------------------------------------------------------------------------------------------
  *
- *  Moved off the Supabase Edge runtime by `docs/vercel-migration.md`; the checklist there is what
+ *  Moved off the Supabase Edge runtime; `docs/server-side.md` is what
  *  this file was ported against.
  */
 import { listingFromHtml, ListingWithdrawn, listingUrl, rightmoveListingId } from '@house-hunt/core';

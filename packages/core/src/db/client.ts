@@ -31,7 +31,7 @@ export interface Host {
   /** Where the website is, for the surfaces that are not it.
    *
    *  The third thing that differs between the two hosts, and it arrived with the move off Supabase's
-   *  Edge runtime (`docs/vercel-migration.md`). A route is reached at `/api/<name>`, relative, so it
+   *  Edge runtime (`docs/server-side.md`). A route is reached at `/api/<name>`, relative, so it
    *  follows whichever origin the page is served from — production, a preview, or localhost — and
    *  never becomes a second copy of an origin to keep in step. The extension's background worker has
    *  no such origin: a relative fetch there resolves against `chrome-extension://` and 404s with a
