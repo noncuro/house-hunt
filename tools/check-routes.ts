@@ -59,8 +59,14 @@ function walk(dir: string, hit: (path: string) => void): void {
   let entries: string[];
   try {
     entries = readdirSync(dir);
-  } catch {
-    return; // the directory need not exist yet
+  } catch (e) {
+    // A directory that is not there yet is the ordinary case and means there is nothing to check.
+    // Any other failure — a permission, a file where a directory was expected, too many open
+    // handles — is this check being unable to look, and swallowing it would report "no unauthorised
+    // routes" about a tree it never read. That is the one wrong answer a security check can give.
+    if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    fail(`cannot read ${relative(ROOT, dir)}: ${e instanceof Error ? e.message : String(e)}`);
+    return;
   }
   for (const entry of entries) {
     const path = join(dir, entry);
@@ -81,6 +87,19 @@ walk(resolve(ROOT, API), (path) => {
   const rel = relative(ROOT, path);
   const source = readFileSync(path, 'utf8');
 
+  // Which of the two wrappers this file actually imported from the module that defines them. The
+  // names alone prove nothing: a route declaring its own `const authedRoute = (f) => f` satisfies
+  // every check below while authenticating nobody, and it would read as the safest file in the
+  // directory. Matching the import is what makes the name mean the thing.
+  const imported = new Set<string>();
+  for (const m of source.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"](@\/server\/handler|\.\.?\/(?:\.\.\/)*server\/handler)['"]/g)) {
+    for (const name of m[1]!.split(',')) {
+      // `authedRoute as route` binds the local name, which is what the export is written with.
+      const local = name.includes(' as ') ? name.split(' as ')[1]! : name;
+      imported.add(local.trim());
+    }
+  }
+
   const exported = [...source.matchAll(/export\s+const\s+([A-Z]+)\s*=\s*([A-Za-z_$][\w$]*)?\s*\(?/g)]
     .filter((m) => METHODS.includes(m[1]!));
 
@@ -90,6 +109,13 @@ walk(resolve(ROOT, API), (path) => {
   }
 
   for (const [, method, builder] of exported) {
+    if (builder && (builder === 'authedRoute' || builder === 'publicRoute') && !imported.has(builder)) {
+      fail(
+        `${rel} exports ${method} built by a local ${builder}, not the one in ${SERVER}/handler.ts — ` +
+          'a wrapper that only shares the name checks nothing',
+      );
+      continue;
+    }
     if (builder === 'authedRoute') continue;
     if (builder === 'publicRoute') {
       // The reason is the argument, and it has to be a literal so this can read it. A computed one
@@ -140,9 +166,17 @@ walk(resolve(ROOT, 'apps/web/src'), (path) => {
   const rel = relative(ROOT, path);
   if (rel.startsWith(SERVER) || rel.startsWith(API)) return;
   const source = readFileSync(path, 'utf8');
-  if (/from\s+['"](@\/server\/|\.\.?\/server\/)/.test(source)) {
+  // Both roads to the same module. `import('@/server/supabase')` carries no `from`, so a static-only
+  // pattern reads a dynamic import as absence — and a bundler resolves it into the browser chunk
+  // just the same.
+  const statically = /from\s+['"](@\/server\/|\.\.?\/server\/)/.test(source);
+  const dynamically = /\bimport\s*\(\s*['"](@\/server\/|\.\.?\/server\/)/.test(source);
+  if (statically || dynamically) {
     importers++;
-    fail(`${rel} imports from ${SERVER} — that module reads SUPABASE_SERVICE_ROLE_KEY`);
+    fail(
+      `${rel} ${dynamically && !statically ? 'dynamically imports' : 'imports'} from ${SERVER} — ` +
+        'that module reads the Supabase secret key',
+    );
   }
 });
 if (importers === 0) ok(`nothing outside ${SERVER} and ${API} imports the service-role layer`);
