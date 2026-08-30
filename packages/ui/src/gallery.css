@@ -51,6 +51,18 @@
   transition: transform 160ms ease-out;
 }
 
+/* Every step now moves a screen's width of photograph across the display, arrow buttons and arrow
+   keys included, which is exactly the kind of motion somebody may have told their device they do
+   not want. Turning the transition off is the whole of the answer rather than a shorter duration:
+   the carry is handed back and taken away in the same breath, so the photo is simply replaced —
+   which is what this gallery did before, and what the setting is asking for. Following the finger
+   is untouched, because a drag is not an animation; it is the photo staying under the finger. */
+@media (prefers-reduced-motion: reduce) {
+  .lightbox-track {
+    transition: none;
+  }
+}
+
 .lightbox-slide {
   width: 100vw;
   display: flex;
