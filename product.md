@@ -1,7 +1,8 @@
 # product.md — how we decide what to build next
 
-`AGENTS.md` is how the thing is built. This is **how we choose what to work on**, written down for the same reason those are: the reasoning disappears once the decision
-is made, and whoever comes next re-derives it badly.
+`AGENTS.md` is how the thing is built. This is **how we choose what to work on**,
+written down for the same reason: the reasoning disappears once the decision is made,
+and whoever comes next re-derives it badly.
 
 Every heuristic below is followed by the real case that taught it. A heuristic without its case
 becomes a slogan, and slogans lose arguments to whoever is loudest.
@@ -25,8 +26,9 @@ that got away from us.
 
 What follows: a hunt is one mind with several hands. Surfaces do not need to attribute an opinion
 to a person, resolve conflicts between members, or show two ratings side by side. The one
-disagreement worth drawing is between the model and the hunt — where the score expected one thing
-and the people said another — because that is where either the model or the reasoning is wrong.
+disagreement worth drawing is between the hunt and its verdict-score model, the model fitted on
+the hunt's own ratings. Where the score expected one thing and the people said another, either
+the model or the reasoning is wrong.
 
 ---
 
@@ -56,7 +58,7 @@ been delivered, only performed.
 
 > Cases: the installer's completeness check, the installer's ownership check, the table's picked
 > count, the compass predicate, the sweep screen's duplicate probe, and the floor-area parser — all
-> fixed, all still open. #30, #31, #33, #38, #45, #54.
+> fixed, all still open when the pass found them. #30, #31, #33, #38, #45, #54.
 
 ---
 
@@ -75,12 +77,12 @@ The clearest pair we had:
   fiction.
 
   **The measured numbers, which are not the ones the ticket led with.** Of roughly 3,700 journeys
-  recorded as having no route, most are *correct*: the planner will not route a fifteen-mile walk,
-  and walking shows a hard cliff at two miles with zero successes in 1,597 attempts beyond it.
-  Refusing those is the right answer. What is wrong is a smaller, sharper set — cycling and transit
-  failing at short distances, 2–5% in every band including under a mile — of which about **250** are
+  recorded as having no route, most are *correct*. The planner will not route a fifteen-mile walk,
+  and walking shows a hard cliff at two miles — zero successes in 1,597 attempts beyond it.
+  Refusing those is the right answer. What is wrong is a smaller, sharper set: cycling and transit
+  failing at short distances, 2–5% in every band including under a mile, of which about **250** are
   demonstrably poisoned. Separately, and more widely, **96% of those rows carry a fabricated
-  explanation**: they predate the column that records *why*, and the read path fills the gap with a
+  explanation**. They predate the column that records *why*, and the read path fills the gap with a
   confident sentence asserting what the planner said, on rows that recorded nothing of the kind.
 
   That is two defects behind one number: a few hundred journeys that are wrong, and several
@@ -128,9 +130,10 @@ Ranking issues independently is the standard mistake. Sequencing can be worth mo
 
 Two pieces of work on our list:
 
-- **Stop measuring journeys to places that only exist to be searched around.** Add a neighbourhood
-  so the sweep has a centre, and today the app also measures the walk, cycle and tube time from
-  every flat to the middle of it. About 2,100 such lookups are queued.
+- **Stop measuring journeys to places that only exist to be searched around.** A sweep walks the
+  Rightmove search results around a neighbourhood, recording every listing it sees. Add a
+  neighbourhood so the sweep has a centre, and today the app also measures the walk, cycle and
+  tube time from every flat to the middle of it. About 2,100 such lookups are queued.
 - **Fix the wrongly-cached "no route" answers**, which means re-asking those journeys for real.
 
 Do the second first and you pay to re-ask journeys the first was about to tell you nobody wanted. Do
@@ -147,7 +150,7 @@ which is the argument for triaging the backlog as a *set*, not an issue at a tim
 
 The backlog is not independent of the roadmap. New code changes the blast radius of old bugs.
 
-We merged an **unattended sweep runner** — sweeps on a timer, nobody watching. Separately, a known
+We merged an **unattended sweep runner**: sweeps on a timer, nobody watching. Separately, a known
 weakness had been filed as *"not urgent"*: the travel rate limit checks the count and then makes its
 calls, rather than reserving capacity first, so simultaneous requests can all pass the same check.
 Part of why that was tolerable was that a person was always present.
@@ -172,9 +175,18 @@ Looking at photos and stepping through triage *are* the product — they are wha
 times in an evening. So a stutter in the triage loop, or travel rows that will not line up on the
 panel you read every listing through, are worth more than their small code footprint suggests.
 
-A bug on the admin screen, met twice a year, is a different animal at identical severity.
+A bug on a screen met twice a year is a different animal at identical severity.
 
-> Cases: #44, #49 (core loop) versus the admin surface (not on the list at all, correctly).
+**But frequency is the weakest of the four axes, and loses to the other three.** The obvious example
+is a trap we nearly fell into: the Admin screen is met twice a year, and it is also the screen
+showing what the hunt has spent. A wrong number there is rare, silent, and about money — which is
+axis one, axis two and axis eight all at once. `docs/coverage.md` records that nothing has ever
+opened that screen in a test.
+
+So this axis breaks ties between bugs that are otherwise alike. It does not outrank silence.
+
+> Cases: #44, #49 — both small in code and constant in use. And the correction: the low-frequency
+> surface we waved past turned out to be the one denominated in money.
 
 ---
 
@@ -198,17 +210,17 @@ it in the same queue as build work is exactly how it goes unmade for a month.
 
 ## 7. Write down what you are *not* doing, and the trigger that changes the answer
 
-Already practised here, and it is the best thing in the repo's process. `TODO.md` opens by saying
-these gaps are deliberately unfixed *before the first release with users other than the original
-pair*, and that **membership is the real boundary** — which is what makes them affordable now and
-unaffordable at a hundred users. Each entry also records what closing it would take, "so a later
+Already practised here, and the best thing in the repo's process. `TODO.md` opened by saying
+these gaps were deliberately unfixed *before the first release with users other than the original
+pair*, and that **membership is the real boundary** — which is what made them affordable then and
+unaffordable at a hundred users. Each entry also recorded what closing it would take, "so a later
 pass has somewhere to start rather than rediscovering the reasoning".
 
 That is a deferral with an **expiry condition attached**, and that is the whole difference between a
 decision and a punt.
 
 The obligation it creates: **when the trigger fires, the list must be re-read.** "Getting ready for
-other people" *is* that file's stated trigger. A deferral with no trigger is just an oubliette.
+other people" *was* that file's stated trigger. A deferral with no trigger is just an oubliette.
 
 ### 7a. Know how many backlogs you have — the ones outside the tracker are invisible
 
@@ -236,8 +248,8 @@ being filed properly.
 
 **The resolution here:** issues are the backlog. Documents describe and link; they do not
 accumulate. Concretely — `TODO.md` was migrated and deleted. `coverage.md` should keep its map of
-what is and is not tested, which is reference somebody reads before adding a check, and give up its
-ranked gap list and its "what to build next" to issues under a label the document then points at.
+what is and is not tested, which is reference somebody reads before adding a check. Its ranked gap
+list and its "what to build next" should go to issues, under a label the document then points at.
 The `openspec/changes/` folders are the record of design processes that have shipped; they are an
 archive, and should say so, with anything still unbuilt in them filed. Issue numbers in source
 comments are the one that stays: they are pointers *into* the backlog, not a second copy of it.
@@ -255,9 +267,10 @@ tells you precisely when the item comes back, and it came back.
 
 ## 8. Low probability is not low priority when the outcome is unrecoverable
 
-Two installer bugs were both unlikely and both ended in **deleting a user's files** — a working
-extension replaced with a broken one after the backup had already been removed, or a user's own file
-recursively deleted because its name happened to match a directory in the new build.
+Two installer bugs were both unlikely and both ended in **deleting a user's files**. One replaced
+a working extension with a broken one after the backup had already been removed. The other
+recursively deleted a user's own file because its name happened to match a directory in the new
+build.
 
 Give destructive outcomes their own column. Improbable-but-unrecoverable, landing on somebody who
 did nothing wrong, outranks probable-but-annoying.
@@ -346,8 +359,6 @@ The shape of all three is the same: each was true when written. Nobody was carel
 outlived the world it described, and said nothing about when it was written down.
 
 > Case: #16, against PR #34 (the features and the prior) and PR #61 (the CPU budget).
-
----
 
 ---
 
@@ -446,10 +457,15 @@ questioned.
 does when *it* is uncertain, not what the user asks for. A user narrowing a search is not an error
 being resolved.
 
-**And the default should be a default, not a fixed behaviour.** Where the app widens on the user's
-behalf, there should be a control to say otherwise — showing unknowns is right by default and wrong
-for somebody who wants to see only what is confirmed. We do not have those controls today. The
-general shape: **decide well, then let it be customised where that is possible.**
+**And a default the user cannot change is not a default.** Where the app widens on the user's behalf,
+ship the control to say otherwise in the same change. Keeping unknowns is right by default and wrong
+for somebody who wants to see only what is confirmed, and today there is no way for them to say so.
+
+That is the rule, and it forbids something specific: **a widening behaviour that ships without its
+off switch.** Every one of the four cases above did — filters keeping unknowns, the sweep window
+snapping up, dropping a dead filter bar, hiding off-market flats into Archived. Each was the right
+default. None of them can be turned off, and the count of them is how a sensible default becomes a
+behaviour nobody chose.
 
 ## 16. Two ways of using this, and they need different words
 
@@ -517,10 +533,6 @@ is*, with the data already in scope and unused. Check what exists before sizing 
 
 **Estimate what a fix costs to deploy, not just to write.** The wrongly-cached journeys are roughly a
 one-word code change. The re-asking it triggers is the expensive part and belongs in the estimate.
-
-**Design for the phone, because it is used on one.** A tooltip on hover is a fine desktop answer and
-an invisible one on a touchscreen. Any explanation that only appears on hover is missing for a large
-share of real use.
 
 ---
 

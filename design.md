@@ -1,11 +1,12 @@
 # design.md — the numbered decisions the code cites
 
 Code comments cite these as `(design Dn)`. The numbers come from two shipped change
-proposals — **multi-tenant** (D1–D15) and **split-web-app** (D1–D8) — which each counted
-from D1, so D1–D8 name two decisions and a bare cite is resolved by subject; each entry
-below is tagged with its origin. D9–D15 are multi-tenant only. The proposals' task lists,
-phase plans and migration steps are gone with them; what remains here is what still
-constrains the code. Where this file and the migrations disagree, the migrations win.
+proposals: **multi-tenant** (D1–D15) and **split-web-app** (D1–D8). Both counted from
+D1, so each number from D1 to D8 names two decisions; a bare cite is resolved by
+subject, and each entry below is tagged with its origin. D9–D15 are multi-tenant only.
+The proposals' task lists, phase plans and migration steps are gone with them; what
+remains here is what still constrains the code. Where this file and the migrations
+disagree, the migrations win.
 
 ---
 
@@ -16,11 +17,12 @@ no hosted handoff page. Each sign-in refusal (wrong credentials, rate-limited, n
 invited) is its own rendered state, because "something went wrong" gets the same button
 pressed again.
 
-The original decision was email OTP rather than magic links. The OTP itself is
-**superseded**: Supabase's built-in sender stops at roughly two emails an hour per
-project, a limit met in normal use, so sign-in is now a password plus an invite code
-handed over out of band (`supabase/migrations/20260809320000_password_auth.sql`). The
-no-redirect and named-states halves survive and are what the cites point at.
+The original decision was an emailed one-time code (OTP) rather than magic links. The
+OTP itself is **superseded**: Supabase's built-in sender stops at roughly two emails an
+hour per project, and normal use met that limit. Sign-in is now a password plus an
+invite code handed over out of band
+(`supabase/migrations/20260809320000_password_auth.sql`). The no-redirect and
+named-states halves survive and are what the cites point at.
 
 **Still true because** `apps/extension/src/lib/auth.ts:78-80`,
 `packages/core/src/db/session.ts:42-50`.
@@ -37,7 +39,7 @@ with `autoRefreshToken: false`: the built-in refresher hangs off timers and visi
 events a suspended worker does not have. `ensureSession()` refreshes explicitly when the
 token expires within `REFRESH_MARGIN_SECONDS` (5 minutes), and a `chrome.alarms`
 heartbeat refreshes unprompted so an install left alone for a week does not come back
-signed out. One client per process — `AGENTS.md` states the rule; two holders of one
+signed out. One client per process; `AGENTS.md` states the rule. Two holders of one
 rotating refresh token eventually race, and the loser is signed out silently. Signed-out
 is a rendered state, never a blank.
 
@@ -47,29 +49,35 @@ is a rendered state, never a blank.
 
 ### D2 (split-web-app) — Core constructs no client; each app calls `configure()` once
 
-`packages/core` cannot know whether it is in a service worker (needs the
-`chrome.storage` adapter, explicit refresh) or a tab (supabase-js defaults are right), so
-a client built in core would be wrong in one place, quietly — a session persisted where
-it will not be found again looks exactly like being signed out. Each app constructs one
-client and hands it over at start-up; `configure()` throws on a second, different client.
+`packages/core` cannot know where it is running. A service worker needs the
+`chrome.storage` adapter and explicit refresh; a tab is served by the supabase-js
+defaults. So a client built in core would be wrong in one place, quietly — a session
+persisted where it will not be found again looks exactly like being signed out. Each
+app constructs one client and hands it over at start-up; `configure()` throws on a
+second, different client.
 
 **Still true because** `packages/core/src/db/client.ts:1-52`.
 
 ### D3 (multi-tenant) — `anon` holds nothing; the publishable key authorises nothing
 
-`AGENTS.md` states it (RLS `to authenticated` everywhere, `anon` holds nothing). The
-security boundary is a session obtained through an invite, which is what makes
-distributing the bundle defensible at all.
+`AGENTS.md` states it: row-level security (RLS) is `to authenticated` everywhere, and
+`anon` holds nothing. The security boundary is a session obtained through an invite,
+which is what makes distributing the bundle defensible at all.
 
 ### D3 (split-web-app) — One sign-in, on the website; the extension signs *itself* in
 
-The two surfaces hold two independent Supabase sessions on purpose. Supabase rotates the
-refresh token on every use and revokes the family when a spent one is presented, so two
-holders of one token diverge the first time either refreshes and the loser is signed out
-with nothing on screen explaining why, days later. The extension therefore never receives
-a session: the website's sign-in form posts the email and password across the bridge,
-once, held in a local variable and never stored, and the background worker performs an
-ordinary sign-in of its own. Someone who installs the extension after signing in on the
+The two surfaces hold two independent Supabase sessions on purpose, because a shared
+session would eventually sign one surface out. Supabase rotates the refresh token on
+every use, and the tokens descended from one sign-in form a family: present a spent
+token and the whole family is revoked. So two holders of one token diverge the first
+time either refreshes. The loser is signed out days later, with nothing on screen
+explaining why.
+
+The extension therefore never receives a session. It has a bridge — a content script on
+the website's origin that relays a few messages between the page and the extension. The
+website's sign-in form posts the email and password across it, once; the background
+worker then performs an ordinary sign-in of its own. The credentials are held in a local
+variable and never stored. Someone who installs the extension after signing in on the
 website is asked for the password once more ("connect the extension",
 `apps/web/src/screens/Extension.tsx`).
 
@@ -80,13 +88,13 @@ Two requirements follow:
   CSP (`script-src 'self'`) in `apps/web/next.config.ts` is load-bearing, not hygiene —
   no analytics, no widget, no CDN-hosted library, ever, or the handoff must first be
   replaced with a server-minted second session.
-- **The bridge stays minimal and is addressed by origin, never by extension id.** Four
-  messages now (`hello`, `sign-in`, `sign-out`, `open-tab` — the proposal shipped with
-  three; `open-tab` was added for the paced fill-in run, and `hello` grew the version
-  field the update check depends on). Nothing about a flat, a verdict or a project
-  crosses it; both surfaces read the database directly. The unpacked and store builds
-  have different ids, so a bridge keyed on an id would work with one install and silently
-  not the other.
+- **The bridge stays minimal and is addressed by origin, never by extension id.** It
+  carries four messages: `hello`, `sign-in`, `sign-out`, `open-tab`. The proposal
+  shipped with three; `open-tab` was added for the paced fill-in run, and `hello` grew
+  the version field the update check depends on. Nothing about a flat, a verdict or a
+  project crosses it; both surfaces read the database directly. The unpacked and store
+  builds have different ids, so a bridge keyed on an id would work with one install and
+  silently not the other.
 
 **Still true because** `packages/core/src/bridge.ts:1-46`, `apps/web/next.config.ts:35-45`,
 `apps/extension/src/entrypoints/bridge.content.ts:10`.
@@ -98,14 +106,14 @@ A fact about a listing (`property`, `property_analysis`, `station_point`,
 flat pay OpenAI and TfL once. An opinion (`place`, `verdict`, `search_sighting`,
 `hub_sweep`, `project_hub`, `project_property`, and everything added since) is project
 data. The write rules are in `AGENTS.md`: shared fact tables are written only through
-validating `SECURITY DEFINER` RPCs, `DELETE` is `service_role` only — a blanket write
-grant would include DELETE, putting the shared caches one client bug away from empty.
-`record_property` checks membership and records `written_by_project`, so a client writes
-facts only about listings its own project opened, attributably.
+validating `SECURITY DEFINER` RPCs, and `DELETE` is `service_role` only. A blanket
+write grant would include DELETE, putting the shared caches one client bug away from
+empty. `record_property` checks membership and records `written_by_project`, so a
+client writes facts only about listings its own project opened, attributably.
 
-Two corollary rules run through the data layer: **every project-scoped query names the
-active project** (relying on RLS to scope a query reads as a bug and becomes one the day
-a table lacks a policy), and **no client writes a shared fact table directly**.
+Two corollary rules run through the data layer. **Every project-scoped query names the
+active project** — relying on RLS to scope a query reads as a bug, and becomes one the
+day a table lacks a policy. And **no client writes a shared fact table directly**.
 
 Accepted residual: a member can write a wrong fact about a listing their own project
 opened, and other projects later read it. No server can verify a price read off a page,
@@ -119,11 +127,12 @@ capped, revocable.
 
 The `travel` Edge Function is the only writer of the travel and station caches; the three
 cache RPCs are revoked from `authenticated`. The client could only ever be trusted for
-plausibility, not truth — the truth is whatever TfL said, and only whoever asked TfL
-knows it — and a wrong number in a global cache pollutes every project at once. The TfL
-key lives server-side, calls are attributable and rate-limitable per user, and the pinned
-weekday-09:00 basis is enforced in one place: `journeyTime` pins it itself, so the basis
-is a property of the system, not of whoever asked.
+plausibility, not truth: the truth is whatever TfL said, and only whoever asked TfL
+knows it. A wrong number in a global cache pollutes every project at once. The TfL key
+lives server-side, and calls are attributable and rate-limitable per user. Every
+journey is measured on the same basis — a pinned weekday-09:00 departure — enforced in
+one place: `journeyTime` pins it itself, so the basis is a property of the system, not
+of whoever asked.
 
 **Still true because** `supabase/functions/travel/index.ts:318-322`,
 `supabase/migrations/20260810010000_travel_writes_server_side.sql`, and `AGENTS.md`'s
@@ -150,11 +159,11 @@ and the app has an address someone can be sent.
 
 ### D6 (multi-tenant) — One shared verdict per property per project
 
-`verdict` keys on `(project_id, rightmove_id)`; the original per-person schema is
-reversed (`product.md`: people hunting a flat together agree — disagreement between
-members is not the interesting signal). Two things keep last-write-wins honest:
+`verdict` keys on `(project_id, rightmove_id)`, reversing the original per-person
+schema — `product.md`: people hunting a flat together agree, and disagreement between
+members is not the interesting signal. Two things keep last-write-wins honest.
 `verdict_history` keeps every prior row, so reverting is a query rather than
-archaeology; and the current rating names who set it and when — a shared rating whose
+archaeology. And the current rating names who set it and when — a shared rating whose
 author is invisible turns a disagreement into a silent overwrite.
 
 **Still true because** `packages/ui/src/ratings.ts:4-60`,
@@ -173,15 +182,16 @@ outlived the transport and live in `packages/core/src/contracts.ts`.
 ### D7 (multi-tenant) — Invite-only, enforced by there being no signup path
 
 `AGENTS.md` states the enforcement: `enable_signup = false` on the Supabase project, not
-a client argument. The gates, written out by hand in the service-role `invite` function:
-an admin may invite any address, to any project or to the platform (`project_id` null —
-first sign-in creates a project of their own); a member may invite only to their own
-active project. `max_members` (6, admin-raisable) counts members **plus pending,
-non-expired invites** — otherwise six outstanding invites all land and the project holds
-twelve — and `create_invite` counts and inserts in one transaction under an advisory
-lock on the project, so the ceiling is the database's invariant. Being full is a stated
-state, not an error. Invites expire after 14 days; membership is created on first
-successful sign-in, never at invite time, so an unused invite leaves nothing behind.
+a client argument. The gates are written out by hand in the service-role `invite`
+function. An admin may invite any address, to any project or to the platform
+(`project_id` null; first sign-in then creates a project of their own). A member may
+invite only to their own active project. `max_members` (6, admin-raisable) counts
+members **plus pending, non-expired invites** — otherwise six outstanding invites all
+land and the project holds twelve. `create_invite` counts and inserts in one
+transaction under an advisory lock on the project, so the ceiling is the database's
+invariant. Being full is a stated state, not an error. Invites expire after 14 days;
+membership is created on first successful sign-in, never at invite time, so an unused
+invite leaves nothing behind.
 
 The account-creation moment moved with the password change (D1): the invite mints a code
 (only its hash is stored) and the `password` function creates the account when the
@@ -226,21 +236,21 @@ colour); and the two apps do not import each other.
 ### D9 — Spend accounting and the $20/month cap
 
 One `api_usage` row per OpenAI call, written by the Edge Function in the same step as
-the analysis; a failed call that produced tokens still records spend — the `catch` path
+the analysis. A failed call that produced tokens still records spend: the `catch` path
 records usage before releasing the claim. Prices live in `model_price`; `cost_usd` is
 **stored, never recomputed**, so a repricing cannot retroactively change what last
 month's cap counted. Caps are $20 per calendar month per project *and* per user, both
 overridable, month boundary Europe/London.
 
-Enforcement locks the **budget, not the listing**: `claim_analysis` takes
-`pg_advisory_xact_lock` on the project, then the user — always in that order, or two
-callers hold one lock each and deadlock — then counts this month's spend plus
-reservations before claiming. Serialising on the listing was the first draft's bug:
-requests for *different* listings never contend, so a paced sweep near the cap had five
-transactions each read the same under-cap total and all proceed
-(`tools/check-spend.ts` pins this case). A reservation is a `running`
+Enforcement locks the **budget, not the listing**. `claim_analysis` takes
+`pg_advisory_xact_lock` on the project, then on the user, then counts this month's
+spend plus reservations before claiming. The lock order is fixed — project before
+user — or two callers hold one lock each and deadlock. Serialising on the listing was
+the first draft's bug: requests for *different* listings never contend, so a paced
+sweep near the cap had five transactions each read the same under-cap total and all
+proceed. `tools/check-spend.ts` pins this case. A reservation is a `running`
 `property_analysis` claim attributed to a project and user, costed at an estimate and
-reconciled to the actual; overshoot is bounded by the amount one completed call exceeds
+reconciled to the actual. Overshoot is bounded by the amount one completed call exceeds
 the estimate, and concurrency does not widen it. An unknown budget is refused, not
 treated as unlimited. `capped` is a structured result the panel renders as a state —
 everything that costs no money keeps working.
@@ -251,22 +261,23 @@ everything that costs no money keeps working.
 ### D10 — Edge Functions verify their caller from the JWT
 
 The bearer token is the user's access token; the publishable key identifies the project
-and authorises nothing. `requireCaller` resolves the user, their active project and its
-membership — it, not platform JWT verification, is what gates these functions. `analyse`
-additionally checks the project has claimed the property (`project_property`), so it
-cannot be driven to analyse arbitrary listing ids, then checks caps, claims, calls
-OpenAI, records usage. Functions keep a service-role client for writes because the
-tables they write are deliberately not client-writable (D4); the JWT is identity, not
-write authority.
+and authorises nothing. `requireCaller` resolves the user, their active project and
+its membership. It, not platform JWT verification, is what gates these functions.
+`analyse` additionally checks the project has claimed the property
+(`project_property`), so it cannot be driven to analyse arbitrary listing ids. Then it
+checks caps, claims, calls OpenAI, records usage. Functions keep a service-role client
+for writes because the tables they write are deliberately not client-writable (D4); the
+JWT is identity, not write authority.
 
 **Still true because** `supabase/functions/_shared/caller.ts:7`,
 `supabase/functions/_shared/http.ts:48`, `supabase/functions/analyse/index.ts:22-32`.
 
 ### D11 — Hubs are project data
 
-`project_hub` replaced the compile-time hub lists. One table answers both old questions:
-a row with no `rightmove_location_id` is only "what can a listing be near"; a row with
-one is also "what do we sweep". A new project starts with no hubs — honest, against a
+A hub is a neighbourhood the hunt cares about. `project_hub` replaced the compile-time
+hub lists, and one table answers both old questions: a row with no
+`rightmove_location_id` is only "what can a listing be near"; a row with one is also
+"what do we sweep". A new project starts with no hubs — honest, against a
 first run naming Hampstead at someone searching Manchester. `AGENTS.md` carries the
 corollary: `SEED_HUBS` is for dev tools only, and a hub with no coordinates is skipped,
 never defaulted (see also D15).
@@ -285,10 +296,11 @@ thing that looks like precedent later.
 On a listing, the signed-out panel is a single sign-in line linking to the website — no
 extraction, no recording, nothing that looks like a broken panel. Search badges and the
 sweep panel are absent entirely when signed out or with no project chosen: a dimmed card
-implies a verdict, and a verdict implies a project. Signed-in-with-no-project (reachable
-mid-invite-consumption, when `caller.project` is briefly null) renders the project
-picker. The website resolves the auth state above everything, because a shortlist with
-no project is not an empty shortlist — each state has its own testid.
+implies a verdict, and a verdict implies a project. Signed-in-with-no-project renders
+the project picker; the state is reachable mid-invite-consumption, while
+`caller.project` is briefly null. The website resolves the auth state above everything,
+because a shortlist with no project is not an empty shortlist — each state has its own
+testid.
 
 **Still true because** `apps/extension/src/entrypoints/panel.content/index.tsx:23,143`,
 `supabase/functions/_shared/caller.ts:22`, `apps/web/src/app/page.tsx:70`,
@@ -328,10 +340,11 @@ The migrations are the contract. The departures that still constrain changes:
 - **`project_hub.lat`/`lon` are nullable** to keep the sweep history of hubs that were
   dropped. Anything computing a bearing must skip a hub with no point rather than
   default one — a hub in the wrong place silently corrupts every bearing on the page.
-- Two classes of mistake the RLS test caught: **Postgres grants EXECUTE on new functions
-  to `public` by default** and `revoke ... from public` does not undo an existing grant —
-  revoke by name; and **a column grant cannot constrain a column's value** (a user could
-  set `active_project_id` to a project they are not in; it takes a trigger).
+- Two classes of mistake the RLS test caught. **Postgres grants EXECUTE on new
+  functions to `public` by default**, and `revoke ... from public` does not undo an
+  existing grant — revoke by name. And **a column grant cannot constrain a column's
+  value**: a user could set `active_project_id` to a project they are not in, and
+  stopping that takes a trigger.
 
 **Still true because** `supabase/migrations/20260809310000_multi_tenant.sql:1301-1523`,
 `apps/web/src/screens/Admin.tsx:245`, `packages/core/src/hubs.ts:97`.
