@@ -1,8 +1,15 @@
 # What the smoke tests cover, and what they do not
 
-An honest map. The point of writing it down is the second column: a screen nothing has ever opened
-is the one that breaks quietly, and "we have smoke tests" is the sentence that stops anybody
-checking which.
+A map. The point of writing it down is the second column: a screen nothing has ever opened is the
+one that breaks quietly, and "we have smoke tests" is the sentence that stops anybody checking
+which.
+
+It is a map and not a queue. Read it before adding a check, to find out what is already driven and
+by which harness. **What ought to happen next is not here** — every gap below that is worth work is
+an issue, cited in its row, and the backlog is the issue list (`AGENTS.md`, "Issues are the backlog
+— all of it"). This file used to end in a ranked list of four things to build, which is the second
+backlog that rule exists to prevent: it was read by nobody, went stale against the issues, and
+ranked work against a risk ordering that nothing kept up to date.
 
 Timings are a warm run on a laptop, measured with `pnpm smoke:all`, and exclude `supabase start`
 (about a minute, once).
@@ -119,33 +126,19 @@ one is — see below.
 
 ## Not covered
 
-Roughly in the order the risk deserves.
+What no harness drives. The order is the order it was written in, not a ranking — where a gap is
+worth work there is an issue, and the issue is where the argument for doing it belongs.
 
 | Gap | Why it matters |
 |---|---|
-| **The other writes.** Adding a place, adding a hub, marking off-market, renaming a project, and bulk rating from triage are all asserted up to the button and no further. | These are the actions, and the reads are well covered only because reads are easy to assert. Rating one flat now goes all the way to Postgres, which is the pattern the rest should follow: click it, then read the row. Bulk rating is the deliberate exception — it writes verdicts nobody gave onto every ticked row, so it stops at the buttons being dead until something is ticked. |
+| **The other writes** (#127). Adding a place, adding a hub, marking off-market, renaming a project, and bulk rating from triage are all asserted up to the button and no further. | These are the actions, and the reads are well covered only because reads are easy to assert. Rating one flat now goes all the way to Postgres, which is the pattern the rest should follow: click it, then read the row. Bulk rating is the deliberate exception — it writes verdicts nobody gave onto every ticked row, so it stops at the buttons being dead until something is ticked. |
 | **The phone half.** Nothing drives the service worker, the offline restore, the share target, adding a flat by address beyond `check:listing`'s URL cases, or what the map does on a phone. | This is the whole of what a phone can do, and every piece of it fails quietly: a worker that caches nothing looks identical online, a restore that never runs looks like a slow load, and a share target that mis-parses lands somebody on the shortlist with no dialog and nothing to read. Most of it is drivable offline and belongs in `smoke:web` — `?add=<url>` must open the dialog prefilled, a paste that is not a listing must say so before the button does anything, `navigator.serviceWorker.ready` must resolve and `caches.match('/')` must find the shell, and the offline notice must appear under `context.setOffline(true)` over a shortlist that is still drawn. The map's phone behaviour is the newest of these and is drivable the same way: under a mobile viewport a tap on a pin must open the flat's panel and draw no dock, and a refused position must put `map-locate-error` on the screen — Chromium will hand a stubbed or denied `geolocation` to a context, and `check:geo` pins only the sentence, never that anything renders it. The one part that cannot be smoked is the fetch itself: `app/api/listing` reaches Rightmove, and no harness here may (`tools/offline.ts`). |
 | **The gallery's gestures.** `smoke` opens it from the panel and asserts it paints over Rightmove; nothing drives the swipe, and nothing opens it on the website at all. | The swipe was checked by hand in a mobile-emulated Chromium driving real touch input through CDP — Playwright's own `touchscreen` only taps — and the cases worth keeping are the ones that are not the happy path: a short drag must not advance *or* dismiss, a cancelled gesture must not advance either, the arrows must still work after a pointer capture, and a tap on the photo must not close it. `smoke:web` could open it from a card's photo strip. |
-| **The Admin tab.** | Never opened by anything. It is admin-only, so the fixture would need an admin — one row in `admin_email`. Users, projects, invites and spend all render there against real queries. |
+| **The Admin tab** (#128). | Never opened by anything. It is admin-only, so the fixture would need an admin — one row in `admin_email`. Users, projects, invites and spend all render there against real queries. |
 | **The extension↔website bridge.** `check:bridge` covers the contract as a pure function; nothing drives the actual handover. | It is how signing in on the website signs the extension in. It fails silently by design (`handOver` swallows), so a break shows up as "the extension is signed out" days later. |
-| **The paced opener** (Sweep's fill-in run, and the unattended sweep that drives it and the search pages through the same bridge call). | It was covered by `smoke:sweep` before the split, and that harness was deleted rather than ported. It opens tabs one at a time; the old harness stubbed its worklist so the pacing assertion could not silently skip. |
+| **The paced opener** (#75, Sweep's fill-in run, and the unattended sweep that drives it and the search pages through the same bridge call). | It was covered by `smoke:sweep` before the split, and that harness was deleted rather than ported. It opens tabs one at a time; the old harness stubbed its worklist so the pacing assertion could not silently skip. |
 | **The Detail view** and the flat-by-URL deep link (`#card-<id>`). | The reason the app moved off `chrome-extension://` at all. |
-| **The rest of the sign-in refusals.** A wrong password and a code nobody was sent are now checked; expired, already-registered and rate-limited are not. | Every refusal is its own sentence on purpose — the design note at the top of `SignIn.tsx` — and the three left over are the ones that cost something to provoke: `already-registered` needs an account the fixture then has to work around, and `rate-limited` means hammering the endpoint the real joining check depends on. |
+| **The rest of the sign-in refusals** (#129). A wrong password and a code nobody was sent are now checked; expired, already-registered and rate-limited are not. | Every refusal is its own sentence on purpose — the design note at the top of `SignIn.tsx` — and the three left over are the ones that cost something to provoke: `already-registered` needs an account the fixture then has to work around, and `rate-limited` means hammering the endpoint the real joining check depends on. |
 | **`analyse`.** No harness analyses anything. | It costs money per run, which is a real reason. The cap arithmetic around it is covered by `check:spend`. |
 | **Driving times**, which deliberately throw. | Cheap to pin; nothing does. |
-| **`check:predict` is skipping.** | It needs `.fixtures/predict-*.json`, which is committable by design (`.gitignore` un-ignores it) and has never been generated. It says "this proves nothing; it only declines to fail" — but it is still a green tick in `check:all` for a check that did not run. Generate one with `tools/export-predict-fixture.ts`. |
-
-## What to build next
-
-1. **`check:predict`'s fixture.** The cheapest by far — one command, and it turns an existing green
-   tick from a lie into a check.
-2. **The phone half of `smoke:web`.** All of it is offline-drivable and none of it exists: the
-   share target opening the dialog prefilled, a bad paste refused before the button, the worker
-   registering and holding the shell, and the offline notice appearing over a shortlist that is
-   still drawn. It is the newest surface and the only one with no browser check at all.
-3. **The remaining writes**, each driven through the UI and read back from the database, the way
-   rating a flat now is. Adding a place is the next most valuable: every travel time on every card
-   is measured against one.
-4. **An admin fixture**, which is one row and unlocks the whole Admin tab.
-5. **The refusal sentences on the sign-in screen.** The invite fixture already mints codes, so a
-   wrong-code and an already-registered case are a few lines each on top of what joining does.
+| **`check:predict` is skipping** (#126). | It needs `.fixtures/predict-*.json`, which is committable by design (`.gitignore` un-ignores it) and has never been generated. It says "this proves nothing; it only declines to fail" — but it is still a green tick in `check:all` for a check that did not run. Generate one with `tools/export-predict-fixture.ts`. |

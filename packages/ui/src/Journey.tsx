@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Hint } from './Hint';
 import { Icon } from './Icon';
 import { BUS_COLOUR, FALLBACK_LINE_COLOUR, LINE_COLOURS, textOn, travelDestinations, TRAVEL_MODES } from '@house-hunt/core';
-import { WALKING_LIMIT_SECONDS, type JourneyOption, type Leg, type Place, type TravelMode, type TravelTime } from '@house-hunt/core';
+import { WALKING_LIMIT_SECONDS, readTravel, type JourneyOption, type Leg, type Place, type TravelMode, type TravelTime, type TravelVerdict } from '@house-hunt/core';
 
 /** How a journey is drawn — shared by the panel on Rightmove and the shortlist page.
  *
@@ -14,42 +14,6 @@ import { WALKING_LIMIT_SECONDS, type JourneyOption, type Leg, type Place, type T
  *
  *  The class names keep the `rm-` prefix they had in the panel's shadow-root stylesheet; the
  *  shortlist page imports the same rules from `journey.css`. */
-
-/** Which modes are worth showing for one place, and what to say when none are.
- *
- *  Every view was deciding this for itself and reaching different answers. The panel and the card
- *  hid walks over an hour as unrealistic; the compare table did not, so a 61-minute walk showed
- *  there as the best route to somewhere the other views said was a 30-minute train. The table
- *  also called a cached "TfL says there is no journey" the same thing as "nobody has looked yet",
- *  which are opposite facts — one is settled and one is a gap you can fill by clicking. */
-export interface TravelVerdict {
-  /** The modes worth showing, fastest-first order left to the caller. */
-  usable: TravelTime[];
-  /** The fastest usable mode, or null. */
-  best: TravelTime | null;
-  /** A mode we asked about and never got an answer for — worth a retry. */
-  transient: TravelTime | null;
-  /** Asked and settled, for the place as a whole — no mode gets you there — in the words of
-   *  whoever settled it, and null when nothing settled it. Settled, not missing.
-   *
-   *  The words rather than a flag with a sentence beside it. This is only ever taken from a row
-   *  that carries an error, so "settled, but we cannot say why" is a state that cannot arise, and a
-   *  fallback sentence for it would be a default that reads as care and never runs — while quietly
-   *  being the only place a reader could look to find out what the sentence is. */
-  noRoute: string | null;
-  /** Each mode's own row, for a view asking about one column rather than about the place.
-   *
-   *  Everything above answers "how do I get there", which is the question the panel and the cards
-   *  ask, and which one usable mode answers for the whole place. The compare table has a column per
-   *  mode and asks a narrower one, and reading the place-level answer there loses exactly the fact
-   *  it is asking for: a place with a good train time and a cycling leg TfL settled as impossible
-   *  has `noRoute: false`, so the cycling column read "not worked out yet" over a question that had
-   *  been answered — a settled negative redrawn as a gap, which is the distinction this whole file
-   *  exists to keep. */
-  byMode: Partial<Record<TravelMode, TravelTime>>;
-  /** Nothing has been computed for this pairing at all. */
-  unknown: boolean;
-}
 
 /** What every transit number on screen actually measures.
  *
@@ -96,31 +60,6 @@ export function TransitBasis() {
 
 export const TRANSIT_BASIS_NOTE =
   'Public transport times assume a weekday 09:00 departure, so every place is measured the same way.';
-
-export function readTravel(rows: TravelTime[] | undefined): TravelVerdict {
-  const all = rows ?? [];
-  const usable = all.filter(
-    (t) =>
-      !t.error &&
-      t.seconds > 0 &&
-      // Walking anywhere over an hour away isn't a real option; showing it crowds out the numbers
-      // that matter, and as a "best route" it is actively misleading.
-      !(t.mode === 'walking' && t.seconds > WALKING_LIMIT_SECONDS),
-  );
-  const best = usable.length === 0 ? null : usable.reduce((a, b) => (b.seconds < a.seconds ? b : a));
-  const transient = all.find((t) => t.error && t.transient) ?? null;
-  const settled = usable.length === 0 ? (all.find((t) => t.error && !t.transient) ?? null) : null;
-  const byMode: Partial<Record<TravelMode, TravelTime>> = {};
-  for (const t of all) byMode[t.mode] = t;
-  return {
-    usable,
-    best,
-    transient,
-    noRoute: settled?.error ?? null,
-    byMode,
-    unknown: all.length === 0,
-  };
-}
 
 export function formatDuration(seconds: number): string {
   const minutes = Math.round(seconds / 60);

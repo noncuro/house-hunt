@@ -19,6 +19,7 @@ export * from './listing';
 export * from './shortlist';
 export * from './stage';
 export * from './sweep';
+export * from './travel';
 export * from './predict';
 export * from './recheck';
 

@@ -228,8 +228,9 @@ other people" *was* that file's stated trigger. A deferral with no trigger is ju
 This project had **five**, and the pass that wrote this section found two of them.
 
 GitHub issues. `TODO.md`, holding thirteen deferred items that were not tickets and never had been.
-`docs/coverage.md`, whose "Not covered" table is explicitly *"roughly in the order the risk
-deserves"* and which ends with a numbered "What to build next". The `openspec/changes/` folders.
+`docs/coverage.md`, whose "Not covered" table was explicitly *"roughly in the order the risk
+deserves"* and which ended with a numbered "What to build next" — since split, the queue filed as
+#126, #127, #128 and #129 and the map kept (#85). The `openspec/changes/` folders.
 And issue numbers written into source comments.
 
 A triage pass over issues sees only the first. On the pass that produced this file the whole GitHub
@@ -248,9 +249,10 @@ and a queue nobody looks at is worse than no queue, because its existence is wha
 being filed properly.
 
 **The resolution here:** issues are the backlog. Documents describe and link; they do not
-accumulate. Concretely — `TODO.md` was migrated and deleted. `coverage.md` should keep its map of
-what is and is not tested, which is reference somebody reads before adding a check. Its ranked gap
-list and its "what to build next" should go to issues, under a label the document then points at.
+accumulate. Concretely — `TODO.md` was migrated and deleted. `coverage.md` kept its map of
+what is and is not tested, which is reference somebody reads before adding a check, and gave up its
+ranked gap list and its "what to build next": each is now an issue, cited from the row it came out
+of, so the map points at the backlog rather than being a second one.
 The `openspec/changes/` folders are the record of design processes that have shipped; they are an
 archive, and should say so, with anything still unbuilt in them filed. Issue numbers in source
 comments are the one that stays: they are pointers *into* the backlog, not a second copy of it.

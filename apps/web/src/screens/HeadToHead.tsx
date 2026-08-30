@@ -9,7 +9,6 @@ import {
   SizeValue,
   VerdictStamp,
   formatDuration,
-  readTravel,
 } from '@house-hunt/ui';
 import {
   addressBesidePostcode,
@@ -17,6 +16,7 @@ import {
   galleryFor,
   parseMonthlyPrice,
   problemsOnly,
+  readPlaceTravel,
   resolveSize,
   sizeOf,
   stageSentence,
@@ -250,8 +250,7 @@ function perFoot(entry: ShortlistEntry): number | null {
 }
 
 function best(entry: ShortlistEntry, placeId: string, travel: Record<string, TravelTime[]> | undefined) {
-  const rows = (entry.postcode && travel?.[entry.postcode]) || [];
-  return readTravel(rows.filter((t) => t.placeId === placeId)).best;
+  return readPlaceTravel(entry.postcode, placeId, travel).best;
 }
 
 function dash(why = 'Not known for this listing.') {

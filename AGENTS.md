@@ -312,7 +312,9 @@ pnpm check:all      # + every pure-function check (seconds)
 
 Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `listing` (which URLs are a
 listing, and what a share hands over), `invite` (what state an invitation is in, once, for both
-screens that show one), `hubs`, `stage`, `shortlist`, `sweep`, `travel` (what a cached journey means,
+screens that show one), `hubs`, `stage`, `shortlist`,
+`sort` (the order triage works in, and that nothing unmeasured floats to the top of it), `sweep`,
+`travel` (what a cached journey means,
 and what one ask may cost before it is dispatched),
 `geo` (the sentence a refused position gets, and a maps link that is not a guess about the phone),
 `png`, `analysis`, `routes` (every route says whether it needs a
@@ -388,9 +390,10 @@ may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain). `SMOKE_LOG=all` w
 on `smoke` it dumps the extension's own diagnostic ring buffer, which is how you tell a write that
 was refused from one that was never attempted.
 
-**What is and is not covered, with timings and what to build next: `docs/coverage.md`.** Read it
-before adding a check — the gaps are ranked, and the biggest is that almost every *write* is
-asserted up to the button and no further.
+**What is and is not covered, with timings: `docs/coverage.md`.** Read it before adding a check, to
+find out what is already driven and by which harness. It is a map and not a queue — the gaps worth
+work are issues, cited in the rows — and the one to know without looking is that almost every
+*write* is asserted up to the button and no further (#127).
 
 **Standing a fresh machine up, and where the fixtures come from: `docs/fixtures.md`.** It also
 says why the saved Rightmove pages are deliberately *not* committed — a frozen fixture answers

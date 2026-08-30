@@ -1,7 +1,14 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AmenityLabel, Icon, RATINGS, ScoreGauge, ratingOf } from '@house-hunt/ui';
+import {
+  AmenityLabel,
+  Icon,
+  RATINGS,
+  ScoreGauge,
+  formatDuration,
+  ratingOf,
+} from '@house-hunt/ui';
 import {
   addressBesidePostcode,
   applyFilter,
@@ -9,7 +16,9 @@ import {
   placePoints,
   resolveSize,
   sizeOf,
+  readPlaceTravel,
   splitByHuntFloor,
+  travelDestinations,
   unknownBars,
   type ArchiveReason,
   type Hub,
@@ -25,7 +34,16 @@ import { FlatDetail } from '@/components/FlatDetail';
 import { Tick, useRangePick } from '@/components/Tick';
 import { TriageFilters } from '@/components/TriageFilters';
 import { ShortlistMap } from '@/screens/Map';
-import { NEEDS_MODEL, SORT_LABEL, isSurprise, sortForTriage, type SortMode } from '@/lib/score';
+import {
+  NEEDS_MODEL,
+  SORT_LABEL,
+  isSurprise,
+  placeIdOf,
+  placeSort,
+  sortForTriage,
+  type FixedSortMode,
+  type SortMode,
+} from '@/lib/score';
 import { useCachedTravel, useRetrain } from '@/lib/queries';
 
 /** The pile nobody has an opinion on, and the one screen built for changing that.
@@ -107,6 +125,9 @@ export function Triage({
   // on every keystroke in the minutes box.
   const travel = useCachedTravel(entries.map((e) => e.postcode));
   const points = useMemo(() => placePoints(places), [places]);
+  // Only the places the hunt actually routes to. Offering one we cannot route to would be a sort
+  // whose every value is missing, which orders nothing and says nothing about why.
+  const sortablePlaces = useMemo(() => travelDestinations(places), [places]);
 
   // The hunt's own must-haves come off the pile before this sitting's filter touches it — a flat
   // under a bar everybody agreed on is not work waiting to be done, and it was being counted as
@@ -127,7 +148,29 @@ export function Triage({
   );
   // Per row rather than per pile: the same question `unknowns` counts, asked of one flat.
   const unknownFor = (entry: ShortlistEntry) => unknownBars(entry, filter, travel.data, points);
-  const shown = useMemo(() => sortForTriage(kept, scores, sortMode), [kept, scores, sortMode]);
+
+  /** The figure the pile is in the order of, for the sorts whose figure is not already on the row.
+   *
+   *  Null for the rest, which is most of them: price and size are in `oneLine` and the score is in
+   *  the gauge beside it, so repeating them would be two drawings of one number a few pixels apart.
+   *  The absences are named rather than collapsed to a dash — "no route" is TfL having answered and
+   *  "not measured" is nobody having asked, and on this screen the second is something you can fix
+   *  by opening the flat. */
+  const sortedBy = useMemo(() => {
+    const placeId = placeIdOf(sortMode);
+    if (placeId === null) return null;
+    const label = sortablePlaces.find((p) => p.id === placeId)?.label ?? 'there';
+    return (entry: ShortlistEntry): string => {
+      const read = readPlaceTravel(entry.postcode, placeId, travel.data);
+      if (read.best) return `${formatDuration(read.best.seconds)} to ${label}`;
+      return read.noRoute ? `no route to ${label}` : `${label} not measured`;
+    };
+  }, [sortMode, sortablePlaces, travel.data]);
+  const shown = useMemo(
+    () => sortForTriage(kept, scores, sortMode, travel.data),
+    [kept, scores, sortMode, travel.data],
+  );
+
 
   // The flat on the right. Follows the pile when what you were reading leaves it — which is what
   // happens the instant you rate one, since a rated flat is no longer unrated.
@@ -291,12 +334,23 @@ export function Triage({
             onChange={(e) => setSortMode(e.target.value as SortMode)}
             disabled={pile.length === 0}
           >
-            {(Object.keys(SORT_LABEL) as SortMode[]).map((mode) => (
+            {(Object.keys(SORT_LABEL) as FixedSortMode[]).map((mode) => (
               <option key={mode} value={mode} disabled={NEEDS_MODEL.includes(mode) && !scores}>
                 {SORT_LABEL[mode]}
                 {NEEDS_MODEL.includes(mode) && !scores ? ' — needs a model' : ''}
               </option>
             ))}
+            {/* Grouped, because "Nearest station" is Rightmove's own figure off the listing and
+                these are journeys we asked for — near-identical wording for two different facts. */}
+            {sortablePlaces.length > 0 && (
+              <optgroup label="Quickest to">
+                {sortablePlaces.map((place) => (
+                  <option key={place.id} value={placeSort(place.id)}>
+                    {place.label}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
 
@@ -459,7 +513,18 @@ export function Triage({
                     <span className="triage-address">
                       {addressBesidePostcode(entry.displayAddress, entry.postcode)}
                     </span>
-                    <span className="triage-line dim">{oneLine(entry)}</span>
+                    <span className="triage-line dim">
+                      {oneLine(entry)}
+                      {/* The number the pile is in the order of. Without it a place sort reorders
+                          the list against a figure that is on no row — which reads as an arbitrary
+                          shuffle, and leaves nowhere to notice that most of the pile is unmeasured
+                          and has simply sunk to the bottom in the order it was already in. */}
+                      {sortedBy && (
+                        <span className="triage-sorted-by" data-testid="triage-sorted-by">
+                          {sortedBy(entry)}
+                        </span>
+                      )}
+                    </span>
                     {/* Why this one is still here when a bar it does not obviously clear is set.
                         The count under the filter says how many are kept on a shrug; this says
                         which, and which figure is the missing one — "no size" is the row to open
