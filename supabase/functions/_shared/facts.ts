@@ -11,6 +11,7 @@
 
 import type { Confidence, Laundry, LightLevel, SleepingSeparation, Station } from './types.ts';
 import type { SweepCriteria } from './sweep.ts';
+import { LINE_COLOURS } from './tfl.ts';
 
 export interface Candidate {
   /** Where the number came from, in words — this is what the tooltip shows. */
@@ -402,6 +403,55 @@ function stationWords(name: string): string[] {
     .filter((word) => word && !STATION_NOISE.has(word));
 }
 
+/** A bracketed phrase as line ids, or null when it names no line we know.
+ *
+ *  The whole phrase first — "Hammersmith & City" is one line whose own name contains the
+ *  separator — and only then split, so "Circle & District" reads as two. Every part has to be a
+ *  line for the split to count: half-recognised brackets stay in the name. */
+function bracketLines(content: string): string[] | null {
+  const whole = lineId(content);
+  if (whole in LINE_COLOURS) return [whole];
+  const parts = content
+    .split(/[,/]|&|\band\b/i)
+    .map(lineId)
+    .filter((part) => part.length > 0);
+  if (parts.length > 1 && parts.every((part) => part in LINE_COLOURS)) return parts;
+  return null;
+}
+
+/** A line name as TfL writes the id: "Hammersmith & City" → "hammersmith-city". */
+function lineId(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[.'’]/g, '')
+    .replace(/\s*&\s*|\s+and\s+/g, ' ')
+    .trim()
+    .replace(/[\s-]+/g, '-');
+}
+
+/** A station name with its bracketed line qualifiers consumed as data.
+ *
+ *  "Elephant & Castle (Northern)" and "(Bakerloo)" are siblings, not parent and child, so the
+ *  subset test in `dedupeStations` could never see them as one interchange — and adding line
+ *  names to `STATION_NOISE` would be worse: `victoria` is a line and a station, and a blanket
+ *  strip would have Victoria swallowed by whatever it was listed beside. The parenthesis is the
+ *  signal Rightmove is already giving us — bare "Victoria" stays a station, "(Victoria)" is the
+ *  listing itself marking the word off as a line. A bracket naming no line we know stays in the
+ *  name, so an unrecognised qualifier fails closed to two rows, exactly the old behaviour. */
+function parseStationName(name: string): { base: string; lines: string[] } {
+  const lines: string[] = [];
+  const base = name
+    .replace(/\(([^)]*)\)/g, (bracket, content: string) => {
+      const found = bracketLines(content);
+      if (!found) return bracket;
+      lines.push(...found);
+      return '';
+    })
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return { base, lines };
+}
+
 /** How far apart two stations can be quoted and still be one interchange, in whatever unit
  *  Rightmove sent. Distances here are from the *flat*, so this is a weak signal on its own — two
  *  genuinely different stations either side of a listing read as equidistant — which is why it is
@@ -426,11 +476,24 @@ function sameSpot(a: Station, b: Station): boolean {
  *  which are two stations; distance alone would merge everything on a dense corner. The survivor is
  *  the most specific name, because that is the one a Londoner recognises and the one TfL resolves
  *  to the whole interchange, carrying the nearest of the distances and every mode any of them had:
- *  merging must never lose the fact that you can catch a train there as well as a tube. */
-export function dedupeStations(stations: Station[]): Station[] {
-  const groups: { keep: Station; words: string[] }[] = [];
+ *  merging must never lose the fact that you can catch a train there as well as a tube.
+ *
+ *  A bracketed line qualifier is consumed before any of that — comparison *and* display, because a
+ *  row reading "Elephant & Castle (Northern)" over a Bakerloo dot as well would name one line and
+ *  show two. What the brackets said survives in `lines`: a merge must never show fewer lines than
+ *  the two rows did between them, and TfL's own answer can legitimately be only half of them when
+ *  its index holds two entries under one name. */
+export interface DedupedStation extends Station {
+  /** Line ids the name's own brackets declared — the floor under the dots, unioned with whatever
+   *  TfL reports for the resolved station. */
+  lines: string[];
+}
+
+export function dedupeStations(stations: Station[]): DedupedStation[] {
+  const groups: { keep: DedupedStation; words: string[] }[] = [];
   for (const station of stations) {
-    const words = stationWords(station.name);
+    const { base, lines } = parseStationName(station.name);
+    const words = stationWords(base);
     const group = words.length === 0
       ? undefined
       : groups.find(
@@ -443,13 +506,14 @@ export function dedupeStations(stations: Station[]): Station[] {
             (isSubset(words, g.words) || isSubset(g.words, words)),
         );
     if (!group) {
-      groups.push({ keep: { ...station, types: [...station.types] }, words });
+      groups.push({ keep: { ...station, name: base, types: [...station.types], lines }, words });
       continue;
     }
     group.keep.types = [...new Set([...group.keep.types, ...station.types])];
+    group.keep.lines = [...new Set([...group.keep.lines, ...lines])];
     group.keep.distance = Math.min(group.keep.distance, station.distance);
     if (words.length > group.words.length) {
-      group.keep.name = station.name;
+      group.keep.name = base;
       group.words = words;
     }
   }

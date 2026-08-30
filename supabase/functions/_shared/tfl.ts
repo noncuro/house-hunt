@@ -96,7 +96,12 @@ export interface StationInfo extends Point {
 }
 
 /** Official TfL line colours. Anything unknown (a National Rail operator, say) falls back to the
- *  generic rail purple, so a new line never renders as an invisible dot. */
+ *  generic rail purple, so a new line never renders as an invisible dot.
+ *
+ *  Also load-bearing for something other than colour: `dedupeStations` recognises a bracketed
+ *  qualifier as a line — rather than part of the station's name — by membership here. A line this
+ *  map has not learned fails closed there (two rows instead of one merged), so a missing entry
+ *  costs a wasted station slot as well as a purple dot. */
 /** Bus routes are numbered, not named, so they never match a line id — they take the London bus
  *  red as a group. */
 export const BUS_COLOUR = '#E1251B';
