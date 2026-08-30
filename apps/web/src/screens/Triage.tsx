@@ -155,14 +155,25 @@ export function Triage({
    *  the gauge beside it, so repeating them would be two drawings of one number a few pixels apart.
    *  The absences are named rather than collapsed to a dash — "no route" is TfL having answered and
    *  "not measured" is nobody having asked, and on this screen the second is something you can fix
-   *  by opening the flat. */
+   *  by opening the flat.
+   *
+   *  A stale row is ranked on its number and says so, which is the one place this screen has to say
+   *  it. `cachedTravelTimes` marks rather than drops those rows and the compare table draws them
+   *  with a caveat, for a reason that applies here twice over: sinking them would push exactly the
+   *  flats measured longest ago to the bottom of a pile that exists to be worked through. But a
+   *  position in a sorted list carries no caveat of its own — it reads as a comparison that was
+   *  made — and `TravelTime.stale` names that failure exactly: ranking a Tuesday-morning commute
+   *  against one measured at midnight without saying so. So the row says it. */
   const sortedBy = useMemo(() => {
     const placeId = placeIdOf(sortMode);
     if (placeId === null) return null;
     const label = sortablePlaces.find((p) => p.id === placeId)?.label ?? 'there';
     return (entry: ShortlistEntry): string => {
       const read = readPlaceTravel(entry.postcode, placeId, travel.data);
-      if (read.best) return `${formatDuration(read.best.seconds)} to ${label}`;
+      if (read.best) {
+        const time = `${formatDuration(read.best.seconds)} to ${label}`;
+        return read.best.stale ? `${time} · not comparable, open to refresh` : time;
+      }
       return read.noRoute ? `no route to ${label}` : `${label} not measured`;
     };
   }, [sortMode, sortablePlaces, travel.data]);

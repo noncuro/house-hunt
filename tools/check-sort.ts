@@ -130,6 +130,23 @@ check(
   ['train', 'walk'],
 );
 
+// A row `staleTravel` marked is still ranked on its number, and the screen says so on the row
+// rather than the sort hiding it. Pinned because the opposite is the tempting fix and it is wrong
+// in a way nothing would show: sinking these would push the flats measured longest ago to the
+// bottom of a pile that exists to be worked through, which is the objection AGENTS.md already
+// makes to a filter dropping a flat for a number we do not have. `cachedTravelTimes` says
+// "Marked, not dropped" about the same rows for the same reason. The disclosure is Triage's
+// `sortedBy` line, which appends "not comparable, open to refresh".
+const stale: Record<string, TravelTime[]> = {
+  'old 1AA': [{ ...journey('work', 10 * 60), stale: 'measured on basis "unknown", not "weekday-am"' }],
+  'new 1AA': [journey('work', 20 * 60)],
+};
+check(
+  'a stale journey ranks on its number rather than sinking',
+  order([flat('new'), flat('old')], placeSort('work'), stale),
+  ['old', 'new'],
+);
+
 // --------------------------------------------------------------------------------------------- //
 console.log('\nand the place a mode names survives a round trip');
 
