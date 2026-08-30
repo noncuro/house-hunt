@@ -43,8 +43,15 @@ comment on column property_analysis.next_attempt_at is
 -- Read-modify-write from the function would drop increments whenever two runs failed the same
 -- listing at once — which is exactly when a listing is failing hard — and an undercounted row is one
 -- that never reaches the ceiling. `attempts + 1` in SQL cannot do that.
+-- The failure is recorded against the claim that produced it, not merely against the listing. A run
+-- that overshot the stale timeout has already had its claim taken over by somebody else, and a
+-- write keyed on `rightmove_id` alone would land on the *new* run's row: releasing a claim that is
+-- still spending — which frees its reservation and lets a third run start on the same listing — and
+-- charging its `attempts` for a failure that was not its. `claimed_at` is that identifier already,
+-- since a takeover is what moves it, so nothing new has to be stored to have one.
 create or replace function public.record_analysis_failure(
   p_rightmove_id text,
+  p_claimed_at   timestamptz,
   p_error        text
 )
 returns void
@@ -56,8 +63,8 @@ begin
   if not public.is_service_role() then
     raise exception 'record_analysis_failure: the analyse function records these, not clients';
   end if;
-  if p_rightmove_id is null then
-    raise exception 'record_analysis_failure: a listing id is required';
+  if p_rightmove_id is null or p_claimed_at is null then
+    raise exception 'record_analysis_failure: a listing id and the claim it was recorded under are both required';
   end if;
 
   update public.property_analysis
@@ -71,18 +78,21 @@ begin
          next_attempt_at = now() + least(
            interval '24 hours',
            interval '5 minutes' * power(2, least(attempts, 8)))
-   where rightmove_id = p_rightmove_id;
+   where rightmove_id = p_rightmove_id
+     and claimed_at   = p_claimed_at;
 
-  -- The claim inserted the row, so its absence means something has deleted the listing underneath a
-  -- running analysis. Saying so is cheap and the alternative is a charge with no trace.
+  -- Nothing matched. Either the row has been deleted underneath a running analysis, or this run's
+  -- claim was taken over while it was working and the row now belongs to somebody else. Both are
+  -- worth a line: the usage has already been recorded, so the charge is on the books either way,
+  -- and this is the only trace of what it bought.
   if not found then
-    raise notice 'record_analysis_failure: no analysis row for %; the charge is recorded but the failure is not', p_rightmove_id;
+    raise notice 'record_analysis_failure: no analysis row for % still claimed at %; the charge is recorded but the failure is not', p_rightmove_id, p_claimed_at;
   end if;
 end;
 $$;
 
-revoke execute on function public.record_analysis_failure(text, text) from public, anon, authenticated;
-grant execute on function public.record_analysis_failure(text, text) to service_role;
+revoke execute on function public.record_analysis_failure(text, timestamptz, text) from public, anon, authenticated;
+grant execute on function public.record_analysis_failure(text, timestamptz, text) to service_role;
 
 -- ------------------------------------------------------------------------------------------------
 -- Claiming: a failed row is claimable again only while it has attempts left and its wait is up.
@@ -91,12 +101,17 @@ grant execute on function public.record_analysis_failure(text, text) to service_
 -- Replaced whole rather than patched, because the body is the spend cap and splitting it across two
 -- migrations would leave the caps described in one file and enforced in another. Everything above
 -- the insert is unchanged from 20260809310000_multi_tenant.sql.
+-- The two defaults are repeated from 20260809310000 because they have to be: `create or replace`
+-- cannot drop a parameter default that the existing function has, and Postgres refuses the whole
+-- statement with 42P13 rather than quietly accepting the narrower signature. Omitting them here
+-- failed at `supabase start` — which is the only place it *can* fail, since nothing in `check:all`
+-- applies a migration.
 create or replace function public.claim_analysis(
   p_rightmove_id text,
   p_project_id   uuid,
   p_user_id      uuid,
-  p_estimate_usd numeric,
-  p_stale_after  interval
+  p_estimate_usd numeric  default 0.10,
+  p_stale_after  interval default '10 minutes'
 )
 returns jsonb
 language plpgsql
@@ -113,6 +128,10 @@ declare
   v_project_held  numeric;
   v_user_held     numeric;
   v_claimed       int;
+  -- The claim's identifier, handed back to the caller so that the failure it may later record can
+  -- be matched to it. `now()` is transaction time, so this is the same instant the row is stamped
+  -- with, and a takeover — the only other thing that writes `claimed_at` — necessarily moves it.
+  v_claimed_at    timestamptz := now();
   -- A literal rather than a parameter. Making it an argument would change this function's
   -- signature, and the revoke/grant pair below names the signature exactly — an overload would
   -- leave the old one in place, still callable, still re-claiming forever. Nothing needs to vary
@@ -177,10 +196,10 @@ begin
   -- would mean the ceiling could never be reached. The trigger at the foot of this file clears it
   -- when an analysis actually lands.
   insert into property_analysis (rightmove_id, status, claimed_at, claimed_by_project, claimed_by_user)
-  values (p_rightmove_id, 'running', now(), p_project_id, p_user_id)
+  values (p_rightmove_id, 'running', v_claimed_at, p_project_id, p_user_id)
   on conflict (rightmove_id) do update
     set status = 'running',
-        claimed_at = now(),
+        claimed_at = v_claimed_at,
         error = null,
         claimed_by_project = excluded.claimed_by_project,
         claimed_by_user = excluded.claimed_by_user
@@ -192,7 +211,10 @@ begin
 
   get diagnostics v_claimed = row_count;
 
-  return jsonb_build_object('status', case when v_claimed > 0 then 'claimed' else 'busy' end);
+  if v_claimed = 0 then
+    return jsonb_build_object('status', 'busy');
+  end if;
+  return jsonb_build_object('status', 'claimed', 'claimed_at', v_claimed_at);
 end;
 $$;
 

@@ -58,7 +58,9 @@ const ESTIMATE_USD = Number(Deno.env.get('ANALYSIS_ESTIMATE_USD') ?? '0.10');
 /** What `claim_analysis` answers. Three refusals with three different renderings, which is why it
  *  returns jsonb and not the boolean it used to. */
 type Claim =
-  | { status: 'claimed' }
+  // `claimed_at` identifies this claim, and is what a failure has to be recorded against: a run that
+  // overshot the stale timeout no longer owns the row, and must not write over the run that took it.
+  | { status: 'claimed'; claimed_at: string }
   | { status: 'busy' }
   | { status: 'capped'; scope: 'project' | 'user'; spent: number; reserved: number; cap: number; resets_at: string };
 
@@ -185,8 +187,13 @@ async function analyse(rightmoveId: string, projectId: string, userId: string): 
     // the same statement that writes it. Reading it here and writing it back would drop increments
     // exactly when two runs fail the same listing at once, which is when a listing is failing hard
     // — and a count that never climbs is a ceiling that is never reached.
+    //
+    // Under this run's own claim, so that a run slow enough to have been taken over releases
+    // nothing: the row belongs to whoever took it, and freeing a live claim would drain a
+    // reservation that is still being spent against.
     await rpc('record_analysis_failure', {
       p_rightmove_id: rightmoveId,
+      p_claimed_at: claim.claimed_at,
       p_error: e instanceof Error ? e.message : String(e),
     });
     throw e;
