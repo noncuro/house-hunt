@@ -203,7 +203,7 @@ try {
   // website (design D5), where the worklist is the whole database rather than the cards on screen
   // and the run survives paging on. A stray second opener would be two buttons doing almost the
   // same thing from two different worklists. The website's own opener has no extension smoke of its
-  // own — see TODO.md.
+  // own — see issue #75.
   if (await panel.locator('.rm-sweep-go, .rm-open-go').count()) {
     problems.push('the sweep page still has an opener — filling in belongs on the website');
   }

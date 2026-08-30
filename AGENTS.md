@@ -2,7 +2,7 @@
 
 A shared shortlist for people hunting a flat together: travel times to saved places,
 one shared verdict per flat per project, a funnel from shortlisted to archived, and a vision pass
-over the photos for what the listing won't say. Multi-tenant, invite-only, email-code sign-in; a **project** is one hunt (up to six
+over the photos for what the listing won't say. Multi-tenant, invite-only, password sign-in — nothing here sends email; a **project** is one hunt (up to six
 people). In use on real listings.
 
 Two apps in one pnpm workspace: `apps/web` (Next.js — shortlist, compare, map, settings, sign-in,
@@ -10,8 +10,8 @@ project/admin, and **the whole product**: it is installable, works offline, and 
 pasted or shared address) and `apps/extension` (thin Chrome MV3 — the listing panel, search badges,
 sweep panel, all only on Rightmove pages, and **one of two ways in** rather than the way in: no
 browser on a phone loads it, so nothing may be reachable only through it). Shared logic in `packages/core` and `packages/ui`. Config is
-the workspace-root `.env` (see `.env.example`). **`RESEARCH.md`** is the source of truth for *why*;
-this file is *how it's built and how to check you haven't broken it*.
+the workspace-root `.env` (see `.env.example`). This file is *how it's built and how to check you
+haven't broken it*; `product.md` is *how we decide what to build*.
 
 ## Running it
 
@@ -87,13 +87,24 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   which is what an HTTP cache is — nothing is copied to our origin and nothing is served to anybody
   else. The line is *whose server the bytes come off*, and it has not moved.
 
+## Rightmove's terms, in four lines
+
+Their [Terms of Use](https://www.rightmove.co.uk/c/terms-of-use/) forbid automated access (5.2,
+5.5), and forbid embedding their images in an extension (13.4). There is no carve-out for a content
+script in your own browser. So:
+
+- **Never fetch a search or listing page in the background.** Only read pages somebody opened. This
+  is the line between a notes app and a crawler.
+- **Never re-host their images or floorplans.** Store the URL or nothing.
+- **Store only what the hunt needs, and do not redistribute it.**
+
 ## Architecture map
 
 | Piece | Job |
 |---|---|
 | ext `entrypoints/page-model.content.ts` (MAIN world) | Decodes `window.__PAGE_MODEL`, posts the listing out |
 | ext `entrypoints/{panel,search,sweep}.content/` | Listing panel (Shadow DOM), search-card badges, sweep panel |
-| ext `entrypoints/bridge.content.ts` | On the website's origin only; relays three messages so the two sessions stay in step |
+| ext `entrypoints/bridge.content.ts` | On the website's origin only; relays four messages so the two sessions stay in step, and carries the version `hello` compares |
 | ext `entrypoints/background.ts` | All network + the only Supabase client in the extension |
 | web `components/Shell.tsx` | The one header row, the hunt switcher, the account menu, the phone's tab bar |
 | web `screens/Places.tsx` | Everything the hunt has looked at, drawn four ways — Cards, Table (`Compare.tsx`), Board, Map — under one filter (`lib/lens.ts`) |
@@ -197,9 +208,40 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
 `tfl.ts`, `SWEEP_MARGIN_HOURS` in `sweep.ts`, `duplicateIds` in `shortlist.ts`, `Lens` in
 `apps/web/src/lib/lens.ts`, `claim_analysis` in the migrations) — including new
 ones. This file holds only cross-cutting rules and the decisions an agent working elsewhere
-could silently violate. Accepted gaps live in `TODO.md`.
+could silently violate. Accepted gaps are GitHub issues labelled `accepted-gap` — see below.
 
-## The four facts the design rests on (verified; details in `RESEARCH.md` §2)
+## Issues are the backlog — all of it
+
+**Everything not-yet-done is a GitHub issue.** No second list, no new TODO file. Labels:
+`accepted-gap` (known, deliberately unfixed — each states what would change the answer, usually
+growth past a handful of invited members; when that changes, re-read them all), `bug`,
+`enhancement`.
+
+- **Close what you fix, in the PR that fixes it** (`Closes #N`). A pass over 17 open issues found 10
+  wrong: 6 already fixed, 4 half-landed. A stale issue argues for work already done.
+- **Half-fixed something? Rewrite the issue and its title.** The title is the only part most people
+  read.
+- **A working file is fine inside a PR and must not survive it.** Write the plan, the checklist, the
+  phase notes a big change needs — then delete them in the same PR. `openspec/` was that and
+  outlived its change by months, becoming a backlog nobody read. What outlives a PR is code, an
+  issue, or an entry in `design.md`.
+- Cite issue numbers in the code that owns a gap, as `travel_backfill.sql` and `smoke-search.ts` do.
+
+`product.md` is why-we-chose, beside this file's how-it-is-built.
+
+## How to write here
+
+Issues, comments, commit messages, docs, code comments. Plain language, facts and evidence.
+
+- **Cut** `simply`, `genuinely`, `honestly`, `really`, `actually`, `very`, `obviously`, `of course`,
+  `clearly`, `it is worth noting`. Delete and put nothing back. `obviously` substitutes for the
+  evidence that would convince; `honest` and `genuine` describe the writer, not the number.
+- **Number, not adjective.** Not "wildly off" but "17 min against Google's 11 over 813 m". Not
+  "widespread" but "215 of 609 postcodes".
+- **Never present an estimate as a measurement.** Say which it is.
+- **No throat-clearing, and no metaphor that isn't carrying a mechanism.**
+
+## The four facts the design rests on (verified against live pages)
 
 1. Search pages carry `__NEXT_DATA__` (plain DOM JSON, every card) — but it doesn't follow the
    client-side pager; `staleAgainst` notices.
@@ -338,6 +380,11 @@ bundle bakes in `WXT_*`, so CI's `.env.ci` build could never match a zip built a
 extension id survives moving the folder.
 
 ## Code Review
+
+**`.coderabbit.yaml` carries these rules to the automated reviewer, per path.** Change a rule here
+and change it there — a rule it does not name is a rule it does not apply, and it names the docs it
+ingests by filename, so renaming or deleting one breaks it silently. Its `filePatterns` resolved
+empty on the first PR and nothing said so.
 
 In addition to the usual:
 
