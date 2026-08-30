@@ -559,11 +559,22 @@ check(
 check('what makes it a rental search is not a filter', describeCriteria(RENTAL_SEARCH), { supported: [], other: [] });
 
 console.log('criteriaFingerprint — what a sweep is a sweep of');
+// Written out rather than computed, and every case below compares against it rather than against
+// another call. A stamp is only ever compared with another stamp, so a `criteriaFingerprint` that
+// degenerated — to a constant, to the empty string — would keep every "these are the same search"
+// case passing while quietly making every search the same search, which is the silent skip again
+// with the fix in place. Held to a literal, the exclusion rules underneath rest on a value somebody
+// can read. **Expected to be edited by hand** when the format deliberately changes: that edit is
+// the deliberate part, and it is also the moment to remember that every stamp already in
+// `hub_sweep` was written in the old format and will read as a different search — one wide sweep
+// per place, which is correct but should not be a surprise.
+const CRITERIA_STAMP = '_includeLetAgreed=on&maxBedrooms=3&maxPrice=6000&minBedrooms=1&minPrice=4000';
+check('a fingerprint is the filters, sorted, and readable in psql', criteriaFingerprint(CRITERIA), CRITERIA_STAMP);
 // The failure this pins (#80): a place swept to the end an hour ago under one rent ceiling, and the
 // ceiling then raised. Every flat the change let in is older than that sweep, so a window dated by
 // it steps over all of them, for ever, with nothing on screen looking wrong. The only correct
 // window for the new search is the widest one — the answer for a place never swept.
-const sweptAnHourAgo = { lastSweptAt: ago(1), criteriaFingerprint: criteriaFingerprint(CRITERIA) };
+const sweptAnHourAgo = { lastSweptAt: ago(1), criteriaFingerprint: CRITERIA_STAMP };
 check(
   'a complete sweep of the same search dates the next window',
   sweepWindow(lastSweptFor(sweptAnHourAgo, CRITERIA), NOW).days,
@@ -587,7 +598,7 @@ check(
 );
 check('a row stamped before stamps existed is never swept', lastSweptFor({ lastSweptAt: ago(1), criteriaFingerprint: null }, CRITERIA), null);
 check('no row is never swept', lastSweptFor(null, CRITERIA), null);
-check('an incomplete sweep of the same search has no date either', lastSweptFor({ lastSweptAt: null, criteriaFingerprint: criteriaFingerprint(CRITERIA) }, CRITERIA), null);
+check('an incomplete sweep of the same search has no date either', lastSweptFor({ lastSweptAt: null, criteriaFingerprint: CRITERIA_STAMP }, CRITERIA), null);
 
 // The other half of the requirement: progress must survive a save that changes nothing. It is the
 // parsed criteria that are compared, so the same search pasted back from Rightmove — parameters in
@@ -596,19 +607,21 @@ const rePasted = criteriaFromUrl(
   'https://www.rightmove.co.uk/property-to-rent/find.html?maxBedrooms=3&_includeLetAgreed=on&locationIdentifier=STATION%5E4187&radius=0.5&maxPrice=6000&minBedrooms=1&minPrice=4000&maxDaysSinceAdded=3&sortType=6&index=24',
 )!.criteria;
 check('the same search re-pasted in another order keeps its progress', lastSweptFor(sweptAnHourAgo, rePasted), ago(1));
-check('the radius is per place and not part of the search', criteriaFingerprint({ ...CRITERIA, radius: '0.25' }), criteriaFingerprint(CRITERIA));
-check('nor is the window', criteriaFingerprint({ ...CRITERIA, maxDaysSinceAdded: '1' }), criteriaFingerprint(CRITERIA));
-check('nor what makes it a lettings search', criteriaFingerprint({ ...RENTAL_SEARCH, ...CRITERIA }), criteriaFingerprint(CRITERIA));
-check('an empty value is no filter', criteriaFingerprint({ ...CRITERIA, furnishTypes: '' }), criteriaFingerprint(CRITERIA));
+check('the radius is per place and not part of the search', criteriaFingerprint({ ...CRITERIA, radius: '0.25' }), CRITERIA_STAMP);
+check('nor is the window', criteriaFingerprint({ ...CRITERIA, maxDaysSinceAdded: '1' }), CRITERIA_STAMP);
+check('nor what makes it a lettings search', criteriaFingerprint({ ...RENTAL_SEARCH, ...CRITERIA }), CRITERIA_STAMP);
+check('an empty value is no filter', criteriaFingerprint({ ...CRITERIA, furnishTypes: '' }), CRITERIA_STAMP);
 // The stamp is taken off the search page actually recorded, so it has to come back equal to the
 // saved criteria that page was built from — window, radius, location and pager included.
 check(
   'the page a sweep opens fingerprints as the criteria it was built from',
   criteriaFingerprint(criteriaFromUrl(sweepSearchUrl({ hub: hampstead, days: 3, page: 2, criteria: CRITERIA })!)!.criteria),
-  criteriaFingerprint(CRITERIA),
+  CRITERIA_STAMP,
 );
 check('no criteria is an empty stamp, not a crash', criteriaFingerprint(null), '');
-check('and a fingerprint is readable in psql', criteriaFingerprint(CRITERIA), '_includeLetAgreed=on&maxBedrooms=3&maxPrice=6000&minBedrooms=1&minPrice=4000');
+// A different search has a different stamp — the half that stops the literal above being satisfied
+// by a function that returns it for everything.
+check('a raised ceiling is a different stamp', criteriaFingerprint({ ...CRITERIA, maxPrice: '7000' }) === CRITERIA_STAMP, false);
 
 console.log('rightmoveSearchStart');
 check(

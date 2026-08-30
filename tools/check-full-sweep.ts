@@ -162,10 +162,14 @@ async function main() {
       });
       return new URL(world.opened[0]!).searchParams.get('maxDaysSinceAdded');
     };
-    check('swept an hour ago for this search: a one-day window', (await sweptFor(criteriaFingerprint(CRITERIA))) === '1');
+    // Both stamps written out rather than computed, so neither case can be satisfied by a
+    // `criteriaFingerprint` that has collapsed into returning the same string for every search —
+    // which would make every sweep look like a sweep of what the hunt is looking for now.
+    // `check:sweep` holds the format itself; these two only need the two searches to differ.
+    check('swept an hour ago for this search: a one-day window', (await sweptFor('maxPrice=3000&minBedrooms=1&minPrice=2000')) === '1');
     check(
       'swept an hour ago for a lower ceiling: the widest window, as if never swept',
-      (await sweptFor(criteriaFingerprint({ ...CRITERIA, maxPrice: '2500' }))) === '14',
+      (await sweptFor('maxPrice=2500&minBedrooms=1&minPrice=2000')) === '14',
     );
   }
 
