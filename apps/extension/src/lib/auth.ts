@@ -35,6 +35,7 @@
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { configure } from '@house-hunt/core/db';
 import { setLogSink } from '@house-hunt/core';
+import { webAppOrigin } from './web-app';
 import { log } from './log';
 
 const url = import.meta.env.WXT_SUPABASE_URL;
@@ -151,13 +152,20 @@ export async function ensureSession(): Promise<Session | null> {
   }
 }
 
-/** Hand core the client and the refresh policy, and give it somewhere to log.
+/** Hand core the client, the refresh policy, the website's origin, and somewhere to log.
  *
  *  Called once from `background.ts` before anything touches the database. Core throws rather than
  *  constructing a default if this is forgotten, because a default would persist a session where it
- *  will not be found again and that looks exactly like being signed out. */
+ *  will not be found again and that looks exactly like being signed out.
+ *
+ *  `apiOrigin` is the same value the bridge already trusts. Four of the functions this extension
+ *  calls are Vercel routes now, and `callRoute` addresses a route relatively so it follows whichever
+ *  origin the page is served from — which a worker on `chrome-extension://` cannot do. Told once
+ *  here rather than read at each call site, and read from `webAppOrigin()` rather than from a second
+ *  environment variable, so the origin the extension injects into, accepts messages from, and calls
+ *  is one value that cannot drift into three. */
 export function configureCore(): void {
-  configure(supabase, { ensureSession });
+  configure(supabase, { ensureSession, apiOrigin: webAppOrigin() });
   setLogSink(log);
 }
 

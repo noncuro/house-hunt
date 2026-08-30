@@ -1,7 +1,7 @@
 # Moving the Edge Functions to `apps/web`
 
 Seven Supabase Edge Functions become seven Next.js route handlers in `apps/web`, and
-`supabase/functions/` is deleted. One is done: `apps/web/src/app/api/predict/route.ts`. This
+`supabase/functions/` is deleted. Six are done and only `travel` is left. This
 document is the argument for the move, what it costs, the order to do it in, and the checklist for
 each remaining function. It is written to be picked up cold, several sessions apart.
 
@@ -79,7 +79,7 @@ it is `publicRoute('…', …)` in `app/api/password/route.ts` plus the matching
 `tools/check-routes.ts`, and the reason to write there is the one that was true of the flag: that
 `redeem` is deliberately unauthenticated, gated by the invite code and by `redeem_code()`'s
 in-database guess limiter, and that `reset` checks `caller.isAdmin` itself
-(`supabase/functions/password/index.ts:141-142`) precisely because nothing verified the token first.
+(now `apps/web/src/app/api/password/route.ts`) precisely because nothing verified the token first.
 Note that `password` is one route with two actions and only one of them is public, so the route is
 public and `reset` does its own `requireCaller` — the wrapper cannot split a body.
 
@@ -93,7 +93,7 @@ exactly like a slow backlog — the failure mode `SETUP.md` already records from
 version of this job, which failed 40 runs out of 40 at its own guard.
 
 **`x-forwarded-for` stops being trustworthy for the same reason it was.**
-`_shared/code.ts:95` `callerAddressHash()` hashes that header, and is documented as safe only
+`callerAddressHash()` (now `apps/web/src/server/code.ts`) hashes that header, and is documented as safe only
 because the request is unreachable except through Supabase's edge, which overwrites it. Vercel also
 sets it, but the assumption is a different one and should be re-read rather than inherited; Vercel's
 own `x-vercel-forwarded-for` is the header that cannot be spoofed past the edge.
@@ -132,39 +132,47 @@ most common bug in this project when it is forgotten.
    which is right for the two website-only routes and is exactly what the first extension caller
    has to change.
 
-3. **`invite`, `resolve-location`, `password`, `analyse`.** Each has an extension caller, so each
-   costs the same extra work and they can be done in any order among themselves; taking them as one
-   batch means one extension version bump rather than four. If they are split, every split costs
-   another bump.
-   - **`invite`** (`packages/core/src/db/supabase.ts:1668`; browser
-     `apps/web/src/screens/Project.tsx`, extension `background.ts:249,256`). The plaintext code
-     exists in the clear exactly once, in the reply — do not add logging around it. Web Crypto
-     (`_shared/code.ts:37,81`) is a Node global. **`tools/fixture-session.ts:616` posts directly to
-     `{url}/functions/v1/invite`** as harness setup, before the website is necessarily up; repoint
-     it at the `create_invite` RPC with the service key rather than at the route, or the seed
-     acquires a dependency on the server it is seeding for.
-   - **`resolve-location`** (`packages/core/src/db/supabase.ts:1814`; browser `Project.tsx`,
-     extension `background.ts:349`). Same shape as `listing`: a single SEO page fetch
-     (`index.ts:153`), a `LIMIT_PER_HOUR = 10` (`index.ts:52`) counted in `api_usage` and written
-     before the fetch (`index.ts:83`), and its own no-crawl block at `index.ts:15-38`.
-   - **`password`** (`packages/core/src/db/supabase.ts:1746` redeem — **no auth header** — and
-     `:1783` reset; browser `SignIn.tsx` and `Admin.tsx`, extension `background.ts:209,384`). The
-     unauthenticated half, discussed above. It reaches GoTrue's admin API
-     (`index.ts:113` create, `index.ts:152` update), so it needs `supabaseUrl()` and `serviceKey()`
-     rather than only `rest()`. `MIN_PASSWORD_LENGTH = 10` (`index.ts:44`) is hand-kept in step with
-     the client copy; keep them in step.
-   - **`analyse`** (extension only — `apps/extension/src/entrypoints/background.ts:74` builds the
-     URL and `:461` does a raw `fetch`; `apps/web` never calls it). The only function with no
-     browser caller at all, so it is pure extension work and its CORS allowance is the
-     `chrome-extension://` arm alone. It holds `OPENAI_API_KEY` (`index.ts:50`) and
-     `ANALYSIS_ESTIMATE_USD` (`index.ts:56`), both of which must be added to the Vercel project
-     before the route ships or the first analysis fails loudly for everyone. It is the long-pole
-     *wall-clock* function (up to `MAX_IMAGES = 40` photographs through OpenAI's vision endpoint,
-     `packages/core/src/analysis.ts:20`) but it is I/O-bound, so `maxDuration` matters here in a way
-     CPU never did. `packages/core/src/png.ts` uses `CompressionStream`/`DecompressionStream`
-     ('deflate'): Node globals since 18, but verify on the deployed runtime rather than locally.
-     Preserve the claim/release pairing exactly — `claim_analysis` before spending,
-     `record_analysis_failure` on every failure path, or a crash leaves budget reserved forever.
+3. **`invite`, `resolve-location`, `password`, `analyse` — done, as one batch.** Each has an
+   extension caller, so each cost the same extra work; taking them together meant one extension
+   version bump (0.5.12) rather than four. Splitting them would have cost another bump each.
+
+   What the batch added, once, for all four: `apps/web/src/server/cors.ts` (the
+   `chrome-extension://`-by-scheme and Rightmove-exactly allowance, with supabase-js's full header
+   list), `preflightRoute()` in `handler.ts` with `check:routes` taught to accept it for `OPTIONS`
+   alone, `Host.apiOrigin` in `packages/core/src/db/client.ts` with `callRoute`'s `routeBase()`
+   reading it, and `configureCore()` filling it from `webAppOrigin()` — the same value the bridge
+   already trusts, so the origin the extension injects into, accepts messages from, and calls is one
+   value rather than three. The website's origin went into `host_permissions`; without it every one
+   of these fetches is blocked before it leaves the worker and fails as `TypeError: Failed to
+   fetch`, which reads like the site being down.
+
+   Two things this doc said turned out to be wrong when carried out, and are corrected here rather
+   than deleted:
+
+   - It said to repoint `tools/fixture-session.ts`'s invite call at the `create_invite` RPC "rather
+     than at the route, or the seed acquires a dependency on the server it is seeding for". The
+     fixture went to the route instead, with the origin passed in as an argument. The RPC takes a
+     *hash*, so a fixture calling it would have to hash a code itself and would then be asserting
+     its own hashing rather than the path a real invite takes — and the dependency it was warned
+     about does not exist: `smoke:web` is the only caller and it is the harness that starts the
+     website.
+   - It said `MIN_PASSWORD_LENGTH` is hand-kept in step with the client copy. It is imported from
+     `@house-hunt/core` now. The duplicate existed because a Deno function could not import from the
+     workspace; a route can, so there is one constant and nothing to keep in step.
+
+   `packages/core/src/analysis.ts` gained a subpath export (`@house-hunt/core/analysis`) rather than
+   going into the barrel, so the PNG decoder reaches the one route that asks for it and no bundle
+   that only wanted a type. `_shared/analysis.ts`, `_shared/png.ts` and `_shared/code.ts` are
+   deleted, and `sync-edge-function.ts` copies five files instead of seven.
+
+   `OPENAI_API_KEY` and `ANALYSIS_ESTIMATE_USD` must be on the Vercel project before this deploys,
+   or the first analysis fails loudly for everyone. `analyse` is the long-pole *wall-clock* route
+   (up to `MAX_IMAGES = 40` photographs through OpenAI's vision endpoint) but it is I/O-bound, so
+   `maxDuration` matters here in a way CPU never did: it is 300. `packages/core/src/png.ts` uses
+   `CompressionStream`/`DecompressionStream` ('deflate'), Node globals since 18 — verify on the
+   deployed runtime rather than locally. The claim/release pairing is unchanged: `claim_analysis`
+   before spending, `record_analysis_failure` on every failure path, or a crash leaves budget
+   reserved for ever.
 
 4. **`travel`, last.** 841 lines, and the only function with more than one thing that can go wrong.
    - **Two auth paths.** `isBackfill(request)` (`index.ts:678`) compares `x-backfill-token`

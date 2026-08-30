@@ -13,8 +13,8 @@
  *  hubs stopped being a compile-time constant (design D11).
  *
  *  ---------------------------------------------------------------------------------------------
- *  THIS IS THE ONE PLACE IN THIS EXTENSION THAT FETCHES RIGHTMOVE, AND THE NO-CRAWL RULE IS NOT
- *  RELAXED FOR IT.
+ *  THIS IS ONE OF THE TWO PLACES IN THIS PROJECT THAT FETCHES RIGHTMOVE, AND THE NO-CRAWL RULE IS
+ *  NOT RELAXED FOR IT.
  *
  *  `AGENTS.md`: *read pages the user opened; never crawl*. That line is what separates a notes app
  *  from a scraper, both in spirit and under Rightmove's terms, and everything else in this codebase
@@ -35,13 +35,21 @@
  *  Do not take this as precedent for fetching anything else. Widening it — resolving several names
  *  at once, prefetching suggestions as somebody types, refreshing identifiers on a timer — turns a
  *  hand lookup into a crawler, and the rule does not have an exception shaped like convenience.
+ *  `api/listing/route.ts` is the other one, and its header makes the same argument for one listing
+ *  page fetched for the person who has just pasted that exact address.
  *  ---------------------------------------------------------------------------------------------
- *
- *  Deploy:
- *    supabase functions deploy resolve-location --project-ref <ref>
  */
-import { requireActiveProject, requireCaller } from '../_shared/caller.ts';
-import { body, eq, HttpError, requireEnv, rest, SERVICE_KEY, serve, SUPABASE_URL } from '../_shared/http.ts';
+import { requireActiveProject } from '@/server/caller';
+import { authedRoute, jsonBody, preflightRoute } from '@/server/handler';
+import { eq, HttpError, rest } from '@/server/supabase';
+
+export const runtime = 'nodejs';
+
+/** One outbound request to a page that is occasionally slow, and no more. The default 10s would
+ *  turn a slow page into a failure that looks like "that place does not exist". */
+export const maxDuration = 60;
+
+export const dynamic = 'force-dynamic';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
@@ -51,21 +59,18 @@ const USER_AGENT =
  *  retry loop in a caller cannot become a crawl. */
 const LIMIT_PER_HOUR = 10;
 
-/** Rate limiting needs somewhere durable to count, and an Edge Function isolate is not durable —
- *  it is recycled without warning, which is exactly when a limit held in memory stops existing.
+/** Rate limiting needs somewhere durable to count, and a serverless invocation is not durable — it
+ *  is recycled without warning, which is exactly when a limit held in memory stops existing.
  *  `api_usage` is the log of external calls this system makes on a user's behalf, `kind` is there to
  *  tell them apart, and the row is written with `cost_usd = 0` so nothing here moves a spend cap or
  *  shows up as money in the admin view. Counting rows in that table is the whole limiter. */
 const KIND = 'resolve_location';
 
-serve(async (request) => {
-  requireEnv({ SUPABASE_URL, SERVICE_KEY });
-
-  const caller = await requireCaller(request);
+export const POST = authedRoute(async (request, caller) => {
   // A hub belongs to a project, so resolving one is only meaningful for somebody who is in one.
   const projectId = await requireActiveProject(caller);
 
-  const input = await body<{ query?: string; slug?: string }>(request);
+  const input = await jsonBody<{ query?: string; slug?: string }>(request);
   const slug = toSlug(input.slug ?? input.query);
 
   const used = await recentLookups(caller.userId);
@@ -85,12 +90,14 @@ serve(async (request) => {
   return await resolve(slug);
 });
 
+export const OPTIONS = preflightRoute();
+
 /** A name a person typed -> the SEO path segment Rightmove uses.
  *
  *  Nothing here is allowed to reach outside `/property-to-rent/<slug>.html`: the slug is rebuilt
  *  from scratch out of letters, digits and single dashes rather than escaped, so a `..` or a `?` in
  *  the input cannot become part of the URL at all. */
-export function toSlug(input: string | undefined): string {
+function toSlug(input: string | undefined): string {
   const slug = (input ?? '')
     .trim()
     .replace(/\.html$/i, '')
@@ -148,10 +155,14 @@ type Resolved =
       resultCount: unknown;
     };
 
-export async function resolve(slug: string): Promise<Resolved> {
+async function resolve(slug: string): Promise<Resolved> {
   // The single request. Read the block at the top of this file before adding a second one.
   const response = await fetch(`https://www.rightmove.co.uk/property-to-rent/${slug}.html`, {
     headers: { 'User-Agent': USER_AGENT },
+    // Next caches `fetch` in server code by default and the Edge runtime did not. A cached answer
+    // here is a location identifier read from a page nobody fetched, which is the one thing this
+    // route exists to avoid — and the rate limit above already means it is asked rarely.
+    cache: 'no-store',
   });
   if (response.status === 404) return { status: 'not-found', slug };
   if (!response.ok) throw new Error(`rightmove returned ${response.status} for ${slug}`);

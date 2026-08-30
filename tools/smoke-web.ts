@@ -54,7 +54,7 @@ import { ratingOf } from '../packages/ui/src/ratings';
 import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 import { startFunctions } from './edge-functions';
-import { demandFreePort, stopTree } from './servers';
+import { demandFreePort, stopTree, WEB_APP_PORT } from './servers';
 import { checkArchiveIsComplete } from './manifest-paths';
 
 /** Must match `storageKey` in `apps/web/src/lib/client.ts`. Asserted below rather than trusted:
@@ -65,13 +65,13 @@ const SESSION_KEY = 'house-hunt-session';
 /** Not 3100. `pnpm dev:web` runs there, and a harness that quietly attached to the dev server
  *  somebody had open would be testing whatever code that server was pointed at — including the
  *  hosted database, which is a real house hunt with real verdicts in it. */
-const PORT = 3199;
+const PORT = WEB_APP_PORT;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
 const SHOTS = resolve(import.meta.dirname, '../.fixtures/shots');
 mkdirSync(SHOTS, { recursive: true });
 
-const { url: supabaseUrl, anonKey } = localCredentials();
+const { url: supabaseUrl, anonKey, serviceKey } = localCredentials();
 
 /** The app's own origin and its Supabase, and nothing else. Map tiles are allowed because the map
  *  view is under test and a blocked tile renders as an empty grey square that looks exactly like a
@@ -1269,13 +1269,13 @@ async function checkRefusals({ browser }: Stage): Promise<void> {
  *
  *  Worth having as a browser check rather than as a call to the function, because it is four
  *  things in a row that each look fine alone — `create_invite` mints and hashes, `redeem_code`
- *  checks the code against the address, the `password` function makes the account (it is the only
+ *  checks the code against the address, the `password` route makes the account (it is the only
  *  unauthenticated endpoint in the system), and `consume_invites()` turns the invite into a
  *  membership at exactly one moment. A break anywhere in that chain leaves an invited person
  *  holding an account in no project, which is a state the shortlist has a screen for and nobody
  *  would otherwise notice. */
 async function checkJoining({ browser }: Stage): Promise<void> {
-  const invite = await createInvite(fixture.session, REDEEM_EMAIL);
+  const invite = await createInvite(fixture.session, REDEEM_EMAIL, ORIGIN);
   if (invite.status !== 'invited' || !invite.code) {
     note(`inviting ${REDEEM_EMAIL} answered "${invite.status}" with no code — nothing to redeem`);
     return;
@@ -1337,7 +1337,7 @@ async function checkJoining({ browser }: Stage): Promise<void> {
     // spot, and the hunt is simply there on their next load. It used to mint a code and wait for a
     // sign-in that never came, which is issue #98.
     await dropMembership(REDEEM_EMAIL);
-    const again = await createInvite(fixture.session, REDEEM_EMAIL);
+    const again = await createInvite(fixture.session, REDEEM_EMAIL, ORIGIN);
     if (again.status !== 'added') {
       note(`re-inviting the existing account answered "${again.status}", not "added"`);
     } else if (again.code) {
@@ -1525,7 +1525,8 @@ async function settleOn<T>(
  *
  *  Which Supabase the website talks to is read from `NEXT_PUBLIC_*` at build time, exactly as the
  *  extension reads `WXT_*` — so, like `build:smoke`, it cannot be arranged at runtime and is passed
- *  in here. Nothing about the repo's `.env` is read or changed. */
+ *  in here. The service-role key is passed the same way but is read per request, so it reaches the
+ *  server rather than the bundle. Nothing about the repo's `.env` is read or changed. */
 async function startWebApp(): Promise<ChildProcess> {
   // Before the build rather than after it, so a port somebody else holds costs a second instead of
   // a minute — and so nothing is built for a server that is not going to be started.
@@ -1536,6 +1537,13 @@ async function startWebApp(): Promise<ChildProcess> {
     ...process.env,
     NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anonKey,
+    // The local stack's service role, because the routes need one and this is the deployment they
+    // are running as. `invite` and `password` are routes now and `checkJoining` drives both, so
+    // without this the joining section fails as a 500 saying the key is missing — which is the
+    // route's own sentence, correct, and one step away from a harness that simply did not set it.
+    // Read at request time rather than baked into the bundle, so `next start` gets it here rather
+    // than the build above.
+    SUPABASE_SECRET_KEY: serviceKey,
   };
   // Note: this writes the ordinary `apps/web/.next`, so it replaces whatever `pnpm dev:web` last
   // built — with a bundle pointed at the *local* stack. Harmless (the next `dev:web` rebuilds from

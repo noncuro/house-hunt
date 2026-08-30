@@ -4,13 +4,14 @@
  *  `apps/web/src/app/api/` (`docs/vercel-migration.md`). A route is reached with a plain `fetch`
  *  rather than `db().functions.invoke(...)`, which changes two things worth naming:
  *
- *  - **The URL is relative**, so it follows whichever origin the page is served from — production, a
- *    Vercel preview, or localhost — instead of becoming another copy of an origin to keep in step
- *    with the deployment. The cost is that a caller which is not a page cannot use it: a relative
- *    fetch from the extension's background worker resolves against `chrome-extension://` and 404s
- *    with a body that parses as nothing. So this refuses outright there, with a sentence, rather
- *    than leaving that 404 for whoever tries it next. The routes the extension does need get an
- *    explicit origin when they move — deliberately, and not by deleting this check.
+ *  - **The URL is relative wherever there is a page**, so it follows whichever origin that page is
+ *    served from — production, a Vercel preview, or localhost — instead of becoming another copy of
+ *    an origin to keep in step with the deployment. A caller that is not a page cannot do that: a
+ *    relative fetch from the extension's background worker resolves against `chrome-extension://`
+ *    and 404s with a body that parses as nothing. So the extension says where the website is, once,
+ *    through `Host.apiOrigin` (`client.ts`), which it fills from `WXT_WEB_APP_URL` — the same value
+ *    its bridge already trusts. Anything with neither a page origin nor a configured one is refused
+ *    with a sentence rather than left to that 404.
  *  - **A refusal arrives as an ordinary body.** supabase-js collapsed every non-2xx to the string
  *    "Edge Function returned a non-2xx status code" and hid the real one inside
  *    `FunctionsHttpError.context`, which is why `refusalFrom` exists. With `fetch` the body is
@@ -20,6 +21,7 @@
  *  every *product-level* outcome — `rate-limited`, `withdrawn`, `unreadable`, `insufficient` — is a
  *  200 with a `status` field, and only a caller mistake or a real failure is a non-2xx.
  */
+import { configuredApiOrigin } from './client';
 import { accessToken } from './session';
 
 /** The bearer the route verifies the caller from.
@@ -40,14 +42,7 @@ async function bearer(): Promise<Record<string, string>> {
  *  back as-is for the caller to read the `status` off, because a stated outcome is not a failure.
  */
 export async function callRoute<T>(name: string, body: unknown = {}): Promise<T> {
-  const origin = globalThis.location?.origin ?? '';
-  if (!/^https?:/.test(origin)) {
-    throw new Error(
-      `${name} runs on the website and cannot be reached from ${origin || 'here'} — open the app`,
-    );
-  }
-
-  const response = await fetch(`/api/${name}`, {
+  const response = await fetch(`${routeBase(name)}/api/${name}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await bearer()) },
     body: JSON.stringify(body),
@@ -58,4 +53,23 @@ export async function callRoute<T>(name: string, body: unknown = {}): Promise<T>
   }
   if (!payload) throw new Error(`${name} returned nothing readable`);
   return payload;
+}
+
+/** Empty for a page, which makes the URL relative; the configured origin for the extension.
+ *
+ *  Refuses rather than guessing when there is neither. The failure it prevents is specific: a
+ *  relative fetch from a `chrome-extension://` context resolves against the extension's own origin
+ *  and answers 404 with an HTML body, so the caller sees "returned nothing readable" about a route
+ *  that is running perfectly on a server it never addressed. */
+function routeBase(name: string): string {
+  const pageOrigin = globalThis.location?.origin ?? '';
+  if (/^https?:/.test(pageOrigin)) return '';
+
+  const configured = configuredApiOrigin();
+  if (configured) return configured.replace(/\/+$/, '');
+
+  throw new Error(
+    `${name} runs on the website and there is no origin to reach it at from ${pageOrigin || 'here'} — ` +
+      'the extension sets one through `configure({ apiOrigin })`, and a page needs none',
+  );
 }

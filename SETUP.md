@@ -17,7 +17,7 @@ code sent to your email, and that is the whole installation.
 
 The one thing that used to be local was the analysis. It was a Node process on one laptop
 holding the OpenAI key, which meant a listing was only ever analysed while that laptop was awake
-with a terminal open. It is now `supabase/functions/analyse`, deployed to the same project as the
+with a terminal open. It is now `apps/web/src/app/api/analyse`, deployed with the website to the
 database.
 
 ## The zip is no longer the password
@@ -106,18 +106,16 @@ Two things that look like bugs and are not:
   $20 a month against the owner's OpenAI key. Past that, analysis stops until the month rolls over;
   everything else — travel times, verdicts, the shortlist, sweeping — keeps working.
 
-## Deploying the analysis function (admins only)
+## Deploying the travel function (admins only)
 
 ```bash
-pnpm sync:function --check          # the function's copy of src/lib must be current
+pnpm sync:function --check          # the function's copy of packages/core must be current
 pnpm deploy:function                # does the check, then deploys
 ```
 
-The function needs `OPENAI_API_KEY` set once as a project secret:
-
-```bash
-supabase secrets set OPENAI_API_KEY=... --project-ref <ref>
-```
+One function is left. `analyse`, `invite`, `password`, `resolve-location`, `listing` and `predict`
+are routes on the website and ship with a Vercel deploy — see below, and
+`docs/vercel-migration.md`.
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected into *Edge Functions* by the platform;
 don't set them there.
@@ -136,15 +134,25 @@ project with that integration connected has a working key already, under a name 
 Without either, the failure is a 500 at the moment somebody presses the button. `docs/vercel-migration.md`
 says why these are moving.
 
-`pnpm deploy:function` deploys every function, not only `analyse`. What lets a phone add a flat is no
-longer among them: `listing` is a route on the website now (`apps/web/src/app/api/listing/`), so it
-ships with a Vercel deploy and needs the secret key above rather than a function deploy. A phone
-whose **Add a flat** button fails is therefore a website problem, not a missed `deploy:function`.
+### The analysis key goes on Vercel, not on Supabase
 
-**It verifies its caller now.** It used to deploy `--no-verify-jwt`, which was defensible when
+`OPENAI_API_KEY` used to be a Supabase project secret, because `analyse` was a function there. It is
+a route on the website now, so the key belongs in the Vercel project environment beside the secret
+key above — and in the workspace-root `.env` for `pnpm dev:web`. Setting it with
+`supabase secrets set` still succeeds and sets a secret nothing reads, while every analysis fails
+with a sentence saying the key is missing.
+
+`ANALYSIS_ESTIMATE_USD` goes with it, and is optional: it is what one call reserves against both
+caps before it is made, and it defaults to $0.10. Set it on Vercel only if a listing's real cost has
+drifted far enough from that for the reservation to stop bounding anything.
+
+A phone whose **Add a flat** button fails, or an analysis that never starts, is therefore a website
+problem — a missing environment variable on Vercel — and not a missed `deploy:function`.
+
+**Analysis verifies its caller.** It used to deploy `--no-verify-jwt`, which was defensible when
 there was no auth and the worst a stranger could do was make us re-analyse a flat we had already
 chosen to look at. It is not defensible once calls are charged against somebody's monthly cap:
-`analyse` resolves the caller's JWT, checks they are a member of the project they name, checks the
+the route resolves the caller's JWT, checks they are a member of the project they name, checks the
 project has actually opened the listing, and claims against both caps before it spends anything.
 
 ## The travel backfill's three secrets (admins only)

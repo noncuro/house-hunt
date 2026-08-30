@@ -26,14 +26,22 @@ const ROOT = resolve(import.meta.dirname, '..');
 const API = 'apps/web/src/app/api';
 const SERVER = 'apps/web/src/server';
 
-/** The routes that deliberately answer without a session, and why. Mirrors what
- *  `[functions.password] verify_jwt = false` said in `supabase/config.toml`: redeeming an invite
- *  code is done by somebody who has no account yet, so requiring one would be a door that can only
- *  be opened from inside.
+/** The routes that deliberately answer without a session, and why. This replaces what
+ *  `[functions.password] verify_jwt = false` said in `supabase/config.toml`, which was deleted with
+ *  the function: redeeming an invite code is done by somebody who has no account yet, so requiring
+ *  one would be a door that can only be opened from inside.
  *
- *  Empty until a function that needs it moves. Adding to it is the whole point of it existing —
- *  the record of what this deployment exposes to the open internet lives here and nowhere else. */
-const PUBLIC_ROUTES = new Map<string, string>();
+ *  One entry, and adding to it is the whole point of it existing — the record of what this
+ *  deployment exposes to the open internet lives here and nowhere else. A route that answers
+ *  without a session and is not named here fails this check. */
+const PUBLIC_ROUTES = new Map<string, string>([
+  [
+    'apps/web/src/app/api/password/route.ts',
+    'redeeming an invite is done by somebody with no account yet; the invite code stands in for ' +
+      'the session, and redeem_code() counts the guesses in the database. Its reset half calls ' +
+      'requireCaller itself and refuses a non-admin.',
+  ],
+]);
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 
@@ -102,7 +110,11 @@ walk(resolve(ROOT, API), (path) => {
   }
 
   for (const [, method, builder] of exported) {
-    if (builder && (builder === 'authedRoute' || builder === 'publicRoute') && !imported.has(builder)) {
+    if (
+      builder &&
+      (builder === 'authedRoute' || builder === 'publicRoute' || builder === 'preflightRoute') &&
+      !imported.has(builder)
+    ) {
       fail(
         `${rel} exports ${method} built by a local ${builder}, not the one in ${SERVER}/handler.ts — ` +
           'a wrapper that only shares the name checks nothing',
@@ -110,6 +122,15 @@ walk(resolve(ROOT, API), (path) => {
       continue;
     }
     if (builder === 'authedRoute') continue;
+    // `OPTIONS` is the preflight and resolves no caller, because a preflight carries no credentials.
+    // It is still held to a named builder from the same module: an `OPTIONS` written as a bare
+    // function would be the one exported method nothing here checked.
+    if (builder === 'preflightRoute') {
+      if (method !== 'OPTIONS') {
+        fail(`${rel} exports ${method} built by preflightRoute — that builder answers preflights, not requests`);
+      }
+      continue;
+    }
     if (builder === 'publicRoute') {
       // The reason is the argument, and it has to be a literal so this can read it. A computed one
       // would type-check and tell nobody anything.
@@ -123,7 +144,8 @@ walk(resolve(ROOT, API), (path) => {
     }
     fail(
       `${rel} exports ${method} built by ${builder ?? 'a bare function'} — ` +
-        'every route goes through authedRoute or publicRoute, or nothing checks the caller',
+        'every route goes through authedRoute or publicRoute (or preflightRoute, for OPTIONS), or ' +
+        'nothing checks the caller',
     );
   }
 });

@@ -22,7 +22,7 @@
  *  to now comes back empty rather than with the whole table.
  */
 import { db, ensureSession } from './client';
-import { accessToken, requireSession } from './session';
+import { requireSession } from './session';
 import { callRoute } from './route';
 import { MIN_PASSWORD_LENGTH } from '../contracts';
 import { rightmoveListingId } from '../listing';
@@ -1693,35 +1693,18 @@ export async function listInvites(projectId?: string): Promise<Invite[]> {
   return ((data ?? []) as any[]).map(toInvite);
 }
 
-/** An Edge Function's refusal, read out of the response rather than out of `error.message`.
+/** The sentence a refused route wrote, or a fallback when it wrote none.
  *
- *  supabase-js reports every non-2xx as the same sentence — "Edge Function returned a non-2xx
- *  status code" — which is exactly the generic failure the fail-loudly rule exists to prevent. The
- *  body carries the real reason, and these functions are written to put a sentence in it. */
-/** The bearer an Edge Function is called with.
- *
- *  Passed explicitly rather than left to supabase-js to attach from its own session state: both
- *  functions verify the caller from this token, and a worker that has just woken and read its
- *  session out of `chrome.storage.local` is exactly the case where relying on an auth-state event
- *  to have fired is a coin toss. A missing bearer here is a 401 that reads as "you were signed
- *  out", which is the wrong sentence entirely. */
-async function functionHeaders(): Promise<Record<string, string>> {
-  const token = await accessToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-async function refusalFrom(error: unknown, fallback: string): Promise<string> {
-  const context = (error as { context?: Response }).context;
-  if (context && typeof context.json === 'function') {
-    try {
-      const body = (await context.json()) as any;
-      const message = body?.message ?? body?.error ?? body?.reason;
-      if (typeof message === 'string' && message) return message;
-    } catch {
-      // A body that is not JSON tells us nothing the message below does not.
-    }
-  }
-  return (error as { message?: string }).message || fallback;
+ *  `callRoute` throws the server's own `error` for any non-2xx, so there is nothing to dig out of a
+ *  wrapper any more — this is only here to give each call site the sentence it wants when the
+ *  failure was the network rather than the route. `refusalFrom` and `functionHeaders` were deleted
+ *  with the last `functions.invoke` caller: the first existed because supabase-js collapsed every
+ *  non-2xx to "Edge Function returned a non-2xx status code" and hid the real one inside
+ *  `FunctionsHttpError.context`, and the second because it would not attach the bearer from a
+ *  worker that had just woken. `callRoute` does both. */
+function refusal(e: unknown, fallback: string): string {
+  const message = e instanceof Error ? e.message : '';
+  return message || fallback;
 }
 
 /** Invite somebody.
@@ -1734,12 +1717,13 @@ export async function createInvite(email: string, projectId: string | null): Pro
   const address = email.trim();
   if (!address) return { status: 'refused', reason: 'enter an email address' };
 
-  const { data, error } = await db().functions.invoke('invite', {
-    body: { email: address, projectId },
-    headers: await functionHeaders(),
-  });
-  if (error) return { status: 'refused', reason: await refusalFrom(error, 'the invite was refused') };
-  if (!data || typeof data !== 'object') return { status: 'refused', reason: 'the invite function said nothing' };
+  let data: unknown;
+  try {
+    data = await callRoute('invite', { email: address, projectId });
+  } catch (e) {
+    return { status: 'refused', reason: refusal(e, 'the invite was refused') };
+  }
+  if (!data || typeof data !== 'object') return { status: 'refused', reason: 'the invite route said nothing' };
 
   const body = data as any;
   switch (body.status) {
@@ -1814,14 +1798,14 @@ export async function redeemInvite(email: string, password: string, code: string
     return { status: 'password-too-short', minimum: MIN_PASSWORD_LENGTH };
   }
 
-  const { data, error } = await db().functions.invoke('password', {
-    body: { action: 'redeem', email: address, password, code },
-  });
-  if (error) {
-    // A 400 from the function is the length rule it enforces for real, and it is the one refusal
-    // here the client could have prevented. Named rather than printed, so the field says what is
-    // wrong with it instead of a banner saying something went wrong.
-    const reason = await refusalFrom(error, 'that code could not be redeemed');
+  let data: unknown;
+  try {
+    data = await callRoute('password', { action: 'redeem', email: address, password, code });
+  } catch (e) {
+    // A 400 from the route is the length rule it enforces for real, and it is the one refusal here
+    // the client could have prevented. Named rather than printed, so the field says what is wrong
+    // with it instead of a banner saying something went wrong.
+    const reason = refusal(e, 'that code could not be redeemed');
     if (/at least \d+ characters/i.test(reason)) {
       return { status: 'password-too-short', minimum: MIN_PASSWORD_LENGTH };
     }
@@ -1839,11 +1823,11 @@ export async function redeemInvite(email: string, password: string, code: string
     case 'no-such-code':
       return { status: 'no-such-code' };
     default:
-      return { status: 'failed', message: 'the invite function said nothing' };
+      return { status: 'failed', message: 'the invite route said nothing' };
   }
 }
 
-/** An admin setting somebody's password. Guarded in the Edge Function, which checks the caller's
+/** An admin setting somebody's password. Guarded in the route, which checks the caller's
  *  `is_admin` against the database rather than trusting this call site — hiding the button is
  *  presentation, and the boundary is on the other side of the wire. */
 export async function adminSetPassword(userId: string, password: string): Promise<void> {
@@ -1851,15 +1835,13 @@ export async function adminSetPassword(userId: string, password: string): Promis
   if (password.length < MIN_PASSWORD_LENGTH) {
     throw new Error(`a password of at least ${MIN_PASSWORD_LENGTH} characters is required`);
   }
-  const { error } = await db().functions.invoke('password', {
-    body: { action: 'reset', userId, password },
-    headers: await functionHeaders(),
-  });
-  if (error) throw new Error(await refusalFrom(error, 'the password was not changed'));
+  // Left to throw whatever the route said. There is no fallback sentence to supply any more: the
+  // route answers a refusal with a reason in the body and `callRoute` throws exactly that.
+  await callRoute('password', { action: 'reset', userId, password });
 }
 
-/** Resending is a fresh invite for the same address: the Edge Function is the only thing that may
- *  extend an expiry, and a revoke-then-invite is the shape it already validates. It also mints a
+/** Resending is a fresh invite for the same address: the route is the only thing that may extend
+ *  an expiry, and a revoke-then-invite is the shape it already validates. It also mints a
  *  new code, which is the answer to "they lost it" — there is no way to read the old one back. */
 export async function resendInvite(inviteId: string): Promise<InviteResult> {
   const { data, error } = await db()
@@ -1882,11 +1864,12 @@ export async function resendInvite(inviteId: string): Promise<InviteResult> {
  *  rule in AGENTS.md is unchanged. */
 export async function resolveLocation(name: string): Promise<LocationResult> {
   await requireSession();
-  const { data, error } = await db().functions.invoke('resolve-location', {
-    body: { query: name },
-    headers: await functionHeaders(),
-  });
-  if (error) return { status: 'failed', message: await refusalFrom(error, 'could not resolve that neighbourhood') };
+  let data: unknown;
+  try {
+    data = await callRoute('resolve-location', { query: name });
+  } catch (e) {
+    return { status: 'failed', message: refusal(e, 'could not resolve that neighbourhood') };
+  }
 
   const body = data as any;
   if (body?.status === 'resolved') {
@@ -1894,7 +1877,7 @@ export async function resolveLocation(name: string): Promise<LocationResult> {
       status: 'resolved',
       slug: body.slug,
       locationIdentifier: body.locationIdentifier,
-      // The function calls it `displayLocationId`; hubs.ts and the sweep URL builder have always
+      // The route calls it `displayLocationId`; hubs.ts and the sweep URL builder have always
       // called it `displayLocationIdentifier`, and renaming it at the boundary is cheaper than two
       // names for one string travelling through five files.
       displayLocationIdentifier: body.displayLocationId,

@@ -29,6 +29,13 @@ import { connect } from 'node:net';
 const asked = new WeakSet<ChildProcess>();
 
 /** Whether `stopTree` was called on this child — i.e. its death, whenever it comes, is ours. */
+/** The port `smoke:web` serves the website on, and the port the smoke extension is built to call.
+ *
+ *  Here rather than in either file because both need it and they must agree: the extension's API
+ *  origin is compiled in, so a build against one port and a server on another is an extension whose
+ *  every call is refused with nothing on screen to say why. */
+export const WEB_APP_PORT = 3199;
+
 export function wasAskedToStop(child: ChildProcess): boolean {
   return asked.has(child);
 }

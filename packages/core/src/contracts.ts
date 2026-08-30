@@ -48,7 +48,8 @@ export type AuthState =
  *  form has to state the rule before somebody submits and a view may not import a value out of
  *  `lib/auth.ts` — that module constructs the one Supabase client, and `pnpm check:one-client` is
  *  what keeps it to one context. The rule is enforced for real in
- *  `supabase/functions/password/index.ts`, which cannot import from the bundle at all, so that copy
+ *  `apps/web/src/app/api/password/route.ts`, which imports this constant rather than restating it —
+ *  it was a Deno function holding its own copy, and a route can import from the workspace. That copy
  *  is kept in step by hand. If you change one, change both.
  */
 export const MIN_PASSWORD_LENGTH = 10;

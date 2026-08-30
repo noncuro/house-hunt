@@ -91,7 +91,7 @@ reviews:
           hashed or CSS-module class.
 
     # ---- Shared code that also runs on Deno ------------------------------
-    - path: "packages/core/src/{analysis,png}.ts"
+    - path: "packages/core/src/{tfl,postcode,hubs,log,types}.ts"
       instructions: |
         These are copied into supabase/functions/_shared/ and run on Deno.
         They must stay Deno-clean: no `node:` imports, no `import.meta.env`,
@@ -99,20 +99,28 @@ reviews:
         needs the `_shared/` copy updated in the same PR — `pnpm check:sync`
         is what asserts it.
 
+        `analysis.ts` and `png.ts` used to be on this list and are not any
+        more: `analyse` is a Vercel route that imports them directly, so they
+        are ordinary workspace source. They are still written against `fetch`
+        and Compression Streams, which is no longer a constraint anybody has
+        to honour.
+
     - path: "supabase/functions/**"
       instructions: |
         Edge Functions are outside tsc and oxlint — `pnpm check:functions`
         (deno check) is the only typecheck they get.
 
+        One function is left — `travel`. The rest are routes under
+        apps/web/src/app/api/ (docs/vercel-migration.md).
+
         Most files under `_shared/` are generated copies of packages/core and
         must match their source exactly; flag an edit made to the copy instead
-        of the source. Three are NOT copies and have no source to move a change
-        to: `_shared/http.ts`, `_shared/caller.ts` and `_shared/code.ts` are
-        hand-written and are edited in place. The generated ones carry a
-        `// GENERATED` header and are exactly the names in `FILES` in
-        tools/sync-edge-function.ts; if a file is not in that list, it is the
-        original. Do not ask for a change to those three to be relocated to
-        packages/core.
+        of the source. Two are NOT copies and have no source to move a change
+        to: `_shared/http.ts` and `_shared/caller.ts` are hand-written and are
+        edited in place. The generated ones carry a `// GENERATED` header and
+        are exactly the names in `FILES` in tools/sync-edge-function.ts; if a
+        file is not in that list, it is the original. Do not ask for a change
+        to those two to be relocated to packages/core.
         The `travel` function is the sole writer of the travel cache. CORS
         depends on WEB_APP_ORIGIN being set; a missing env var here reads as a
         page that spins forever, so flag new env reads that default silently.

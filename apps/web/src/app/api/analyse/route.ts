@@ -1,59 +1,72 @@
-/** The photo analysis, running on Supabase rather than on somebody's laptop.
+/** The photo analysis, running on the website's own server.
  *
  *  This is the only part of the extension that could not be serverless from the start: the OpenAI
  *  key cannot ship inside a Chrome extension, because anyone holding the bundle could spend it.
  *  It lived in `server/index.ts`, a local Node process — which meant analysis only happened when
- *  one laptop was awake with a terminal open. The other person's laptop could read every result
- *  and produce none.
+ *  one laptop was awake with a terminal open — then in a Supabase Edge Function, and now here.
  *
- *  All the real work is in `../_shared/analysis.ts` and `../_shared/png.ts`, copied verbatim from
- *  `src/lib/`. Both were written against `fetch` and Compression Streams with no `node:` imports
- *  precisely so this move would be a wrapper swap, and it was.
+ *  All the real work is in `packages/core/src/analysis.ts`, imported rather than copied. That copy
+ *  is what this move deletes: `analysis.ts` and `png.ts` were written against `fetch` and
+ *  Compression Streams with no `node:` imports so a Deno function could hold generated duplicates
+ *  of them, and a route in this app imports the originals.
  *
- *  Deploy:
- *    supabase functions deploy analyse --project-ref <ref>
- *    supabase secrets set OPENAI_API_KEY=... --project-ref <ref>
+ *  **Five gates, in this order (design D10):**
  *
- *  **`--no-verify-jwt` is gone, and the old defence with it.** That defence was: the function
- *  accepts a rightmove_id and nothing else, and only analyses a property row that already exists,
- *  so the worst a stranger with the URL can do is make us re-analyse a flat once. It was adequate
- *  for a two-laptop tool with one key holder. It is not adequate now, because the ceiling on cost
- *  was "however many listings anyone inserts" and nothing measured it. Five gates replace it, in
- *  this order (design D10):
- *
- *    1. a real session — the caller is resolved from the JWT, and an absent or expired one is a 401;
+ *    1. a real session — `authedRoute` resolves the caller from the JWT, and an absent or expired
+ *       one is a 401;
  *    2. an active project, and membership of it;
- *    3. a `project_property` link for this listing, so the function cannot be driven to analyse
+ *    3. a `project_property` link for this listing, so the route cannot be driven to analyse
  *       arbitrary listing ids — only ones the caller's own project has opened;
  *    4. the spend caps, checked inside `claim_analysis` while it holds the budget locks;
  *    5. only then the claim, the OpenAI call, the usage row and the analysis.
  *
- *  The service-role client stays, and is used for the writes. The JWT is identity, not authority:
- *  `property_analysis` and `api_usage` are deliberately writable by nobody else (design D4).
+ *  The service role does the writes. The JWT is identity, not authority: `property_analysis` and
+ *  `api_usage` are deliberately writable by nobody else (design D4).
+ *
+ *  Two variables have to be on the Vercel project: `OPENAI_API_KEY`, and optionally
+ *  `ANALYSIS_ESTIMATE_USD`. Both are read per request rather than at module scope, so a missing key
+ *  fails the request that needed it instead of the build of the whole website.
  */
-import { analyseListing, type ParsedAnalysis } from '../_shared/analysis.ts';
-import { requireActiveProject, requireCaller } from '../_shared/caller.ts';
-import {
-  body,
-  eq,
-  HttpError,
-  requireEnv,
-  rest,
-  rpc,
-  SERVICE_KEY,
-  serve,
-  SUPABASE_URL,
-} from '../_shared/http.ts';
+import { analyseListing, type ParsedAnalysis } from '@house-hunt/core/analysis';
 
-// `SUPABASE_URL` and `SERVICE_KEY` come from the platform, which sets them on every function. This
-// one is a secret we set: `supabase secrets set OPENAI_API_KEY=...`.
-const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+import { requireActiveProject } from '@/server/caller';
+import { authedRoute, jsonBody, preflightRoute } from '@/server/handler';
+import { eq, HttpError, rest, rpc } from '@/server/supabase';
+
+export const runtime = 'nodejs';
+
+/** Twenty to forty photographs through a vision model, in one call. The default 10s would fail
+ *  every listing; this is the platform's ceiling and the analysis is what it is for. */
+export const maxDuration = 300;
+
+export const dynamic = 'force-dynamic';
 
 /** What a call reserves against both caps before it is made, because what it will cost is not
  *  knowable until it has been. Comfortably above a typical listing; the overshoot the caps accept
  *  is the amount by which one completed call exceeds this, and nothing more (design D9). Settable
- *  without a deploy of the extension: `supabase secrets set ANALYSIS_ESTIMATE_USD=...`. */
-const ESTIMATE_USD = Number(Deno.env.get('ANALYSIS_ESTIMATE_USD') ?? '0.10');
+ *  without shipping anything: it is an environment variable on the Vercel project. */
+const DEFAULT_ESTIMATE_USD = 0.1;
+
+function openAiKey(): string {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) {
+    throw new Error(
+      'OPENAI_API_KEY is not set on this deployment — add it to the Vercel project environment ' +
+        '(Settings → Environment Variables). It is the key this route spends, so nothing can be ' +
+        'analysed without it.',
+    );
+  }
+  return key;
+}
+
+function estimateUsd(): number {
+  const raw = process.env.ANALYSIS_ESTIMATE_USD;
+  const value = raw === undefined || raw === '' ? DEFAULT_ESTIMATE_USD : Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`ANALYSIS_ESTIMATE_USD is ${raw} — a reservation of nothing bounds nothing`);
+  }
+  return value;
+}
 
 /** What `claim_analysis` answers. Three refusals with three different renderings, which is why it
  *  returns jsonb and not the boolean it used to. */
@@ -69,16 +82,10 @@ type Result =
   | { status: 'capped'; scope: 'project' | 'user'; spent: number; cap: number; resets_at: string }
   | { status: 'failed'; error: string };
 
-serve(async (request) => {
-  requireEnv({ OPENAI_API_KEY, SUPABASE_URL, SERVICE_KEY });
-  if (!Number.isFinite(ESTIMATE_USD) || ESTIMATE_USD <= 0) {
-    throw new Error(`ANALYSIS_ESTIMATE_USD is ${ESTIMATE_USD} — a reservation of nothing bounds nothing`);
-  }
-
-  const caller = await requireCaller(request);
+export const POST = authedRoute(async (request, caller) => {
   const projectId = await requireActiveProject(caller);
 
-  const { rightmoveId } = await body<{ rightmoveId?: string }>(request);
+  const { rightmoveId } = await jsonBody<{ rightmoveId?: string }>(request);
   // Rightmove ids are numeric. Checking that here keeps the id out of a PostgREST filter it could
   // otherwise alter, since these are interpolated into the query string below.
   if (!rightmoveId || !/^\d+$/.test(rightmoveId)) {
@@ -86,7 +93,7 @@ serve(async (request) => {
   }
 
   // Gate 3. The link is the project's own record of having opened this listing. Without it the
-  // function is an OpenAI proxy that will read the photos of any listing id a caller can type.
+  // route is an OpenAI proxy that will read the photos of any listing id a caller can type.
   const linked = await rest<Array<{ rightmove_id: string }>>(
     `project_property?project_id=eq.${eq(projectId)}&rightmove_id=eq.${eq(rightmoveId)}&select=rightmove_id`,
   );
@@ -101,6 +108,8 @@ serve(async (request) => {
   return await analyse(rightmoveId, projectId, caller.userId);
 });
 
+export const OPTIONS = preflightRoute();
+
 /** Analyse once, ever, and only if the budget allows it.
  *
  *  The claim is atomic in the database, so two laptops opening the same listing at the same moment
@@ -110,11 +119,12 @@ serve(async (request) => {
  *  transactions read the same under-cap total and all proceed. `claim_analysis` locks the project
  *  and then the caller, counts spend plus live reservations, and only then claims (design D9). */
 async function analyse(rightmoveId: string, projectId: string, userId: string): Promise<Result> {
+  const apiKey = openAiKey();
   const claim = await rpc<Claim>('claim_analysis', {
     p_rightmove_id: rightmoveId,
     p_project_id: projectId,
     p_user_id: userId,
-    p_estimate_usd: ESTIMATE_USD,
+    p_estimate_usd: estimateUsd(),
   });
 
   // Not an error. "The monthly analysis budget is used up, back on the 1st" is a sentence the panel
@@ -156,7 +166,7 @@ async function analyse(rightmoveId: string, projectId: string, userId: string): 
     if (!property) throw new Error(`property ${rightmoveId} is not in the database yet`);
 
     const { model, imageCount, parsed, usage } = await analyseListing({
-      apiKey: OPENAI_API_KEY!,
+      apiKey,
       imageUrls: property.image_urls ?? [],
       floorplanUrls: property.floorplan_urls ?? [],
       description: property.description ?? null,
@@ -232,9 +242,9 @@ async function record(
 }
 
 /** `analysis.ts` types `usage` as the two counts it writes onto the analysis row; the response also
- *  carries `input_tokens_details.cached_tokens`, which is what makes the cached rate applicable. It
- *  is read here rather than in the shared module because that module is a generated copy of
- *  `src/lib/` and must not be hand-edited. */
+ *  carries `input_tokens_details.cached_tokens`, which is what makes the cached rate applicable.
+ *  Read here rather than widened there, because that module's `usage` is the part of the response
+ *  the analysis row stores and this is the part the billing needs. */
 interface Usage {
   input_tokens?: number;
   output_tokens?: number;
@@ -247,7 +257,7 @@ interface Usage {
  *  nothing here. A response that arrived and then failed validation did cost money, and
  *  `analyseListing` attaches its `model` and `usage` to the error it throws so that money can be
  *  recorded. Duck-typed rather than instance-checked so this keeps working either way: before that
- *  attachment exists, every failure simply reports no usage, which is what the function did before
+ *  attachment exists, every failure simply reports no usage, which is what the route did before
  *  the caps existed. */
 function failure(e: unknown): { model: string; usage: Usage } | null {
   if (typeof e !== 'object' || e === null) return null;

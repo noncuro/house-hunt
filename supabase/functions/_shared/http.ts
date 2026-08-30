@@ -1,6 +1,6 @@
 /** Plumbing every Edge Function here needs: CORS, JSON replies, and the service-role REST client.
  *
- *  Hand-written, unlike `analysis.ts` and `png.ts` in this directory, which are generated copies of
+ *  Hand-written, unlike `tfl.ts` and `postcode.ts` in this directory, which are generated copies of
  *  `src/lib/` and carry a GENERATED header. `tools/sync-edge-function.ts` only writes and checks
  *  those two, so a file like this one sitting beside them is left alone.
  *

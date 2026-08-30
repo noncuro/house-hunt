@@ -14,7 +14,7 @@
  *  FOR IT EITHER.
  *
  *  `AGENTS.md`: *read pages the user opened; never crawl*. Read the block at the top of
- *  `supabase/functions/resolve-location/index.ts` — the argument is the same one and it is the
+ *  `app/api/resolve-location/route.ts` — the argument is the same one and it is the
  *  reason both of these are allowed to exist. The shape of the request is what keeps it inside the
  *  rule:
  *

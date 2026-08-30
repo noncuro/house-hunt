@@ -34,8 +34,6 @@ const SHARED = resolve(ROOT, 'supabase/functions/_shared');
 //  `hubs.ts` stays because `travel` reads it, and `types.ts` and `postcode.ts` because it imports
 //  them.
 const FILES = [
-  'analysis.ts',
-  'png.ts',
   'tfl.ts',
   'postcode.ts',
   'hubs.ts',
