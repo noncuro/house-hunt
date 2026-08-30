@@ -1,7 +1,8 @@
 -- An admin raising a cap leaves a record of having done it.
 --
 -- Being an admin is a row in `admin_email`, and the three RPCs that move a budget or a member
--- ceiling check `is_admin()` and nothing else. That was accepted while there was one admin who was
+-- ceiling check `is_admin()` — or the service role — and nothing further. That was accepted while
+-- there was one admin who was
 -- also the person paying the OpenAI bill: there was nobody to audit against. It stops being true the
 -- moment there is a second admin, or an admin who is not the bill-payer, and at that point "who
 -- raised this cap, and from what" is a question somebody actually needs answered — asked, always,
@@ -26,16 +27,19 @@ create table if not exists admin_action (
   actor_id     uuid references auth.users(id) on delete set null,
   action       text not null check (action in ('set_user_cap', 'set_project_cap', 'set_max_members')),
   -- One of the two is set, depending on what was changed. Set null rather than cascade for the same
-  -- reason `api_usage` does: deleting a project must not erase the record of what was done to it.
+  -- reason `api_usage` does: deleting a project must not erase the record of what was done to it —
+  -- which is also why the constraint is `<= 1` and not `= 1`. The `on delete set null` fires as an
+  -- UPDATE, the check is re-evaluated, and a row whose subject has been deleted would then fail it
+  -- and block the delete. So what is enforced is "never both"; "at least one at insert time" is the
+  -- writing functions' job, and a row with neither means the subject is gone.
   subject_user_id    uuid references auth.users(id) on delete set null,
   subject_project_id uuid references project(id) on delete set null,
+  check (num_nonnulls(subject_user_id, subject_project_id) <= 1),
   -- Both figures, because "raised to 200" is only half an answer — from 150 is a decision and from
   -- 5 is an incident. Numeric covers both a dollar cap and a member count.
   previous_value numeric,
   new_value      numeric not null
 );
-
-create index if not exists admin_action_occurred_idx on admin_action (occurred_at desc);
 
 alter table admin_action enable row level security;
 

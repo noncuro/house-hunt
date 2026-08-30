@@ -203,11 +203,16 @@ async function tearDown() {
   await admin.from('station_point').delete().eq('name', 'RLS Check Station');
 
   const { data } = await admin.auth.admin.listUsers({ perPage: 1000 });
-  for (const user of data?.users ?? []) {
-    if ([EMAIL_A, EMAIL_B, ...EXTRA_USERS].includes(user.email ?? '')) {
-      await admin.auth.admin.deleteUser(user.id);
-    }
-  }
+  const fixtureUsers = (data?.users ?? []).filter((u) => [EMAIL_A, EMAIL_B, ...EXTRA_USERS].includes(u.email ?? ''));
+
+  // Before the users go, not after. `admin_action` nulls both its subject and its actor on a user
+  // delete rather than cascading — the point of the log is that it outlives what it is about — so a
+  // row cleared up by user id afterwards is a row with no id left to find it by, and every run would
+  // leave an all-null orphan behind on a long-lived local database.
+  const ids = fixtureUsers.map((u) => u.id);
+  if (ids.length > 0) await admin.from('admin_action').delete().in('subject_user_id', ids);
+
+  for (const user of fixtureUsers) await admin.auth.admin.deleteUser(user.id);
 }
 
 async function createUser(email: string): Promise<string> {
@@ -554,25 +559,35 @@ async function main() {
   // cache assertions above sat in for a deploy. A member who could claim would reserve somebody
   // else's whole minute; one who could release would record calls nobody made against them.
   denied('claim_travel_calls: a member reserving TfL capacity', await rpc(a, 'claim_travel_calls', { p_user_id: userA, p_project_id: PROJECT_A, p_calls: 1, p_limit: 300, p_window: '60 seconds' }));
-  denied('release_travel_calls: a member recording travel calls', await rpc(a, 'release_travel_calls', { p_reservations: [1], p_made: 1 }));
+  denied('release_travel_calls: a member recording travel calls', await rpc(a, 'release_travel_calls', { p_reservation: 1, p_user_id: userA, p_project_id: PROJECT_A, p_made: 1 }));
 
-  // The audit log. An admin raising a cap leaves a row, and the row is not the subject's to read:
-  // what it answers is which admin did it, and showing that to the person whose cap moved would make
-  // the log a notification. Nobody writes it but the function that performs the change.
+  // The audit log.
+  //
+  // THE ORDER HERE IS THE ASSERTION. A row is written first, and only then is the member asked to
+  // read the table — because `nothing()` passes on an empty table, and the suite tears down and
+  // starts from a fresh `supabase start` in CI, so a read asserted before anything had been logged
+  // would have passed identically against `using (true)` or against no policy at all. That is the
+  // same shape as the four cache assertions that sat green for a deploy against a grant that had
+  // never been revoked.
+  //
+  // The log records both figures, because "raised to 200" is half an answer: from 150 is a decision
+  // and from 5 is an incident. The starting cap is read rather than written as a literal — it is a
+  // column default nobody here owns.
   const capBefore = Number((await admin.from('project').select('monthly_cap_usd').eq('id', PROJECT_A).single()).data?.monthly_cap_usd);
-  nothing('admin_action: a member reading the audit log', await a.from('admin_action').select('*'));
-  refused('admin_action: a member writing an entry', await a.from('admin_action').insert({ action: 'set_project_cap', subject_project_id: PROJECT_A, new_value: 999 }).select());
-  denied('admin_set_project_cap: a member raising their own project cap', await rpc(a, 'admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: 999 }));
-  denied('admin_set_max_members: a member raising their own member limit', await rpc(a, 'admin_set_max_members', { p_project_id: PROJECT_A, p_max: 99 }));
-
-  is('the cap did not move', Number((await admin.from('project').select('monthly_cap_usd').eq('id', PROJECT_A).single()).data?.monthly_cap_usd), capBefore);
-
-  // And the log records the change when the change is allowed, with both figures — "raised to 200"
-  // is half an answer, because from 150 is a decision and from 5 is an incident. The starting cap is
-  // read rather than written as a literal: it is a column default nobody here owns.
   allowed('admin_set_project_cap: the server raising a cap', await rpc(admin, 'admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: capBefore + 1 }));
   const logged = (await admin.from('admin_action').select('action, previous_value, new_value').eq('subject_project_id', PROJECT_A).order('id', { ascending: false }).limit(1)).data?.[0];
   is('the audit log recorded what changed', [logged?.action, Number(logged?.previous_value), Number(logged?.new_value)], ['set_project_cap', capBefore, capBefore + 1]);
+
+  // ...and now that there is provably a row in it, what a member can see of it. Not their own rows,
+  // as `api_usage` would give them: nothing. What the log answers is which admin did this, and
+  // showing that to the person whose cap moved would make it a notification.
+  nothing('admin_action: a member reading the audit log, which is not empty', await a.from('admin_action').select('*'));
+  refused('admin_action: a member writing an entry', await a.from('admin_action').insert({ action: 'set_project_cap', subject_project_id: PROJECT_A, new_value: 999 }).select());
+  denied('admin_set_project_cap: a member raising their own project cap', await rpc(a, 'admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: 999 }));
+  denied('admin_set_max_members: a member raising their own member limit', await rpc(a, 'admin_set_max_members', { p_project_id: PROJECT_A, p_max: 99 }));
+  is('the cap did not move', Number((await admin.from('project').select('monthly_cap_usd').eq('id', PROJECT_A).single()).data?.monthly_cap_usd), capBefore + 1);
+  is('and the member wrote no entry', (await admin.from('admin_action').select('id').eq('new_value', 999)).data?.length, 0);
+
   // A cap named on a project that does not exist used to report success and change nothing, which
   // an audit row would then have recorded as a change that happened.
   denied('admin_set_project_cap: a project that is not there', await rpc(admin, 'admin_set_project_cap', { p_project_id: '00000000-0000-4000-b000-0000000000ff', p_cap: 12 }));

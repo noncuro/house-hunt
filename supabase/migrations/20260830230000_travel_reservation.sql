@@ -95,8 +95,11 @@ begin
   -- the person, because that is what the cap is per; released with the transaction.
   perform pg_advisory_xact_lock(hashtextextended('rm:travel:' || p_user_id::text, 0));
 
-  -- A claim whose request died is given up on rather than left holding capacity for ever. Deleted
-  -- rather than merely ignored so the table does not grow a row per crash.
+  -- A claim whose request died is given up on rather than left holding capacity for ever. This
+  -- person's only: the delete runs under this person's lock, and sweeping the whole table from
+  -- under it would have two callers taking row locks on each other's rows in an order neither
+  -- controls. A crashed row for somebody who never comes back therefore sits there until their
+  -- account goes, which costs a row and no capacity.
   delete from public.travel_claim c
    where c.user_id = p_user_id
      and c.claimed_at < now() - p_stale_after;
@@ -120,56 +123,51 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------------------------
--- Give the reservation back, and record what was actually spent.
+-- Give the reservation back, and record what was spent.
 --
--- Takes an array because a station ask claims one call at a time — a walk can only be asked for
--- once the station has been placed, so its capacity cannot be claimed before the placing call has
--- returned — and settling them one round trip each would put a database call between every pair of
--- TfL calls.
+-- `p_made` is the calls that left for TfL. Anything reserved and not spent is released by the
+-- delete, which is what stops a cache-heavy page load from being billed for the calls it saved.
 --
--- `p_made` is the honest number: the calls that left for TfL. Anything reserved and not spent is
--- released by the delete, which is what stops a cache-heavy page load from being billed for the
--- calls it saved.
+-- THE LEDGER IS WRITTEN FIRST, AND FROM THE ARGUMENTS. Whose the calls were is a fact the caller
+-- holds; it does not depend on the reservation row still being there. A batch that outran
+-- `p_stale_after` has had its claim swept, and reading the attribution back off the row would then
+-- leave real TfL calls out of `api_usage` — which is what `travel_calls_since` counts, so the next
+-- minute's cap would be computed off a short number and the admin console would under-report. The
+-- swept claim is reported through the return value rather than raised on: the calls are already
+-- made and the answer is already correct.
 -- ---------------------------------------------------------------------------------------------
 
-create or replace function public.release_travel_calls(p_reservations bigint[], p_made int)
-returns void
+create or replace function public.release_travel_calls(
+  p_reservation bigint,
+  p_user_id     uuid,
+  p_project_id  uuid,
+  p_made        int
+)
+returns boolean
 language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_user    uuid;
-  v_project uuid;
+  v_released int;
 begin
   if not public.is_service_role() then
     raise exception 'release_travel_calls: reservations are released by the travel function, not by clients';
   end if;
-  if p_reservations is null or array_length(p_reservations, 1) is null then
-    raise exception 'release_travel_calls: nothing to release';
+  if p_user_id is null then
+    raise exception 'release_travel_calls: a release must name the person the calls are charged to';
   end if;
   if p_made is null or p_made < 0 then
     raise exception 'release_travel_calls: % is not a number of calls made', p_made;
   end if;
 
-  with gone as (
-    delete from public.travel_claim c where c.id = any(p_reservations)
-    returning c.user_id, c.project_id
-  )
-  select g.user_id, g.project_id into v_user, v_project from gone g limit 1;
-
-  if p_made = 0 then
-    return;
-  end if;
-  -- The calls happened and there is nothing left saying whose they were, which means the claim went
-  -- stale mid-flight: the request outran `p_stale_after`. Said out loud rather than recorded against
-  -- a guess, because an unattributed call is exactly the thing the ledger exists to not have.
-  if v_user is null then
-    raise exception 'release_travel_calls: reservation is gone — % TfL calls cannot be attributed', p_made;
+  if p_made > 0 then
+    perform public.record_api_usage(p_project_id, p_user_id, 'tfl', p_made, 0, 0, null, 'travel');
   end if;
 
-  perform public.record_api_usage(
-    v_project, v_user, 'tfl', p_made, 0, 0, null, 'travel');
+  delete from public.travel_claim c where c.id = p_reservation;
+  get diagnostics v_released = row_count;
+  return v_released > 0;
 end;
 $$;
 
@@ -182,7 +180,7 @@ declare f text;
 begin
   foreach f in array array[
     'public.claim_travel_calls(uuid, uuid, int, int, interval, interval)',
-    'public.release_travel_calls(bigint[], int)'
+    'public.release_travel_calls(bigint, uuid, uuid, int)'
   ] loop
     execute format('revoke execute on function %s from public, anon, authenticated', f);
     execute format('grant execute on function %s to service_role', f);

@@ -351,16 +351,24 @@ export const NO_ROUTE_RETRY_DAYS = 30;
  *
  *  The old cap was 600 an hour, justified as "roughly forty listings an hour with five places and
  *  three modes each, which is more than anybody browsing does". That stopped being true when Places
- *  became one screen over the whole pile: opening the table asks for every flat at once, so fifty
- *  flats with five places and three modes is 750 legs in one legitimate page load. The person who
- *  did nothing wrong then spent the *rest of the hour* refused, which is the failure — an hour-long
- *  window turns one honest burst into an hour of a broken-looking app.
+ *  became one screen over the whole pile: opening the table asks for every flat at once. The person
+ *  who did nothing wrong then spent the *rest of the hour* refused — an hour-long window turns one
+ *  burst into an hour of a broken-looking app.
  *
- *  What the cap protects is TfL, and TfL's own limit is per minute (500 keyed, 50
- *  unkeyed), so a per-minute window is the one that measures the thing being protected. 300 sits
- *  under the keyed allowance with room for the backfill alongside, absorbs any single page load
- *  whole, and still stops a loop dead: a runaway caller is refused within seconds and recovers a
- *  minute later rather than an hour later.
+ *  What the cap protects is TfL, and TfL's own limit is per minute (500 keyed, 50 unkeyed), so a
+ *  per-minute window is the one that measures the thing being protected. 300 sits under the keyed
+ *  allowance with room for the backfill alongside, and still stops a loop dead: a runaway caller is
+ *  refused within seconds and recovers a minute later rather than an hour later.
+ *
+ *  **300 does not absorb a cold Places table, and no longer pretends to.** Fifty flats with five
+ *  places and three modes is 750 legs; every one of them uncached is 750 calls, and the reservation
+ *  in `claim_travel_calls` is what makes that arithmetic bind rather than being outrun by fifty
+ *  requests reading the same pre-write count. So the first load of a large hunt with an empty cache
+ *  is now partly refused inside the minute and finishes on a retry, where before it made every call
+ *  and refused the *next* minute instead. That is the limit doing what its message has always said.
+ *  The scheduled backfill — exempt, it runs as `service_role` — is what keeps that pile small enough
+ *  that the case is rare, and raising this number is the wrong answer to seeing it: 300 is chosen
+ *  against TfL's 500, not against our page.
  *
  *  `MAX_TFL_CONCURRENCY` in the travel function is what keeps a burst from arriving all at once;
  *  this is what bounds the total. The two are not substitutes and neither implies the other. */

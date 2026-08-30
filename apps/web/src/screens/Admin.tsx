@@ -755,10 +755,6 @@ function Invites({ query, onNotice }: { query: Loadable<Invite[]>; onNotice: (me
 }
 
 // ------------------------------------------------------------------------------------------------
-// The charges themselves.
-// ------------------------------------------------------------------------------------------------
-
-// ------------------------------------------------------------------------------------------------
 // What admins have changed.
 //
 // Being an admin is a row in a table, and until now raising a cap or a member ceiling left no mark:
@@ -769,6 +765,9 @@ function Invites({ query, onNotice }: { query: Loadable<Invite[]>; onNotice: (me
 // Written by the same functions that perform the change and readable by admins alone — a member sees
 // an empty list, because RLS returns them nothing rather than their own rows.
 // ------------------------------------------------------------------------------------------------
+
+/** Nothing was charged here, so `named`'s own wording about spend would be about the wrong thing. */
+const GONE_SINCE = 'Deleted since this change — the record of it is kept either way';
 
 const CHANGE_WORD: Record<AdminAction['action'], string> = {
   set_user_cap: 'personal cap',
@@ -823,14 +822,14 @@ function Changes({
                       the server
                     </span>
                   ) : (
-                    named(row.actorId, userName)
+                    named(row.actorId, userName, GONE_SINCE)
                   )}
                 </td>
                 <td>{CHANGE_WORD[row.action]}</td>
                 <td>
                   {row.subjectUserId !== null
-                    ? named(row.subjectUserId, userName)
-                    : named(row.subjectProjectId, projectName)}
+                    ? named(row.subjectUserId, userName, GONE_SINCE)
+                    : named(row.subjectProjectId, projectName, GONE_SINCE)}
                 </td>
                 {/* A cap set on a row that had none is a first figure rather than a rise, and a dash
                     is what to draw where there is no number. */}
@@ -850,6 +849,10 @@ function Changes({
 function figure(action: AdminAction['action'], value: number): string {
   return action === 'set_max_members' ? String(value) : money(value);
 }
+
+// ------------------------------------------------------------------------------------------------
+// The charges themselves.
+// ------------------------------------------------------------------------------------------------
 
 function Charges({
   query,
@@ -1036,10 +1039,14 @@ function clock(iso: string): string {
  *  is simply not in the list is something else — a list still loading, or a row RLS did not return
  *  — and calling that "deleted" would invent a fact. Both are absences and they are not the same
  *  absence. */
-function named(id: string | null, names: Map<string, string>): ReactNode {
+function named(
+  id: string | null,
+  names: Map<string, string>,
+  deletedTitle = 'Deleted since this was charged — the spend is kept either way',
+): ReactNode {
   if (id === null) {
     return (
-      <span className="dim" title="Deleted since this was charged — the spend is kept either way">
+      <span className="dim" title={deletedTitle}>
         deleted
       </span>
     );
