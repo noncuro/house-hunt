@@ -199,7 +199,9 @@ export function Triage({
         notify(
           result.status === 'trained'
             ? `Rescored on ${result.nExamples} verdicts — ${Math.round(result.metrics.cvAuc * 100)}% cross-validated AUC.`
-            : `Not enough to learn from yet — rate at least ${result.minPerClass} exciting and ${result.minPerClass} rejected (${result.positives} exciting so far).`,
+            : result.status === 'superseded'
+              ? 'Verdicts changed while rescoring, so that run was not kept — press it again.'
+              : `Not enough to learn from yet — rate at least ${result.minPerClass} exciting and ${result.minPerClass} rejected (${result.positives} exciting so far).`,
         ),
       onError: (error) => notify(`Couldn't rerun — ${(error as Error).message}`),
     });

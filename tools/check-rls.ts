@@ -511,6 +511,11 @@ async function main() {
   // nothing detecting it. The `travel` Edge Function makes the calls now and holds the only grant.
   denied('cache_travel: a member writing a journey time', await rpc(a, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'walking', p_seconds: 1200, p_basis: 'anytime' }));
   denied('cache_travel: ...even a plausible one to a place they can see', await rpc(a, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'transit', p_seconds: 2400, p_changes: 1, p_basis: 'weekday 09:00' }));
+  // The model's writers and the revision they compare against: service role only. A member who
+  // could call set_project_model could post hand-written weights every surface then trusts.
+  denied('project_training_revision: a member reading the training revision', await rpc(a, 'project_training_revision', { p_project_id: PROJECT_A }));
+  denied('set_project_model: a member writing a model', await rpc(a, 'set_project_model', { p_project_id: PROJECT_A, p_model: {}, p_version: 1, p_label_mode: 'love-vs-no', p_n_examples: 1 }));
+  denied('clear_project_model: a member deleting a model', await rpc(a, 'clear_project_model', { p_project_id: PROJECT_A }));
   denied('cache_station_point: a member moving a station', await rpc(a, 'cache_station_point', { p_name: 'RLS Check Station', p_lat: 51.5, p_lon: -0.1, p_lines: ['northern'] }));
   denied('cache_station_walk: a member writing a walk', await rpc(a, 'cache_station_walk', { p_postcode: 'RLS 1AA', p_station_name: 'RLS Check Station', p_seconds: 400 }));
 
