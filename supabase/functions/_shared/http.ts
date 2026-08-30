@@ -54,10 +54,7 @@ export function requireEnv(values: Record<string, string | undefined>): void {
  *  whole app and was refused by every function it called, so the flats still loaded — supabase-js
  *  talks to PostgREST directly and is not governed by this — while every travel time spun for ever
  *  and adding a flat failed. That reads as a slow app rather than a broken one, which is the exact
- *  shape of failure this codebase refuses elsewhere.
- *
- *  Blank entries are dropped, so a trailing comma is not an origin and an unset variable allows
- *  nothing rather than allowing the empty string. */
+ *  shape of failure this codebase refuses elsewhere. */
 const WEB_APP_ORIGINS = (Deno.env.get('WEB_APP_ORIGIN') ?? '')
   .split(',')
   .map((origin) => origin.trim())

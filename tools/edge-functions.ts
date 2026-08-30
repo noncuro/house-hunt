@@ -49,17 +49,26 @@ function grantedOrigins(envFile: string): string[] {
     .filter((origin) => origin !== '');
 }
 
-async function allowedOriginFor(supabaseUrl: string, origin: string): Promise<string | null> {
-  const response = await fetch(`${supabaseUrl}/functions/v1/travel`, {
-    method: 'OPTIONS',
-    headers: {
-      Origin: origin,
-      'Access-Control-Request-Method': 'POST',
-      'Access-Control-Request-Headers': SDK_HEADERS.join(', '),
-    },
-    signal: AbortSignal.timeout(3_000),
-  });
-  return response.headers.get('access-control-allow-origin');
+/** Never throws. A probe that times out or refuses is a *result* here, not an exception: thrown,
+ *  it would escape `startFunctions` without reaching `stopTree`, and the functions server we spawned
+ *  would keep the container for the next run to trip over — which is the failure `tools/servers.ts`
+ *  exists to prevent, arriving through the check written to prevent a different one. Returned, it
+ *  fails the comparison below like any other wrong answer and is reported with the rest. */
+async function allowedOriginFor(supabaseUrl: string, origin: string): Promise<string> {
+  try {
+    const response = await fetch(`${supabaseUrl}/functions/v1/travel`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: origin,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': SDK_HEADERS.join(', '),
+      },
+      signal: AbortSignal.timeout(3_000),
+    });
+    return response.headers.get('access-control-allow-origin') ?? '(no allow-origin header)';
+  } catch (e) {
+    return `(no reply: ${e instanceof Error ? e.message : String(e)})`;
+  }
 }
 
 /** Collected and reported together: told one at a time, a list that is wrong in two places takes
