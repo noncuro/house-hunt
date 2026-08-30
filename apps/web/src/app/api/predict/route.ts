@@ -118,7 +118,9 @@ function inputOf(p: PropertyRow, a: AnalysisRow | undefined): PredictInput {
 
 type Result =
   | { status: 'trained'; labelMode: LabelMode; nExamples: number; metrics: unknown }
-  | { status: 'insufficient'; nExamples: number; positives: number; minPerClass: number };
+  | { status: 'insufficient'; nExamples: number; positives: number; minPerClass: number }
+  // The verdicts moved while this was fitting, so the write was refused — see the revision below.
+  | { status: 'superseded' };
 
 export const POST = authedRoute(async (request, caller): Promise<Result> => {
   const projectId = await requireActiveProject(caller);
@@ -127,6 +129,13 @@ export const POST = authedRoute(async (request, caller): Promise<Result> => {
   if (labelMode !== 'love-vs-no' && labelMode !== 'lovemaybe-vs-no') {
     throw new HttpError(400, 'bad-request', `${labelMode} is not a label mode`);
   }
+
+  // Read *before* the training rows, and handed back with the write: `set_project_model` refuses a
+  // model whose revision is no longer the project's, so a slower retrain fitted on older verdicts
+  // cannot land over a newer one. Reading it first rather than after means a verdict that changes
+  // between this line and the read below is caught too — the write sees the newer revision and
+  // says so, and the fit is redone rather than trusted. Issue #88.
+  const revision = await rpc<string>('project_training_revision', { p_project_id: projectId });
 
   // The project's verdicts, minus the flats it has withheld from training (off the market, etc.).
   // Ordered because PostgREST promises no order without one, and everything downstream of this read
@@ -168,7 +177,8 @@ export const POST = authedRoute(async (request, caller): Promise<Result> => {
 
   if (ids.length === 0) {
     // Nothing left to learn from, so nothing may keep claiming to have learned. See the clear below.
-    await rpc('clear_project_model', { p_project_id: projectId });
+    const cleared = await rpc<boolean>('clear_project_model', { p_project_id: projectId, p_revision: revision });
+    if (!cleared) return { status: 'superseded' };
     return { status: 'insufficient', nExamples: 0, positives: 0, minPerClass: MIN_PER_CLASS };
   }
 
@@ -199,19 +209,22 @@ export const POST = authedRoute(async (request, caller): Promise<Result> => {
     // `insufficient` while leaving the row would let every surface go on scoring against weights
     // fitted to verdicts that have since been excluded or re-rated — and the retrain meant to catch
     // that would be the very call that reported success at changing nothing.
-    await rpc('clear_project_model', { p_project_id: projectId });
+    const cleared = await rpc<boolean>('clear_project_model', { p_project_id: projectId, p_revision: revision });
+    if (!cleared) return { status: 'superseded' };
     const positives = examples.filter((e) => e.label === 1).length;
     return { status: 'insufficient', nExamples: examples.length, positives, minPerClass: MIN_PER_CLASS };
   }
 
-  await rpc('set_project_model', {
+  const written = await rpc<boolean>('set_project_model', {
     p_project_id: projectId,
     p_model: model,
     p_version: model.version,
     p_label_mode: labelMode,
     p_n_examples: examples.length,
     p_trained_by: caller.userId,
+    p_revision: revision,
   });
+  if (!written) return { status: 'superseded' };
 
   return { status: 'trained', labelMode, nExamples: examples.length, metrics: model.metrics };
 });

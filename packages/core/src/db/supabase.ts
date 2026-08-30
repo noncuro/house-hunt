@@ -619,7 +619,10 @@ export async function getProjectModel(): Promise<StoredModel | null> {
  *  verdicts. Mirrors the `predict` function's response so a refusal is a sentence, not a 500. */
 export type RetrainResult =
   | { status: 'trained'; labelMode: LabelMode; nExamples: number; metrics: ModelMetrics }
-  | { status: 'insufficient'; nExamples: number; positives: number; minPerClass: number };
+  | { status: 'insufficient'; nExamples: number; positives: number; minPerClass: number }
+  /** The verdicts changed while the fit ran and the write was refused rather than let an older
+   *  model land over a newer one. Nothing is wrong; run it again. */
+  | { status: 'superseded' };
 
 export async function retrainModel(labelMode?: LabelMode): Promise<RetrainResult> {
   await requireSession();
