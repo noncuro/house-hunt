@@ -1,14 +1,14 @@
 {
-  "version": "0.5.1",
+  "version": "0.5.2",
   "files": {
-    "apps/extension/package.json": "493af148a39d64d030873b60af479a9f5f05d2923d6af71e0d45d4b68039a30a",
+    "apps/extension/package.json": "c2e068a059e5700a47e9cfacd59a344eef9f6d085a81c8e05a8d096de570904a",
     "apps/extension/public/icon/128.png": "4cc10de2d8a0d3434361911b368afed44613def5bfab2efaf7e3bb0ab05dca95",
     "apps/extension/public/icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "apps/extension/public/icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
     "apps/extension/public/icon/48.png": "024a0e6ecf9b4aa36acf9468b400d6eabf030e59d24c29c3a4594f0bfe213343",
     "apps/extension/src/components/Panel.tsx": "5d2d97af7b88fe1206fa768b834dc43484d29c3e148cb4a1fdad1d3b02eabbaa",
     "apps/extension/src/components/panel.css": "6c89de0bb9c65e857cdf1e43a2ada06b2ff8745e41f26439980dbe6e314f2b11",
-    "apps/extension/src/entrypoints/background.ts": "014f84c9bcf86bbb2efa1f936ea95ae7d2839f1a9a5c4428760add928e112ffe",
+    "apps/extension/src/entrypoints/background.ts": "c80f30f5f3b8aaa261bcbe4272b7cc06997ff85bede6fb8e82884b7301293dff",
     "apps/extension/src/entrypoints/bridge.content.ts": "0e89e33e174875c2b6f12c64192061bba8d530ca5eafa01deb969fe7bee5ce0a",
     "apps/extension/src/entrypoints/page-model.content.ts": "021c2fb71e4f3a7c51b0c80923f337f7abafc81a9ca39eebf9dbf1a710a83061",
     "apps/extension/src/entrypoints/panel.content/index.tsx": "4f7f4fe9664bb43ee79bbe8edfc7b0e8887f782944e1898f7f617c3b46db76c9",
@@ -50,7 +50,7 @@
     "packages/core/src/recheck.ts": "4c58377aa2b17ce4ecd807eb66f94a97fa026e9829301f9c511e9f19679ef1a6",
     "packages/core/src/search-card.ts": "95b76d7635021eb683a5a33f2c77933dba287177a5b962a4e696516f4a4c3612",
     "packages/core/src/shortlist.ts": "745addf8b32294386d84d8f9eb0f0464db333c32a6d0e4f2a620571dc05e36c7",
-    "packages/core/src/stage.ts": "a3f52b96247cd1b1f99fa20f1a0cfbc6e30bb7dab088f0a3f1fbf2c01aefc83e",
+    "packages/core/src/stage.ts": "f70e0c89f0798a8d46c0c6d9663c0a1a0a46e35c39703614da0df6d5ddcbb295",
     "packages/core/src/sweep.ts": "e7ea3814da9b85f5bee414bb0a00af80cc8f148f1d858886ad71e473c9cedd37",
     "packages/core/src/tfl.ts": "b17083920d5b505ae0e67fa6e56113f85d6bf1b82baee64893b0741f170fd342",
     "packages/core/src/types.ts": "3a67053c623b605c434d629ac40d1242ab7604501b289c261cfaa96d34c8d0ab",
@@ -101,19 +101,19 @@
     "tsconfig.base.json": "9342b7b7cce5a4f7aeb9515d8d9ba33a9ce5efe8ce7b41545252cb4d852a223e"
   },
   "contents": {
-    "background.js": "342c6386a4e29012977186fed4e47cdb7a14d79160ac3312eed90e4d37af3fc5",
-    "content-scripts/bridge.js": "75542b112082c435e7233a7a45aab20efa28b3247e98e404c8cf403f7fe96d8b",
-    "content-scripts/page-model.js": "3b7d9f8d0deea41e18de61d898fe95cad74dd74d891f67e5c640813a7be7d5de",
+    "background.js": "a572121e5fea44476d44448135d7554342407f76ebf9a9741994aedac7fa07cc",
+    "content-scripts/bridge.js": "6b4b9858ab0959c9ad6247b8ab9000402b13164a3ffa39b9fc6ce14293ed384f",
+    "content-scripts/page-model.js": "a96843e8d4a1428c0482fe0fe99f5904db47befb23789fad83bcad8163fda386",
     "content-scripts/panel.css": "1548e94362c6f18fa9db34661ae320656a8af5a2701de4eb85cdff9ce65d4535",
-    "content-scripts/panel.js": "8b5c79ff18cfc645dd820bebcdf1637187653c6591708d0648a29201aad5f0dd",
+    "content-scripts/panel.js": "c427a66de6c4567f730beaf09de92811eebe1e1dcb81ac37785e6079814dcaac",
     "content-scripts/search.css": "64cb74020ade89d5093313918deab97d70f75a33f5c70c0702e791162b105366",
-    "content-scripts/search.js": "ff74fbf48dd0f92062fddcad19e882378270066f768128b7593d8e17d151703d",
+    "content-scripts/search.js": "cd1ad5e7b7aa53e311c1f70e19f6ae584817f301def62b1e3dfea4c00b85fd3f",
     "content-scripts/sweep.css": "802e1cb700867a8552ad6ee7245f01c8fcf9d2d031c9a78ad88d88d3b7ed05fb",
-    "content-scripts/sweep.js": "8edda2580ccc016cb8687f1040d74cb1988418ffb4f217cf4feb7d1e09e6a12f",
+    "content-scripts/sweep.js": "a7ef3f0c946d7260ba2697e276a7da98b070ae2de14df41c378d23378d0f974a",
     "icon/128.png": "4cc10de2d8a0d3434361911b368afed44613def5bfab2efaf7e3bb0ab05dca95",
     "icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
     "icon/48.png": "024a0e6ecf9b4aa36acf9468b400d6eabf030e59d24c29c3a4594f0bfe213343",
-    "manifest.json": "44765df2cca23cf7ffee0938b76ba39dd6ad392dee013d7c87614ed5d5224bce"
+    "manifest.json": "cce211c95636d4fdbfdcb0233c431bceace8a291c7831e0a7d099f21904abd3b"
   }
 }
