@@ -21,7 +21,7 @@ const SQM_TO_SQFT = 10.7639;
 
 /** The id in a Rightmove listing URL, or null if that is not what this is.
  *
- *  Pure, and exported, because it is the gate on the server: `functions/listing` will fetch
+ *  Pure, and exported, because it is the gate on the server: `app/api/listing` will fetch
  *  whatever URL it is handed, so "is this a Rightmove listing" has to be answered before the fetch
  *  rather than by looking at what came back. A host check that accepted anything *containing*
  *  `rightmove.co.uk` would accept `rightmove.co.uk.example.com`, which is the whole trick — so the

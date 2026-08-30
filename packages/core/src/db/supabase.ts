@@ -23,6 +23,7 @@
  */
 import { db, ensureSession } from './client';
 import { accessToken, requireSession } from './session';
+import { callRoute } from './route';
 import { MIN_PASSWORD_LENGTH } from '../contracts';
 import { rightmoveListingId } from '../listing';
 import { logWarn } from '../log';
@@ -406,7 +407,7 @@ export async function recordProperty(listing: Listing): Promise<boolean> {
 /** Add a flat from a URL somebody pasted, shared or typed.
  *
  *  The extension's route into the shortlist is a content script reading the page you are standing
- *  on. This is the other route, and it is what the phone has: the `listing` Edge Function fetches
+ *  on. This is the other route, and it is what the phone has: the `listing` route fetches
  *  that one page and decodes it with the same code, and what comes back is recorded here exactly as
  *  the extension records its own. There is no second way into `property` — both end at
  *  `record_property`.
@@ -442,13 +443,15 @@ export async function addListingByUrl(url: string): Promise<AddListingResult> {
     };
   }
 
-  const { data, error } = await db().functions.invoke('listing', {
-    body: { url },
-    headers: await functionHeaders(),
-  });
-  if (error) return { status: 'failed', message: await refusalFrom(error, 'could not read that listing') };
+  // The website's own route rather than an Edge Function; `docs/vercel-migration.md` says why.
+  // A refusal comes back as a thrown sentence, which is the one the reader is shown.
+  let reply: any;
+  try {
+    reply = await callRoute<any>('listing', { url });
+  } catch (e) {
+    return { status: 'failed', message: e instanceof Error ? e.message : 'could not read that listing' };
+  }
 
-  const reply = data as any;
   if (reply?.status === 'rate-limited') {
     return {
       status: 'rate-limited',
@@ -661,37 +664,9 @@ export async function retrainModel(labelMode?: LabelMode): Promise<RetrainResult
   await requireSession();
 
   // A route on the website rather than an Edge Function; `docs/vercel-migration.md` says why the fit
-  // could not stay on the Edge runtime.
-  //
-  // Relative, so it follows whichever origin the page is served from — production, a Vercel preview,
-  // or localhost — rather than becoming a fourth copy of that URL to keep in step. Which is also why
-  // the extension cannot call this: a relative fetch from the background worker resolves against
-  // `chrome-extension://` and would 404 with a body that parses as nothing. Nothing does today —
-  // "Rerun ratings" is a website button — and this refuses rather than leaving that 404 for whoever
-  // tries it next. Moving it back within reach of the extension means giving it an absolute origin,
-  // deliberately, not deleting this check.
-  const origin = globalThis.location?.origin ?? '';
-  if (!/^https?:/.test(origin)) {
-    throw new Error(
-      `retraining runs on the website and cannot be reached from ${origin || 'here'} — open the app to rerun ratings`,
-    );
-  }
-
-  const response = await fetch('/api/predict', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await functionHeaders()) },
-    body: JSON.stringify(labelMode ? { labelMode } : {}),
-  });
-  // Same convention the Edge Functions answered on, and for the same reason: a refusal carries a
-  // sentence in `error`, and losing it turns something somebody can act on into "it broke".
-  const payload = (await response.json().catch(() => null)) as
-    | (RetrainResult & { error?: string })
-    | null;
-  if (!response.ok) {
-    throw new Error(payload?.error || `could not retrain the model (${response.status})`);
-  }
-  if (!payload) throw new Error('the retrain returned nothing readable');
-  return payload as RetrainResult;
+  // could not stay on the Edge runtime. `callRoute` holds the relative URL, the bearer, and the
+  // refusal that makes this unreachable from the extension — see its header for the whole argument.
+  return await callRoute<RetrainResult>('predict', labelMode ? { labelMode } : {});
 }
 
 /** The flats this project has withheld from training — off the market, usually. Returned as a list

@@ -132,7 +132,8 @@ script in your own browser. So:
 | web `lib/persist.ts` + `public/sw.js` | The offline half: the hunt in IndexedDB, the shell/build/photographs in the Cache API |
 | web `public/manifest.webmanifest` | What makes it installable, and the share target Rightmove shares into. Icons are drawn by `pnpm icons` |
 | `packages/core/` | Facts, hubs, listing extraction, stage (the funnel), sweep, travel, analysis, db, bridge contract |
-| `supabase/functions/` | `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `listing` (one listing page, read server-side), `invite`, `resolve-location`, `password` |
+| web `app/api/` | The routes that hold the service role: `predict` (fit the verdict-score model), `listing` (one listing page, read server-side). Every one is `authedRoute` or a stated `publicRoute`, and `pnpm check:routes` is what holds that |
+| `supabase/functions/` | What has not moved yet (`docs/vercel-migration.md`): `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `invite`, `resolve-location`, `password` |
 
 ## Decisions an agent might otherwise "fix"
 
@@ -194,10 +195,10 @@ script in your own browser. So:
   the menu item, the first-run step and the Install screen all ask it; `useExtension` and the
   sign-out bridge skip their deadlines rather than waiting out a reply that cannot come. The rule
   that follows is the one to keep: a new capability that only the panel can reach has cut the phone
-  out of the product, and adding a flat was exactly that until the `listing` function existed.
+  out of the product, and adding a flat was exactly that until the `listing` route existed.
 
 - **Adding a flat by address is a server-side read of one page, and the no-crawl rule is not
-  relaxed for it.** `functions/listing` fetches a single listing, for the person who has just pasted
+  relaxed for it.** `app/api/listing` fetches a single listing, for the person who has just pasted
   or shared that exact address, rate-limited per user, and rebuilds the URL from an id so nothing a
   caller sends can steer it elsewhere. It decodes with `packages/core/src/listing.ts` — the same
   module the content script uses, which is why that module moved out of the extension: one page
