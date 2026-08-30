@@ -162,10 +162,6 @@ the pull request that widened the window.
 
 ## Wanted, not yet built
 
-- **Customisable search criteria** (bedrooms, price, property type, radius, Let Agreed) — phase 7
-  of the multi-tenant change. The danger is written down there: changing a hub's criteria **must**
-  reset its sweep progress, because `last_swept_at` means "we have seen everything this search
-  returns up to here" and that sentence is about a specific search.
 - **A landing page**, for distribution. Deferred deliberately.
 - Promote `inviteState`/`inviteIsLive` out of `Project.tsx` into `src/components/`. `Admin.tsx`
   renders invites too, and one-fact-one-renderer says they should not each decide what "expired"

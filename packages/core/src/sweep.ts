@@ -51,7 +51,8 @@ export interface SweepWindowChoice {
  *  the right answer anyway: the first sweep of a hub is about catching the current market, and
  *  a full back-catalogue is what the shortlist is for.
  *
- *  `lastSweptAt` comes from `hub_sweep` and from nowhere else. It briefly sat on `project_hub` as
+ *  `lastSweptAt` comes from `hub_sweep`, through `lastSweptFor`, and from nowhere else — the row's
+ *  date is only a date for the search it was stamped with. It briefly sat on `project_hub` as
  *  well and `20260809290000_record_property_link.sql` dropped that copy: two homes for one fact is
  *  how they come to disagree, and a disagreement here means narrowing the next window past
  *  listings nobody looked at. `hub_sweep` keeps it because that is where the rule about what may
@@ -205,6 +206,53 @@ export function criteriaFromUrl(href: string): { criteria: SweepCriteria; ignore
     criteria[key] = value;
   }
   return { criteria, ignored: [...new Set(ignored)] };
+}
+
+/** What a sweep's progress is progress *on*: the filters it ran with, in a form two sets of them
+ *  can be compared by.
+ *
+ *  `hub_sweep.last_swept_at` means "we have seen everything this search returns up to here", and
+ *  that sentence is about one search. Raise the rent ceiling and a flat listed three months ago,
+ *  outside the old ceiling, is one nobody has looked at — but it is older than `last_swept_at`, so
+ *  the next window stepped straight over it, permanently, with the panel reporting the page fully
+ *  recorded. It fired on exactly the action that means somebody is trying harder (#80).
+ *
+ *  So a sweep is stamped with what it searched for, and `lastSweptFor` treats a stamp for a
+ *  different search as no sweep at all — which `sweepWindow` reads as the widest window. A stamp
+ *  on the row rather than a reset when the criteria are saved, because a reset is a second write
+ *  that every device able to save criteria has to remember to make and can fail at on its own; the
+ *  stamp is self-describing and is read by whatever is about to sweep.
+ *
+ *  It is the *parsed* criteria, not the pasted string: re-pasting the same search must not throw a
+ *  fortnight of progress away over a reordered query string. Keys are sorted, and the parameters a
+ *  sweep owns (`SWEEP_OWNS`) and the ones that only say "lettings" (`RENTAL_SEARCH`) are left out —
+ *  which is what lets the stamp be taken from the search page actually recorded, radius and window
+ *  and all, and still equal the saved criteria `sweepSearchUrl` built that page from.
+ *
+ *  Narrowing resets too. A narrower search's progress would be sound to keep, but telling a
+ *  narrowing from a widening across a dozen parameters this app does not model is a guess, and the
+ *  cost of guessing wrong is the silent skip this exists to end. The cost of not guessing is one
+ *  wide sweep. */
+export function criteriaFingerprint(criteria: SweepCriteria | null | undefined): string {
+  if (!criteria) return '';
+  const entries = Object.entries(criteria)
+    .filter(([key, value]) => !SWEEP_OWNS.has(key) && !(key in RENTAL_SEARCH) && value !== '')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return new URLSearchParams(entries).toString();
+}
+
+/** When this place was last swept completely *for what the hunt is searching for now* — the only
+ *  `lastSweptAt` that may narrow a window. See `criteriaFingerprint` for why a sweep of a different
+ *  search is no sweep, and `sweepWindow` for what null then does.
+ *
+ *  A row with no stamp is a sweep from before sweeps were stamped, of a search nobody can name any
+ *  more. The reading that cannot drop listings is "never", at the price of one wide pass. */
+export function lastSweptFor(
+  sweep: { lastSweptAt: string | null; criteriaFingerprint: string | null } | null | undefined,
+  criteria: SweepCriteria | null | undefined,
+): string | null {
+  if (!sweep || sweep.criteriaFingerprint === null) return null;
+  return sweep.criteriaFingerprint === criteriaFingerprint(criteria) ? sweep.lastSweptAt : null;
 }
 
 export interface CriteriaSummary {

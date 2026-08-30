@@ -45,7 +45,7 @@ import { locatePostcode, locatePostcodes } from './travel';
 import { MODEL_VERSION, type LabelMode, type Model, type ModelMetrics } from '../predict';
 import type { PricePoint } from '../recheck';
 import type { SearchCard } from '../search-card';
-import { missingFor, sweepProgress } from '../sweep';
+import { criteriaFingerprint, missingFor, sweepProgress, type SweepCriteria } from '../sweep';
 import { type StationInfo } from '../tfl';
 import type { ArchiveReason, PropertyStage, Stage } from '../stage';
 import { toSleepingSeparation } from '../types';
@@ -1435,6 +1435,10 @@ export interface HubSweep {
    *  `sweepWindow` already reads null as "use the widest window", which is the answer that cannot
    *  drop listings on the floor. */
   lastSweptAt: string | null;
+  /** What that sweep searched for (`criteriaFingerprint`), or null for one recorded before sweeps
+   *  were stamped. Read `lastSweptAt` through `lastSweptFor`, never directly: a complete pass of a
+   *  different search dates nothing. */
+  criteriaFingerprint: string | null;
   lastResultCount: number | null;
   lastWindowDays: number | null;
   locationIdentifier: string | null;
@@ -1455,7 +1459,7 @@ export interface HubSweep {
 // `check:rls` (which asks about the boundary, not about embeds), and the failure arrives as a
 // toast rather than an exception, so the page looks like it is working.
 const SWEEP_COLUMNS =
-  'hub, place_id, last_swept_at, last_result_count, last_window_days, location_identifier, pages_total, pages_seen, place!hub_sweep_place_id_fkey(label)';
+  'hub, place_id, last_swept_at, criteria_fingerprint, last_result_count, last_window_days, location_identifier, pages_total, pages_seen, place!hub_sweep_place_id_fkey(label)';
 
 function toHubSweep(r: any): HubSweep {
   const place = Array.isArray(r.place) ? r.place[0] : r.place;
@@ -1466,6 +1470,7 @@ function toHubSweep(r: any): HubSweep {
     hub: place?.label ?? r.hub ?? '',
     placeId: r.place_id ?? null,
     lastSweptAt: r.last_swept_at,
+    criteriaFingerprint: r.criteria_fingerprint ?? null,
     lastResultCount: r.last_result_count,
     lastWindowDays: r.last_window_days,
     locationIdentifier: r.location_identifier,
@@ -1521,7 +1526,17 @@ async function placeIdFor(projectId: string, hub: string, placeId?: string): Pro
  *  Nothing narrows a window on the strength of a partial pass. */
 export async function recordSweepPage(
   hub: string,
-  details: { page: number; totalPages: number; resultCount: number; windowDays: number; locationIdentifier: string },
+  details: {
+    page: number;
+    totalPages: number;
+    resultCount: number;
+    windowDays: number;
+    locationIdentifier: string;
+    /** The filters the page was actually served with, off its own URL — not the saved settings,
+     *  which may have changed since the tab was opened. `criteriaFingerprint` says why a sweep has
+     *  to know what it was a sweep of. */
+    criteria: SweepCriteria;
+  },
   placeId?: string,
 ): Promise<HubSweep | null> {
   const projectId = await activeProjectId();
@@ -1529,7 +1544,7 @@ export async function recordSweepPage(
 
   const { data: existing, error: readError } = await db()
     .from('hub_sweep')
-    .select('pages_total, pages_seen, last_swept_at')
+    .select('pages_total, pages_seen, last_swept_at, criteria_fingerprint')
     .eq('place_id', id)
     .maybeSingle();
   fail('reading this hub\'s sweep progress', readError);
@@ -1542,7 +1557,11 @@ export async function recordSweepPage(
     details.totalPages,
   );
 
+  // The date and the stamp move together, on a complete pass only. A partial pass of a new search
+  // leaves both as the last complete pass wrote them, so the row keeps saying which search its date
+  // is a date for.
   const sweptAt = complete ? new Date().toISOString() : (existing?.last_swept_at ?? null);
+  const sweptFor = complete ? criteriaFingerprint(details.criteria) : (existing?.criteria_fingerprint ?? null);
   const row = {
     place_id: id,
     // The name this search was filed under. Kept beside the id rather than derived from it, so a
@@ -1552,6 +1571,7 @@ export async function recordSweepPage(
     // Only a complete pass sets the mark. A partial one leaves whatever the last complete sweep
     // wrote — usually null — so the next window stays as wide as it needs to be.
     last_swept_at: sweptAt,
+    criteria_fingerprint: sweptFor,
     last_result_count: details.resultCount,
     last_window_days: details.windowDays,
     location_identifier: details.locationIdentifier,

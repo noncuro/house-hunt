@@ -8,6 +8,7 @@
  */
 import { RECORD_TIMEOUT_MS, runFullSweep, type FullSweepDeps } from '../apps/web/src/lib/full-sweep';
 import type { Place } from '../packages/core/src/types';
+import { criteriaFingerprint, criteriaFromUrl } from '../packages/core/src/sweep';
 import type { HubSweep, PendingSighting, ShortlistEntry } from '../packages/core/src/db/supabase';
 
 let failures = 0;
@@ -75,6 +76,7 @@ function fakeWorld({
             hub: placeId,
             placeId,
             lastSweptAt: null,
+            criteriaFingerprint: criteriaFingerprint(criteriaFromUrl(url)!.criteria),
             lastResultCount: null,
             lastWindowDays: null,
             locationIdentifier: null,
@@ -132,6 +134,41 @@ async function main() {
     check('sort is newest first on every page', world.opened.every((u) => new URL(u).searchParams.get('sortType') === '6'));
   }
 
+  console.log('\nthe window is dated by a sweep of this search, not of any search');
+  {
+    // The bug (#80): a place swept to the end an hour ago, and the rent ceiling raised since. Every
+    // flat the change let in is older than that sweep, so a run that dates its window by it never
+    // opens a page they are on — and reports the place done.
+    const sweptFor = async (fingerprint: string) => {
+      const world = fakeWorld({ pagesPerHub: { a: 1 } });
+      world.seed({
+        hub: 'a',
+        placeId: 'a',
+        lastSweptAt: new Date(world.deps.now().getTime() - 3600_000).toISOString(),
+        criteriaFingerprint: fingerprint,
+        lastResultCount: null,
+        lastWindowDays: null,
+        locationIdentifier: null,
+        pagesTotal: 1,
+        pagesSeen: [1],
+      });
+      await runFullSweep({
+        hubs: [place('a', 'Angel')],
+        criteria: CRITERIA,
+        intervalMs: 1000,
+        signal: new AbortController().signal,
+        onProgress: noop,
+        deps: world.deps,
+      });
+      return new URL(world.opened[0]!).searchParams.get('maxDaysSinceAdded');
+    };
+    check('swept an hour ago for this search: a one-day window', (await sweptFor(criteriaFingerprint(CRITERIA))) === '1');
+    check(
+      'swept an hour ago for a lower ceiling: the widest window, as if never swept',
+      (await sweptFor(criteriaFingerprint({ ...CRITERIA, maxPrice: '2500' }))) === '14',
+    );
+  }
+
   console.log('\nwaiting for the record');
   {
     // Page 1 lands three sleeps after it opens. The run must not open page 2 until it has.
@@ -169,6 +206,7 @@ async function main() {
       hub: 'a',
       placeId: 'a',
       lastSweptAt: null,
+      criteriaFingerprint: null,
       lastResultCount: null,
       lastWindowDays: null,
       locationIdentifier: null,

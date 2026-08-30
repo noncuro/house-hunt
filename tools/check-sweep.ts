@@ -16,6 +16,9 @@ import type { Place } from '../packages/core/src/types';
 import { readSearchPage, staleAgainst, type SearchPage } from '../apps/extension/src/lib/search-page';
 import {
   RENTAL_SEARCH,
+  criteriaFingerprint,
+  criteriaFromUrl,
+  lastSweptFor,
   RESULTS_PER_PAGE,
   SWEEP_MARGIN_HOURS,
   describeCriteria,
@@ -554,6 +557,58 @@ check(
 // The three that only say "this is a lettings search" are nobody's choice, so they are neither
 // described nor listed as somebody's extra filter.
 check('what makes it a rental search is not a filter', describeCriteria(RENTAL_SEARCH), { supported: [], other: [] });
+
+console.log('criteriaFingerprint — what a sweep is a sweep of');
+// The failure this pins (#80): a place swept to the end an hour ago under one rent ceiling, and the
+// ceiling then raised. Every flat the change let in is older than that sweep, so a window dated by
+// it steps over all of them, for ever, with nothing on screen looking wrong. The only correct
+// window for the new search is the widest one — the answer for a place never swept.
+const sweptAnHourAgo = { lastSweptAt: ago(1), criteriaFingerprint: criteriaFingerprint(CRITERIA) };
+check(
+  'a complete sweep of the same search dates the next window',
+  sweepWindow(lastSweptFor(sweptAnHourAgo, CRITERIA), NOW).days,
+  1,
+);
+check(
+  'raising the rent ceiling makes that sweep no sweep at all',
+  sweepWindow(lastSweptFor(sweptAnHourAgo, { ...CRITERIA, maxPrice: '7000' }), NOW).days,
+  WIDEST_WINDOW,
+);
+check(
+  'and says never swept rather than inventing an elapsed time',
+  sweepWindow(lastSweptFor(sweptAnHourAgo, { ...CRITERIA, maxPrice: '7000' }), NOW).elapsedDays,
+  null,
+);
+// Narrowing resets too — deliberately, not by accident. See the note on `criteriaFingerprint`.
+check(
+  'narrowing resets as well, on purpose',
+  lastSweptFor(sweptAnHourAgo, { ...CRITERIA, maxBedrooms: '2' }),
+  null,
+);
+check('a row stamped before stamps existed is never swept', lastSweptFor({ lastSweptAt: ago(1), criteriaFingerprint: null }, CRITERIA), null);
+check('no row is never swept', lastSweptFor(null, CRITERIA), null);
+check('an incomplete sweep of the same search has no date either', lastSweptFor({ lastSweptAt: null, criteriaFingerprint: criteriaFingerprint(CRITERIA) }, CRITERIA), null);
+
+// The other half of the requirement: progress must survive a save that changes nothing. It is the
+// parsed criteria that are compared, so the same search pasted back from Rightmove — parameters in
+// a different order, the address bar's radius and location along for the ride — is the same search.
+const rePasted = criteriaFromUrl(
+  'https://www.rightmove.co.uk/property-to-rent/find.html?maxBedrooms=3&_includeLetAgreed=on&locationIdentifier=STATION%5E4187&radius=0.5&maxPrice=6000&minBedrooms=1&minPrice=4000&maxDaysSinceAdded=3&sortType=6&index=24',
+)!.criteria;
+check('the same search re-pasted in another order keeps its progress', lastSweptFor(sweptAnHourAgo, rePasted), ago(1));
+check('the radius is per place and not part of the search', criteriaFingerprint({ ...CRITERIA, radius: '0.25' }), criteriaFingerprint(CRITERIA));
+check('nor is the window', criteriaFingerprint({ ...CRITERIA, maxDaysSinceAdded: '1' }), criteriaFingerprint(CRITERIA));
+check('nor what makes it a lettings search', criteriaFingerprint({ ...RENTAL_SEARCH, ...CRITERIA }), criteriaFingerprint(CRITERIA));
+check('an empty value is no filter', criteriaFingerprint({ ...CRITERIA, furnishTypes: '' }), criteriaFingerprint(CRITERIA));
+// The stamp is taken off the search page actually recorded, so it has to come back equal to the
+// saved criteria that page was built from — window, radius, location and pager included.
+check(
+  'the page a sweep opens fingerprints as the criteria it was built from',
+  criteriaFingerprint(criteriaFromUrl(sweepSearchUrl({ hub: hampstead, days: 3, page: 2, criteria: CRITERIA })!)!.criteria),
+  criteriaFingerprint(CRITERIA),
+);
+check('no criteria is an empty stamp, not a crash', criteriaFingerprint(null), '');
+check('and a fingerprint is readable in psql', criteriaFingerprint(CRITERIA), '_includeLetAgreed=on&maxBedrooms=3&maxPrice=6000&minBedrooms=1&minPrice=4000');
 
 console.log('rightmoveSearchStart');
 check(
