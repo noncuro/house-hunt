@@ -229,18 +229,36 @@ function floorArea(property: Record<string, unknown>): FloorArea | null {
   return fromProse === null ? null : { sqft: fromProse, source: 'description' };
 }
 
+/** The range a floor area can be. Anything outside it is a typo or a placeholder, not a flat, and
+ *  both sources are held to it: the prose parser always was, and the structured `sizings` were not
+ *  until listing 92113695 reached the database as 1 sq ft — a stated figure, drawn as fact, that the
+ *  size filter then excluded on and the verdict-score model priced at a thousand times the going
+ *  rate per square foot. A stated size that small is refused rather than stored (#90). */
+const MIN_SQFT = 100;
+const MAX_SQFT = 100_000;
+
+function plausibleSqft(sqft: number): boolean {
+  return sqft >= MIN_SQFT && sqft <= MAX_SQFT;
+}
+
 function sizings(v: unknown): number | null {
   if (!Array.isArray(v)) return null;
   let sqm: number | null = null;
   for (const raw of v) {
     const s = obj(raw);
-    // Rightmove publishes a min and a max; they're equal for a stated size, and where they
-    // differ the minimum is the honest number.
-    const size = num(s?.minimumSize) ?? num(s?.maximumSize);
     const unit = str(s?.unit)?.toLowerCase();
-    if (size === null || size <= 0) continue;
+    if (unit !== 'sqft' && unit !== 'sqm') continue;
+    const toSqft = unit === 'sqft' ? 1 : SQM_TO_SQFT;
+    // Rightmove publishes a min and a max; they're equal for a stated size, and where they differ
+    // the minimum is the honest number — unless it is not a number at all. A minimum of 1 beside a
+    // real maximum is a field somebody had to fill in, so the maximum is taken instead, and where
+    // neither is a plausible flat the entry is skipped and the prose gets its turn.
+    const size = [num(s?.minimumSize), num(s?.maximumSize)].find(
+      (n): n is number => n !== null && plausibleSqft(Math.round(n * toSqft)),
+    );
+    if (size === undefined) continue;
     if (unit === 'sqft') return Math.round(size);
-    if (unit === 'sqm') sqm = size;
+    sqm = size;
   }
   return sqm === null ? null : Math.round(sqm * SQM_TO_SQFT);
 }
@@ -290,6 +308,31 @@ const CONTEXT = 60;
  *  chooses everywhere — "a size that is confidently wrong is worse than no size at all". */
 const SENTENCE_BREAK = /[.;!?]\s+(?=[A-Z])/;
 
+/** The one exception to the capital: a sentence that starts on the number itself. "Garden. 1,200 sq
+ *  ft of internal accommodation" is a stated total after a full stop, and the capital rule keeps the
+ *  garden in reach of it and drops it (#65). Admitting a digit into `SENTENCE_BREAK` would break
+ *  "1,200 sq. ft. garden" for the reason given above, so this is not a break at all: the leading
+ *  window still holds the garden, and the number is let through only when the text after it names
+ *  it as the whole flat. "Rear garden. 800 sq ft." stays vetoed — a bare number after "Garden." is
+ *  as likely the garden in an agent's shorthand as anything else. */
+const STARTS_A_SENTENCE = /[.;!?]\s+$/;
+
+/** Where the sentence ends, asked looking *forward* from a number — a different question from the
+ *  one `SENTENCE_BREAK` answers, and it has to be, because the two err in opposite directions.
+ *
+ *  `SENTENCE_BREAK` bounds the windows that decide whether a noun disqualifies a number. Failing to
+ *  break there keeps the noun in reach and drops the number, so under-breaking is the safe side, and
+ *  the capital is what keeps "1,200 sq. ft. garden" from breaking at its own abbreviation.
+ *
+ *  This one bounds the naming phrase that can overrule such a noun. Failing to break here lets the
+ *  *next* sentence's name admit this sentence's garden — "Rear garden. 1,500 sq ft. 900 sq ft of
+ *  internal accommodation." handed back the garden, and 1,500 of it — so over-breaking is the safe
+ *  side, and a digit ends a sentence as surely as a capital does. Where it breaks too eagerly the
+ *  number is merely dropped, which is the direction this file chooses everywhere.
+ *
+ *  They cannot be one expression: each is the other's unsafe side. */
+const NAME_ENDS = /[.;!?]\s+(?=[A-Z0-9])/;
+
 /** Pull "1,234 sq ft" / "115 sqm" / "115 m2" out of prose.
  *
  *  Prefers a match that names itself as the whole flat ("extending to 1,258 sq ft", "gross
@@ -312,8 +355,7 @@ export function parseAreaFromText(html: string): number | null {
     if (!Number.isFinite(value) || value <= 0) continue;
     const metric = /m/i.test(m[2]!) && !/f/i.test(m[2]!);
     const sqft = Math.round(metric ? value * SQM_TO_SQFT : value);
-    // Anything outside this range is a typo, not a floor area.
-    if (sqft < 100 || sqft > 100_000) continue;
+    if (!plausibleSqft(sqft)) continue;
 
     const at = m.index ?? 0;
     const end = at + m[0]!.length;
@@ -322,8 +364,20 @@ export function parseAreaFromText(html: string): number | null {
     // *next* sentence is a different number's business — see `SENTENCE_BREAK`.
     const before = text.slice(Math.max(0, at - ADJACENT), at).split(SENTENCE_BREAK).at(-1)!;
     const after = text.slice(end, end + ADJACENT).split(SENTENCE_BREAK)[0]!;
-    if (NOT_THE_FLAT.test(before + m[0]! + after)) continue;
+    // The name that can overrule a noun behind a full stop is read to the end of this sentence and
+    // no further: read past the stop and "Rear garden. 1,500 sq ft. Total floor area 900 sq ft."
+    // licenses the garden with the next sentence's total and hands back 1,500 as the flat. It is
+    // `NAME_ENDS` rather than `SENTENCE_BREAK` because the sentence that follows this one starts on
+    // a number as often as not — that is the shape the escape hatch exists for.
+    const namedAfter = THE_WHOLE_FLAT.test(text.slice(end, end + CONTEXT).split(NAME_ENDS)[0]!);
+    if (NOT_THE_FLAT.test(m[0]! + after)) continue;
+    if (NOT_THE_FLAT.test(before) && !(STARTS_A_SENTENCE.test(before) && namedAfter)) continue;
 
+    // Deliberately wider than the windows above, and deliberately unbounded by the sentence: this
+    // only decides whether a number that has already survived the veto is a stated total, and
+    // `named` keeps the largest, so naming one too eagerly cannot promote a number over a bigger
+    // stated total. The windows above decide whether a number is admitted at all, which is where
+    // reading into the next sentence does damage.
     if (THE_WHOLE_FLAT.test(text.slice(Math.max(0, at - CONTEXT), end + CONTEXT))) {
       // Several stated totals should agree; if they don't, the larger is the whole property.
       if (named === null || sqft > named) named = sqft;

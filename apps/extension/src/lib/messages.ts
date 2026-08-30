@@ -6,7 +6,7 @@
  *  extension bought. What is left here is what a script running inside somebody else's page
  *  needs, and it stays typed end to end because that is the part of this design that works. */
 import type {
-  HuntPreferences, Point, SearchCard } from '@house-hunt/core';
+  HuntPreferences, Point, SearchCard, SweepCriteria } from '@house-hunt/core';
 import type { HubSweep, PendingSighting, StoredModel, SweepKnowledge } from '@house-hunt/core/db';
 import type {
   AnalysisRequest,
@@ -168,6 +168,9 @@ export type Request =
         resultCount: number;
         windowDays: number;
         locationIdentifier: string;
+        /** The filters this page was served with, read off the tab's own URL. A sweep's progress
+         *  is progress on one search — see `criteriaFingerprint`. */
+        criteria: SweepCriteria;
       };
     }
   | { type: 'sweep:hubs' }
