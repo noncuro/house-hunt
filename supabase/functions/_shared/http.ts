@@ -46,14 +46,26 @@ export function requireEnv(values: Record<string, string | undefined>): void {
  *  Anything else gets `null`, which is a refusal the browser enforces. Note this is a convenience
  *  rather than a control: CORS stops a *page* on another origin from reading the reply, and the
  *  thing actually gating these functions is `requireCaller` (design D10). */
-const WEB_APP_ORIGIN = Deno.env.get('WEB_APP_ORIGIN');
+/** Plural, comma-separated, because the site answers on more than one name and every one of them
+ *  is the real site: a custom domain, plus the `vercel.app` URL Vercel keeps alongside it and which
+ *  the extension is built against.
+ *
+ *  It was singular, and the consequence was invisible in the worst way. The custom domain served the
+ *  whole app and was refused by every function it called, so the flats still loaded — supabase-js
+ *  talks to PostgREST directly and is not governed by this — while every travel time spun for ever
+ *  and adding a flat failed. That reads as a slow app rather than a broken one, which is the exact
+ *  shape of failure this codebase refuses elsewhere. */
+const WEB_APP_ORIGINS = (Deno.env.get('WEB_APP_ORIGIN') ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin !== '');
 
 export function cors(origin: string | null): Record<string, string> {
   const allowed =
     origin &&
     (origin.startsWith('chrome-extension://') ||
       origin === 'https://www.rightmove.co.uk' ||
-      (WEB_APP_ORIGIN !== undefined && origin === WEB_APP_ORIGIN))
+      WEB_APP_ORIGINS.includes(origin))
       ? origin
       : 'null';
   return {
