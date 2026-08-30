@@ -61,3 +61,9 @@
 .rm-dim {
   color: var(--faint);
 }
+
+/* The word saying the miles are a straight line, a shade quieter than the number it qualifies —
+   it is there to stop the mile being read as the walk's own distance, not to be read every time. */
+.rm-direct {
+  color: var(--fainter);
+}

@@ -68,7 +68,11 @@ export function Stations({
           <div className="rm-line" key={s.name}>
             <span className="rm-station">
               {s.name.replace(/\s+Station$/, '')}
-              <LineDots lines={info?.lines ?? []} />
+              {/* TfL's answer plus whatever the name's own brackets declared. Union, never replace:
+                  a merge of "(Northern)" and "(Bakerloo)" must show both, and TfL's lookup can
+                  legitimately return only half the lines when its index holds two entries under
+                  one name — see `dedupeStations`. */}
+              <LineDots lines={[...new Set([...(info?.lines ?? []), ...s.lines])]} />
             </span>
             <span className="rm-value rm-modes">
               {/* The walk is the number that decides anything; the miles are context beside it. */}
@@ -77,7 +81,15 @@ export function Stations({
                   <ModeIcon mode="walking" size={12} /> {formatDuration(info.seconds)}
                 </span>
               )}
-              <span className="rm-dim">{stationDistance(s.distance, s.unit)}</span>
+              {/* The minutes are our routed walk; the miles are Rightmove's straight line, rounded
+                  to a tenth — so the pair disagrees whenever the walk is not straight, which in
+                  London is always. One word attached to the number, rather than a caption under
+                  the block: the qualifier travels with the figure, costs nothing on a phone, and
+                  a sentence repeated on every listing is a price paid hundreds of times for a
+                  confusion resolved once. See #43. */}
+              <span className="rm-dim">
+                {stationDistance(s.distance, s.unit)} <span className="rm-direct">direct</span>
+              </span>
             </span>
           </div>
         );
