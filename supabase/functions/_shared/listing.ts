@@ -314,6 +314,22 @@ const SENTENCE_BREAK = /[.;!?]\s+(?=[A-Z])/;
  *  as likely the garden in an agent's shorthand as anything else. */
 const STARTS_A_SENTENCE = /[.;!?]\s+$/;
 
+/** Where the sentence ends, asked looking *forward* from a number — a different question from the
+ *  one `SENTENCE_BREAK` answers, and it has to be, because the two err in opposite directions.
+ *
+ *  `SENTENCE_BREAK` bounds the windows that decide whether a noun disqualifies a number. Failing to
+ *  break there keeps the noun in reach and drops the number, so under-breaking is the safe side, and
+ *  the capital is what keeps "1,200 sq. ft. garden" from breaking at its own abbreviation.
+ *
+ *  This one bounds the naming phrase that can overrule such a noun. Failing to break here lets the
+ *  *next* sentence's name admit this sentence's garden — "Rear garden. 1,500 sq ft. 900 sq ft of
+ *  internal accommodation." handed back the garden, and 1,500 of it — so over-breaking is the safe
+ *  side, and a digit ends a sentence as surely as a capital does. Where it breaks too eagerly the
+ *  number is merely dropped, which is the direction this file chooses everywhere.
+ *
+ *  They cannot be one expression: each is the other's unsafe side. */
+const NAME_ENDS = /[.;!?]\s+(?=[A-Z0-9])/;
+
 /** Pull "1,234 sq ft" / "115 sqm" / "115 m2" out of prose.
  *
  *  Prefers a match that names itself as the whole flat ("extending to 1,258 sq ft", "gross
@@ -346,10 +362,11 @@ export function parseAreaFromText(html: string): number | null {
     const before = text.slice(Math.max(0, at - ADJACENT), at).split(SENTENCE_BREAK).at(-1)!;
     const after = text.slice(end, end + ADJACENT).split(SENTENCE_BREAK)[0]!;
     // The name that can overrule a noun behind a full stop is read to the end of this sentence and
-    // no further, for the same reason `after` is: read past the stop and "Rear garden. 1,500 sq ft.
-    // Total floor area 900 sq ft." licenses the garden with the next sentence's total and hands
-    // back 1,500 as the flat.
-    const namedAfter = THE_WHOLE_FLAT.test(text.slice(end, end + CONTEXT).split(SENTENCE_BREAK)[0]!);
+    // no further: read past the stop and "Rear garden. 1,500 sq ft. Total floor area 900 sq ft."
+    // licenses the garden with the next sentence's total and hands back 1,500 as the flat. It is
+    // `NAME_ENDS` rather than `SENTENCE_BREAK` because the sentence that follows this one starts on
+    // a number as often as not — that is the shape the escape hatch exists for.
+    const namedAfter = THE_WHOLE_FLAT.test(text.slice(end, end + CONTEXT).split(NAME_ENDS)[0]!);
     if (NOT_THE_FLAT.test(m[0]! + after)) continue;
     if (NOT_THE_FLAT.test(before) && !(STARTS_A_SENTENCE.test(before) && namedAfter)) continue;
 

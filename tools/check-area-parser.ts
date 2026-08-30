@@ -38,6 +38,13 @@ const cases: Array<[string, number | null]> = [
   // garden handed back as the flat all over again — with a bigger number than the real one.
   ['Rear garden. 1,500 sq ft. Total floor area 900 sq ft.', 900],
   ['Total floor area 900 sq ft. Rear garden. 1,500 sq ft.', 900],
+  // And the sentence the name is read to has to end on a number too, which is the whole premise of
+  // this shape: the sentence after "Rear garden. 1,500 sq ft." begins on 900, so a break needing a
+  // capital never fires and the garden borrows the next sentence's name. Same defect as the two
+  // lines above, spelled the way the listings that need the escape hatch actually spell it.
+  ['Rear garden. 1,500 sq ft. 900 sq ft of internal accommodation.', 900],
+  ['Rear garden. 1,500 sq. ft. 900 sq ft of internal accommodation.', 900],
+  ['900 sq ft of internal accommodation. Rear garden. 1,500 sq ft.', 900],
   // Nothing names itself, so the largest that isn't obviously something else still wins.
   ['Two floors, 640 sq ft and 500 sq ft', 640],
   // Descriptions list room-by-room sizes; the total is what we want, so we take the largest.
