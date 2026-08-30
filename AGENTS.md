@@ -92,17 +92,9 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   which is the message they had just acted on. `pnpm package` still works and is what to run if you
   want the zip now; `pnpm check:zip` says when it is behind — a failure on your own machine, where
   running `pnpm package` is the answer, and a note in CI, where `package.yml` is already doing it.
-
-  It used to be fatal on main too, reasoning that nothing else was coming. Something is:
-  `package.yml` triggers on the same push and repairs it concurrently, and its commit is pushed with
-  `GITHUB_TOKEN`, which by design triggers no workflow — so `check` failed on every extension merge
-  and was never re-run on the corrected tree. Main was red from #113 to #116 for that and nothing
-  else, which is how a check that is right about a fact can be worth less than no check: three
-  merges of real work all reported failing, so the next red one would have been read as normal.
-
-  The other three things `check:zip` asserts — the three version strings agree, the archive holds
-  every file its own manifest names, the stamp is of this archive — are fatal everywhere, and a
-  forgotten bump is still nothing a repackage fixes.
+  Its other three assertions are fatal everywhere: the three version strings agree, the archive
+  holds every file its own manifest names, the stamp is of this archive. A forgotten bump is still
+  nothing a repackage fixes. Why the stale half is a note in CI is on the code (`tools/check-zip.ts`).
 - **Rightmove's own mark may be used on the buttons that go to Rightmove**, and nowhere else. It
   labels an outbound link with the thing it opens, which is what a trademark is for, and it is the
   owner's decision on the owner's product. What stays forbidden is unchanged and is a different

@@ -19,31 +19,17 @@ import { EXPECTED_EXTENSION_VERSION } from '../apps/web/src/lib/extension-versio
 import { ROOT, STAMP, ZIP, hashOf, stampNow, type Stamp } from './package-stamp';
 import { checkArchiveIsComplete } from './manifest-paths';
 
-// A stale archive is fatal on your own machine and a note in CI. It used to be a note on a pull
-// request and fatal everywhere else, and "everywhere else" included the one place it could not be
-// acted on.
+// A stale archive is fatal on your own machine, a note in CI. It was the other way round, on the
+// reasoning that "on main there is nothing else coming" — but `package.yml` triggers on the same
+// push and repairs the archive concurrently, and its commit is pushed with `GITHUB_TOKEN`, which by
+// design triggers no workflow, so `check` never re-runs on the corrected tree. Main was red from
+// #113 to #116 on that alone. Locally the reasoning holds: nothing is coming, `pnpm package` is the
+// answer, and the person reading it can run it.
 //
-// The reasoning it replaces was "locally and on main it is a real failure: there is nothing else
-// coming". On main something is coming. `package.yml` triggers on the same push and the two
-// workflows run concurrently, so `check` reads the archive as it stood before the merge and fails
-// on drift that is being repaired while it reads. Nothing then supersedes that result either: the
-// repackage commit is pushed with the default `GITHUB_TOKEN`, and GitHub does not trigger workflows
-// for those by design, so `check` is never re-run on the corrected tree. Main sat red from #113 to
-// #116 for that alone — three merges of real work all reporting failure, which is worse than no
-// check at all, because the next red one would have been read as normal.
-//
-// Locally it stays fatal because there the sentence is true: nothing is coming, `pnpm package` is
-// the answer, and the person reading it is the one who can run it.
-//
-// It is not re-armed for the packaging job, and that is not a gap. That job runs this immediately
-// after `pnpm package`, which has just written the stamp from the sources in the tree — so drift
-// there is unreachable unless `pnpm package` is itself broken, in which case the build, the zip and
-// the stamp steps have already failed. The three assertions that step is actually for — the
-// versions agree, the archive holds every file its own manifest names, the stamp is of this
-// archive — are untouched and fatal everywhere, including there.
-//
-// What no longer has a CI check is "the zip on main is a build of main" in the case where
-// `package.yml` did not run at all, which its `paths:` filter decides. See #120.
+// The packaging job is not re-armed because drift is unreachable there — it runs this straight
+// after `pnpm package` has written the stamp from the tree. What has no CI check now is "the zip on
+// main is a build of main" when `package.yml` did not run at all, which its `paths:` filter
+// decides: #120.
 const advisory = Boolean(process.env.GITHUB_ACTIONS);
 
 let failures = 0;
