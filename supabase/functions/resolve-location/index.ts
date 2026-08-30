@@ -229,16 +229,22 @@ function centreOf(geometry: Geometry): { lat: number; lon: number } | null {
   if (!Array.isArray(ring) || ring.length === 0) return null;
   let lat = 0;
   let lon = 0;
+  let counted = 0;
   for (const vertex of ring) {
     const point = pointFrom(vertex);
-    // One unreadable vertex means no centre, rather than a centre computed as if it were at
-    // [0, 0]. That default dragged the answer towards the Atlantic in proportion to how much of
-    // the ring was missing — a wrong centre, which is what this whole value exists to catch.
-    if (point === null) return null;
+    // An unreadable vertex is skipped, not counted, and not treated as [0, 0]. All three choices
+    // were wrong once. Reading it as the origin dragged the centre towards the Atlantic in
+    // proportion to how much of the ring was missing. Abandoning the whole polygon looked safer
+    // and was worse: no centre means `milesApart` is null, which is the branch `resolve` takes to
+    // mean "nothing to check against" — so a single bad vertex would have waved the identifier
+    // through without the distance check this function exists to feed. Dropping the vertex moves
+    // the mean of a hundred-point ring by nothing worth measuring.
+    if (point === null) continue;
     lat += point.lat;
     lon += point.lon;
+    counted += 1;
   }
-  return { lat: lat / ring.length, lon: lon / ring.length };
+  return counted === 0 ? null : { lat: lat / counted, lon: lon / counted };
 }
 
 /** GeoJSON writes a coordinate `[lon, lat]`, the reverse of every other pair in this codebase.
