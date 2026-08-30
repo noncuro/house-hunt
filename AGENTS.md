@@ -225,6 +225,12 @@ growth past a handful of invited members; when that changes, re-read them all), 
   phase notes a big change needs — then delete them in the same PR. `openspec/` was that and
   outlived its change by months, becoming a backlog nobody read. What outlives a PR is code, an
   issue, or an entry in `design.md`.
+
+  **This departs from the hub convention** (`~/hub/conventions/openspec.md`), which keeps a
+  persistent `openspec/` per project as the durable record of what and why. Here that record is
+  `design.md` — numbered decisions the code cites by number — and the backlog is issues. Two
+  shipped `openspec/` change folders sat for months restating decisions the code had moved past,
+  and the code cited them by numbers that collided across the two.
 - Cite issue numbers in the code that owns a gap, as `travel_backfill.sql` and `smoke-search.ts` do.
 
 `product.md` is why-we-chose, beside this file's how-it-is-built.
