@@ -199,6 +199,12 @@ export function toListing(property: Record<string, unknown>, url: string): Listi
     // down. Read `archived` directly; a missing status object stays null (unknown) rather than
     // false, so we never tell the panel a flat is definitely still on when we could not check.
     archived: bool(obj(property.status)?.archived),
+    // The one field here that is not read off the page, and the only place it can honestly be
+    // taken: this runs where the page model is decoded — at document_end in the content script,
+    // or inside the `listing` function's fetch — so a tab restored from yesterday stamps
+    // yesterday. Taken at the write instead it would say "now" for every reading including the
+    // stale one, which is exactly why `written_at` could never tell two readings apart.
+    observedAt: new Date().toISOString(),
   };
 }
 

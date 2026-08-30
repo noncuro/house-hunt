@@ -340,6 +340,75 @@ export function nextWeekdayMorning(now = new Date()): { date: string; time: stri
  *  geocoder did not know last month it now knows. So they expire, and positives do not. */
 export const NO_ROUTE_RETRY_DAYS = 30;
 
+// ------------------------------------------------------------------------------------------------
+// What one person may spend of TfL's goodwill, and how much a single ask can cost.
+//
+// The key is ours rather than the caller's, so a caller who opens two hundred listings is spending
+// our quota. The `travel` function is the only thing that enforces this, but the numbers live here
+// with the rest of the travel policy — beside `TRAVEL_BASIS` and `NO_ROUTE_RETRY_DAYS` — because a
+// limit nothing can import is a limit nothing can check, and the two functions below are the ones
+// that say what an ask will cost *before* it is dispatched.
+// ------------------------------------------------------------------------------------------------
+
+/** Per minute rather than per hour, which is a change of shape and not only of number.
+ *
+ *  The old cap was 600 an hour, justified as "roughly forty listings an hour with five places and
+ *  three modes each, which is more than anybody browsing does". That stopped being true when Places
+ *  became one screen over the whole pile: opening the table asks for every flat at once. The person
+ *  who did nothing wrong then spent the *rest of the hour* refused — an hour-long window turns one
+ *  burst into an hour of a broken-looking app.
+ *
+ *  What the cap protects is TfL, and TfL's own limit is per minute (500 keyed, 50 unkeyed), so a
+ *  per-minute window is the one that measures the thing being protected. 300 sits under the keyed
+ *  allowance with room for the backfill alongside, and still stops a loop dead: a runaway caller is
+ *  refused within seconds and recovers a minute later rather than an hour later.
+ *
+ *  **300 does not absorb a cold Places table, and no longer pretends to.** Fifty flats with five
+ *  places and three modes is 750 legs; every one of them uncached is 750 calls, and the reservation
+ *  in `claim_travel_calls` is what makes that arithmetic bind rather than being outrun by fifty
+ *  requests reading the same pre-write count. So the first load of a large hunt with an empty cache
+ *  is now partly refused inside the minute and finishes on a retry, where before it made every call
+ *  and refused the *next* minute instead. That is the limit doing what its message has always said.
+ *  The scheduled backfill — exempt, it runs as `service_role` — is what keeps that pile small enough
+ *  that the case is rare, and raising this number is the wrong answer to seeing it: 300 is chosen
+ *  against TfL's 500, not against our page.
+ *
+ *  `MAX_TFL_CONCURRENCY` in the travel function is what keeps a burst from arriving all at once;
+ *  this is what bounds the total. The two are not substitutes and neither implies the other. */
+export const TRAVEL_CALLS_PER_MINUTE = 300;
+
+export const TRAVEL_RATE_WINDOW_SECONDS = 60;
+
+/** What a journey ask can cost: every destination-and-mode pair the cache cannot already answer.
+ *
+ *  Counted before anything is dispatched, because that is the only moment at which a limit can
+ *  refuse a batch. The old guard checked the minute's usage once, before the body was even parsed,
+ *  and nothing downstream bounded what the body asked for — so one request naming 301 destinations
+ *  was 301 calls made by a request that had just been told it was inside a 300-call allowance. */
+export function journeyCallsNeeded(
+  destinations: ReadonlyArray<{ postcode: string }>,
+  modes: readonly TravelMode[],
+  answered: (destPostcode: string, mode: TravelMode) => boolean,
+): number {
+  let needed = 0;
+  for (const destination of destinations) {
+    for (const mode of modes) if (!answered(destination.postcode, mode)) needed++;
+  }
+  return needed;
+}
+
+/** What a station ask can cost: placing each station, and measuring the walk to each one we have
+ *  not measured. 151 names is up to 302 calls.
+ *
+ *  An upper bound rather than an exact figure. The walks are known in bulk before anything is
+ *  dispatched, but a station's coordinates are read one name at a time as each walk is resolved, so
+ *  a station already in the point cache is reserved for here and released unspent. Over-reserving is
+ *  the safe direction: the reservation is given back, whereas under-reserving is the hole this is
+ *  here to close. */
+export function stationCallsNeeded(names: readonly string[], measuredWalks: ReadonlySet<string>): number {
+  return names.length + names.filter((name) => !measuredWalks.has(name)).length;
+}
+
 /** What a settled no-route row says when it recorded nothing about what settled it.
  *
  *  Every row written before the `reason` column exists like this — 96% of them, when the column

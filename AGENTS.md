@@ -142,6 +142,18 @@ script in your own browser. So:
   project, not a client argument. RLS is `to authenticated` everywhere; `anon` holds nothing.
   Shared fact tables are written only through `SECURITY DEFINER` functions; `DELETE` is
   `service_role` only.
+- **A shared fact is shared, but the list of them is not.** `property`, `property_analysis`,
+  `station_point`, `station_walk`, `travel_time` and `property_price` hold facts about a listing
+  rather than about a hunt, which is what makes a flat analysed once across the platform instead of
+  once per project. They were also `select ... using (true)`, so any member of any hunt could list
+  the whole `property` table and read every address every other household had opened. The policies
+  ask `listing_is_mine` / `postcode_is_mine` now (`20260830190000`): a row is readable once a project
+  you are in has opened the listing it is about, which is the predicate every read here already
+  carried in its own query. Two consequences worth knowing before "fixing" something: a new read
+  path that forgets to join `project_property` comes back **empty rather than wrong**, and the
+  cache is still one cache — opening a flat another hunt found still costs nobody a second
+  analysis. `pnpm check:rls` asserts both directions, including that a scoped-to-nothing policy
+  fails rather than passes.
 - **The MV3 session lives only in `background.ts`** (chrome.storage adapter, explicit
   `ensureSession()`, alarms heartbeat) — a second client holder silently kills the session.
 - **`SEED_HUBS` is for dev tools/checks only** — hubs are project data (`project_hub`), and a
@@ -293,7 +305,9 @@ pnpm check:all      # + every pure-function check (seconds)
 ```
 
 Pure-function checks (each `pnpm check:<name>`): `area`, `facts`, `filter`, `listing` (which URLs are a
-listing, and what a share hands over), `hubs`, `stage`, `shortlist`, `sweep`, `travel`,
+listing, and what a share hands over), `invite` (what state an invitation is in, once, for both
+screens that show one), `hubs`, `stage`, `shortlist`, `sweep`, `travel` (what a cached journey means,
+and what one ask may cost before it is dispatched),
 `geo` (the sentence a refused position gets, and a maps link that is not a guess about the phone),
 `png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint), `sync` (the
 `_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a

@@ -15,13 +15,16 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   implausibleWalk,
+  journeyCallsNeeded,
   journeyTime,
   MAX_WALK_DETOUR_RATIO,
   NO_ROUTE_RETRY_DAYS,
-  TflError,
-  TRAVEL_BASIS,
   nextWeekdayMorning,
   staleTravel,
+  stationCallsNeeded,
+  TflError,
+  TRAVEL_BASIS,
+  TRAVEL_CALLS_PER_MINUTE,
   stationCore,
   stationMatches,
   tooFarToWalk,
@@ -401,6 +404,51 @@ check('a word on the front is a different station, however shortened the query',
 check('and not a bare substring either', core2('Old Hampstead Road', 'Hampstead', true), false);
 check('a longer word is not the query plus a word', core2('Hampsteadish', 'Hampstead', true), false);
 
+
+/* What one ask can cost, counted before any of it is dispatched.
+ *
+ * This is the half of the rate limit that used to not exist. The guard ran once, before the body was
+ * parsed, and then nothing bounded what the body asked for — so a request could be told it was
+ * inside a 300-call allowance and go on to make 301 calls, and the log afterwards was the only place
+ * it showed. Every number below is a request shape that passed the old check.
+ */
+console.log('\nwhat an ask will cost before it is dispatched');
+
+const wanted = ['transit', 'walking', 'cycling'] as const;
+const nowhere = () => false;
+const everywhere = () => true;
+const destinations = (n: number) => Array.from({ length: n }, (_, i) => ({ postcode: `N1 ${i}AA` }));
+
+check('nothing cached: every destination and every mode', journeyCallsNeeded(destinations(5), wanted, nowhere), 15);
+check('all cached: nothing to claim', journeyCallsNeeded(destinations(5), wanted, everywhere), 0);
+check(
+  'one mode missing from the cache is one call per destination',
+  journeyCallsNeeded(destinations(5), wanted, (_postcode, mode) => mode !== 'cycling'),
+  5,
+);
+/* The ask from the issue, and the reason a batch has to be claimed rather than counted afterwards:
+ * one request, three hundred and one calls, against an allowance of three hundred. */
+check('301 destinations on one mode is 301 calls', journeyCallsNeeded(destinations(301), ['transit'], nowhere), 301);
+check(
+  'and that is more than a person may spend in a minute, so the ask is refused whole',
+  journeyCallsNeeded(destinations(301), ['transit'], nowhere) > TRAVEL_CALLS_PER_MINUTE,
+  true,
+);
+/* No leg is free twice. A destination repeated in one ask is repeated work only until the first
+ * answer is cached, but the claim is made before any of them has been sent, so both are reserved.
+ * Under-reserving here is what the whole change is about. */
+check('a duplicated destination is claimed twice', journeyCallsNeeded(destinations(1).concat(destinations(1)), ['transit'], nowhere), 2);
+
+const names = (n: number) => Array.from({ length: n }, (_, i) => `Station ${i}`);
+check('a station nobody has measured costs a placing call and a walk', stationCallsNeeded(names(1), new Set()), 2);
+check('a walk we already hold costs only the placing call', stationCallsNeeded(names(1), new Set(['Station 0'])), 1);
+check('151 names is up to 302 calls', stationCallsNeeded(names(151), new Set()), 302);
+check(
+  'which is also more than a minute holds',
+  stationCallsNeeded(names(151), new Set()) > TRAVEL_CALLS_PER_MINUTE,
+  true,
+);
+check('no names, nothing claimed', stationCallsNeeded([], new Set()), 0);
 
 /* What a 300 is. TfL's planner answers it when it wants disambiguation, and it used to be cached as
  * "there is no route" — permanently, and for every leg from the flat, since the origin is shared.

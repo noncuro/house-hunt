@@ -10,12 +10,17 @@
  *    - every project-scoped table shows zero of project B's rows
  *    - every write into one of B's rows is refused
  *    - a DELETE against each of the five global fact tables removes nothing
+ *    - and a SELECT against each of them shows only the listings A's own project has opened —
+ *      the enumeration D14 deferred, which is now closed rather than accepted
  *    - `record_property` naming a project the caller is not in is refused
  *    - the `anon` role — the one the publishable key in the bundle carries — can read and write
  *      nothing, anywhere
  *    - an invite is consumed only by the person it was addressed to, and only through
  *      `consume_invites()`; a member cannot write an invite's status by any other route
  *    - `spend_summary` answers about the caller, whoever they name in the argument
+ *    - the admin audit log is readable by admins alone and writable only by the functions that
+ *      perform the change, and it records what the change was
+ *    - a member can neither reserve TfL capacity nor record travel calls against their allowance
  *
  *  It also asserts a handful of things that must still WORK. A database that refuses everything
  *  passes an adversarial test perfectly, and that is the failure this whole change would be
@@ -114,6 +119,17 @@ function nothing(name: string, result: Result) {
   fail(name, `saw ${rows} row(s)`);
 }
 
+/** The opposite of `nothing`, and the half a scoping change most needs: at least one row came back.
+ *  `allowed` is not enough once a policy has a predicate in it — a policy that filters everything
+ *  away returns no error at all, so every read still reads as permitted while the app shows a blank
+ *  page. */
+function sees(name: string, result: Result) {
+  if (result.error) return fail(name, `expected rows, got: ${result.error.message}`);
+  const rows = Array.isArray(result.data) ? result.data.length : result.data === null ? 0 : 1;
+  if (rows === 0) fail(name, 'nothing came back — the policy is filtering out rows it must show');
+  else ok(name);
+}
+
 function empty(name: string, result: Result) {
   if (result.error) return fail(name, `errored instead of returning nothing: ${result.error.message}`);
   const rows = Array.isArray(result.data) ? result.data.length : result.data === null ? 0 : 1;
@@ -165,6 +181,11 @@ const LISTING_A = 'rlscheck-a';
 const LISTING_B = 'rlscheck-b';
 /** Deliberately never seeded: the case where no `property` row and no link exist yet. */
 const LISTING_NEW = 'rlscheck-new';
+/** A flat no project has opened. Its whole purpose is that nothing links it at setup, which is
+ *  what makes "the stale write still made the link" an assertion rather than a restatement of
+ *  the fixture — and it is linked to nobody rather than to B so that the counts of B's rows,
+ *  which prove A's delete attempts changed nothing, stay the numbers they were. */
+const LISTING_STALE = 'rlscheck-stale';
 const EMAIL_A = 'rls-check-a@example.test';
 const EMAIL_B = 'rls-check-b@example.test';
 const INVITEE = 'rls-check-invitee@example.test';
@@ -179,7 +200,11 @@ const OUTSIDER = 'rls-check-outsider@example.test';
 const EXISTING = 'rls-check-existing@example.test';
 /** An account with a pending invite stranded by the era when nothing added existing accounts. */
 const STRANDED = 'rls-check-stranded@example.test';
-const EXTRA_USERS = [INVITEE, PLATFORM, LATE, OUTSIDER, EXISTING, STRANDED];
+/** An admin, made one by hand rather than by `admin_email`, so the audit log can be read the way
+ *  an admin actually reads it: authenticated, through RLS. The service key bypasses RLS, so a
+ *  read with it says nothing about the policy. */
+const EMAIL_ADMIN = 'rls-check-admin@example.test';
+const EXTRA_USERS = [INVITEE, PLATFORM, LATE, OUTSIDER, EXISTING, STRANDED, EMAIL_ADMIN];
 /** An invite id belonging to no row, for probing a function without letting it do anything. */
 const MISSING_INVITE = '00000000-0000-4000-c000-0000000000ff';
 const PASSWORD = 'rls-check-password-9f3a';
@@ -188,6 +213,10 @@ async function tearDown() {
   // Order matters only where a foreign key does not cascade. Projects cascade to everything
   // project-scoped; the global rows and the users are cleared explicitly.
   await admin.from('api_usage').delete().in('project_id', [PROJECT_A, PROJECT_B]);
+  // Both keep their row when the project goes — `on delete set null`, for the same reason
+  // `api_usage` does — so neither is reached by the cascade.
+  await admin.from('admin_action').delete().in('subject_project_id', [PROJECT_A, PROJECT_B]);
+  await admin.from('travel_claim').delete().in('project_id', [PROJECT_A, PROJECT_B]);
   // Platform invites carry no project and so are not reached by the cascade below.
   await admin.from('invite').delete().in('email', [...EXTRA_USERS, 'another@example.test', EMAIL_A, EMAIL_B]);
   await admin.from('verdict_history').delete().in('project_id', [PROJECT_A, PROJECT_B]);
@@ -195,18 +224,25 @@ async function tearDown() {
   // A platform invite makes a project of its own, named after the local part of the address, and
   // it belongs to nothing this teardown otherwise reaches.
   await admin.from('project').delete().like('name', 'rls-check-%');
-  await admin.from('property_analysis').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW]);
-  await admin.from('property').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW]);
-  await admin.from('travel_time').delete().eq('origin_postcode', 'RLS 1AA');
-  await admin.from('station_walk').delete().eq('postcode', 'RLS 1AA');
-  await admin.from('station_point').delete().eq('name', 'RLS Check Station');
+  await admin.from('property_analysis').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW, LISTING_STALE]);
+  await admin.from('property').delete().in('rightmove_id', [LISTING_A, LISTING_B, LISTING_NEW, LISTING_STALE]);
+  // `property_price` cascades from `property` above; these three do not — they are keyed on a
+  // postcode or a station name, which is the whole reason they need a policy of their own.
+  await admin.from('travel_time').delete().in('origin_postcode', ['RLS 1AA', 'RLS 1BB']);
+  await admin.from('station_walk').delete().in('postcode', ['RLS 1AA', 'RLS 1BB']);
+  await admin.from('station_point').delete().in('name', ['RLS Check Station', 'RLS Other Station']);
 
   const { data } = await admin.auth.admin.listUsers({ perPage: 1000 });
-  for (const user of data?.users ?? []) {
-    if ([EMAIL_A, EMAIL_B, ...EXTRA_USERS].includes(user.email ?? '')) {
-      await admin.auth.admin.deleteUser(user.id);
-    }
-  }
+  const fixtureUsers = (data?.users ?? []).filter((u) => [EMAIL_A, EMAIL_B, ...EXTRA_USERS].includes(u.email ?? ''));
+
+  // Before the users go, not after. `admin_action` nulls both its subject and its actor on a user
+  // delete rather than cascading — the point of the log is that it outlives what it is about — so a
+  // row cleared up by user id afterwards is a row with no id left to find it by, and every run would
+  // leave an all-null orphan behind on a long-lived local database.
+  const ids = fixtureUsers.map((u) => u.id);
+  if (ids.length > 0) await admin.from('admin_action').delete().in('subject_user_id', ids);
+
+  for (const user of fixtureUsers) await admin.auth.admin.deleteUser(user.id);
 }
 
 async function createUser(email: string): Promise<string> {
@@ -222,6 +258,11 @@ function must(context: string, error: { message: string } | null) {
 async function setUp(): Promise<{ userA: string; userB: string }> {
   const userA = await createUser(EMAIL_A);
   const userB = await createUser(EMAIL_B);
+  // Not through `admin_email`, which is deployment data this check must not depend on: the flag
+  // is set directly, which is the state the policies read.
+  const userAdmin = await createUser(EMAIL_ADMIN);
+  must('making the admin an admin', (await admin.from('profile')
+    .update({ is_admin: true }).eq('id', userAdmin)).error);
 
   // The trigger on auth.users is what creates these. If it did not fire, everything below is
   // meaningless, so this is checked rather than assumed.
@@ -257,6 +298,13 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
   must('creating the listings', (await admin.from('property').insert([
     { rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street', postcode: 'RLS 1AA' },
     { rightmove_id: LISTING_B, url: 'https://example.test/b', display_address: 'B Street', postcode: 'RLS 1BB' },
+    // `observed_at` is set by hand rather than left to the column default, because the stale
+    // test below turns on this row being *newer* than what A submits. A default that changed
+    // to null would make the comparison vacuous instead of failing.
+    {
+      rightmove_id: LISTING_STALE, url: 'https://example.test/stale', display_address: 'Stale Street',
+      postcode: 'RLS 1BB', price: '£3,300 pcm', observed_at: new Date().toISOString(),
+    },
   ])).error);
 
   must('linking the listings', (await admin.from('project_property').insert([
@@ -273,6 +321,23 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
     .insert({ postcode: 'RLS 1AA', station_name: 'RLS Check Station', seconds: 300 })).error);
   must('seeding shared facts', (await admin.from('travel_time')
     .insert({ origin_postcode: 'RLS 1AA', dest_postcode: 'RLS 2BB', mode: 'transit', seconds: 900, basis: 'weekday-0900' })).error);
+
+  // The same three caches again, hung off B's flat instead of A's. Without them the read
+  // assertions below could only say "A can still read the caches", which a `using (true)` policy
+  // satisfies perfectly — these are the rows that make the difference visible.
+  must("seeding B's station", (await admin.from('station_point')
+    .insert({ name: 'RLS Other Station', lat: 51.6, lon: -0.2 })).error);
+  must("seeding B's walk", (await admin.from('station_walk')
+    .insert({ postcode: 'RLS 1BB', station_name: 'RLS Other Station', seconds: 420 })).error);
+  must("seeding B's travel", (await admin.from('travel_time')
+    .insert({ origin_postcode: 'RLS 1BB', dest_postcode: 'RLS 2BB', mode: 'transit', seconds: 1100, basis: 'weekday-0900' })).error);
+  must("seeding B's price history", (await admin.from('property_price')
+    .insert({ rightmove_id: LISTING_B, price: '£3,000 pcm' })).error);
+  // And one for A. Without it the only `property_price` assertion in this file is that A sees
+  // nothing, which a policy returning nothing at all satisfies — the same argument the
+  // whole-table read below makes for `property`, and the reason both halves are written.
+  must("seeding A's price history", (await admin.from('property_price')
+    .insert({ rightmove_id: LISTING_A, price: '£1,900 pcm' })).error);
 
   // Project B's opinions — the rows A must never see or touch.
   must("seeding B's place", (await admin.from('place')
@@ -310,7 +375,7 @@ async function setUp(): Promise<{ userA: string; userB: string }> {
   must("seeding B's spend", (await admin.from('api_usage')
     .insert({ project_id: PROJECT_B, user_id: userB, model: 'gpt-5.6-terra', cost_usd: 1.5, rightmove_id: LISTING_B })).error);
 
-  return { userA, userB };
+  return { userA, userB, userAdmin };
 }
 
 async function signIn(email: string): Promise<SupabaseClient> {
@@ -324,7 +389,7 @@ async function signIn(email: string): Promise<SupabaseClient> {
 
 async function main() {
   await tearDown();
-  const { userA, userB } = await setUp();
+  const { userA, userB, userAdmin } = await setUp();
   const a = await signIn(EMAIL_A);
 
   // ----------------------------------------------------------------------------------------- //
@@ -427,7 +492,7 @@ async function main() {
   is("A's cap is unchanged", Number((await admin.from('profile').select('monthly_cap_usd').eq('id', userA).single()).data?.monthly_cap_usd), 20);
 
   // ----------------------------------------------------------------------------------------- //
-  console.log('\nthe five global fact tables: read by anyone signed in, written by nobody');
+  console.log('\nthe five global fact tables: read for my own hunt, written by nobody');
 
   const GLOBAL = ['property', 'property_analysis', 'station_point', 'station_walk', 'travel_time'] as const;
   const before: Record<string, number> = {};
@@ -437,8 +502,41 @@ async function main() {
     if ((n ?? 0) === 0) fail(`${table}: the fixture`, 'nothing in the table, so a DELETE proves nothing');
   }
 
-  allowed('property: A can read a listing only B has linked', await a.from('property').select('*').eq('rightmove_id', LISTING_B).single());
-  allowed('property_analysis: A can read an analysis B paid for', await a.from('property_analysis').select('*').eq('rightmove_id', LISTING_B).single());
+  // Both of these used to read `allowed`, and that was the bug (#67). The cache is still shared —
+  // the analysis B paid for is read for free the moment A's project opens the flat, which is what
+  // the `record_property` block further down demonstrates — but until then A has no business
+  // knowing that B is looking at B Street. Between two people hunting together seeing the same
+  // flats is the point; between two households it is a disclosure of what somebody else is hunting
+  // for, where, and at what price.
+  nothing("property: a listing only B has opened", await a.from('property').select('*').eq('rightmove_id', LISTING_B).maybeSingle());
+  nothing("property_analysis: the analysis B paid for", await a.from('property_analysis').select('*').eq('rightmove_id', LISTING_B).maybeSingle());
+  nothing("property_price: what B's flat has cost", await a.from('property_price').select('*').eq('rightmove_id', LISTING_B));
+  sees("property_price: what A's own flat has cost", await a.from('property_price').select('rightmove_id').eq('rightmove_id', LISTING_A));
+  nothing("travel_time: a journey from B's flat", await a.from('travel_time').select('*').eq('origin_postcode', 'RLS 1BB'));
+  nothing("station_walk: the walk from B's flat", await a.from('station_walk').select('*').eq('postcode', 'RLS 1BB'));
+  nothing("station_point: a station only B's flat is near", await a.from('station_point').select('*').eq('name', 'RLS Other Station'));
+
+  // And the assertion that would have caught the whole thing: no filter at all. Written in both
+  // directions on purpose — a policy that returns nothing passes every "cannot see B" test in this
+  // file and is a database that has stopped working.
+  const wholeTable = await a.from('property').select('rightmove_id');
+  // Read rather than asserted. `as Array<{ rightmove_id: string }>` claimed the shape instead of
+  // checking it, so a reply whose rows lacked the column mapped to a list of `undefined` — which
+  // contains neither listing, and quietly satisfies the "B is not enumerated" branch while the
+  // "A is present" branch reports a scoping failure that is really a shape change.
+  const rows: unknown[] = wholeTable.data ?? [];
+  const listed = rows
+    .map((r) => (r as { rightmove_id?: unknown }).rightmove_id)
+    .filter((id): id is string => typeof id === 'string');
+  if (wholeTable.error) fail('property: selecting the whole table', `errored rather than scoping: ${wholeTable.error.message}`);
+  else if (listed.length !== rows.length)
+    fail(
+      'property: selecting the whole table',
+      `${rows.length - listed.length} of ${rows.length} row(s) carried no string rightmove_id — the reply shape has changed and the assertions below are reading nothing`,
+    );
+  else if (listed.includes(LISTING_B)) fail('property: selecting the whole table', `enumerated B's listing among ${listed.length} row(s)`);
+  else if (!listed.includes(LISTING_A)) fail('property: selecting the whole table', "A's own listing is missing — scoped past the point of working");
+  else ok('property: selecting the whole table shows this hunt and no other');
 
   refused('property: delete everything', await a.from('property').delete().neq('rightmove_id', '').select());
   refused('property_analysis: delete everything', await a.from('property_analysis').delete().neq('rightmove_id', '').select());
@@ -484,11 +582,16 @@ async function main() {
     }),
   );
 
+  // The postcode is on every payload from here down, because the upsert writes what it is given:
+  // omit it and the row's postcode goes null, which is right for a page that has none and is not
+  // what any client sends. It matters more than it looks — `travel_time` and `station_walk` are
+  // keyed on the postcode, so a fixture that drops it detaches the flat from its own caches and the
+  // three reads at the end of this section come back empty.
   allowed(
     'record_property: a listing my project has opened',
     await rpc(a, 'record_property', {
       p_project_id: PROJECT_A,
-      p_property: { rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street', price: '£2,000 pcm' },
+      p_property: { rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street', postcode: 'RLS 1AA', price: '£2,000 pcm' },
     }),
   );
   is('...and it actually wrote', (await admin.from('property').select('price').eq('rightmove_id', LISTING_A).single()).data?.price, '£2,000 pcm');
@@ -499,10 +602,81 @@ async function main() {
     "record_property: a listing another project found (accepted by D4, and attributed)",
     await rpc(a, 'record_property', {
       p_project_id: PROJECT_A,
-      p_property: { rightmove_id: LISTING_B, url: 'https://example.test/b', display_address: 'B Street', price: '£9 pcm' },
+      p_property: { rightmove_id: LISTING_B, url: 'https://example.test/b', display_address: 'B Street', postcode: 'RLS 1BB', price: '£9 pcm' },
     }),
   );
   is('...and the row names who wrote it', (await admin.from('property').select('written_by_project').eq('rightmove_id', LISTING_B).single()).data?.written_by_project, PROJECT_A);
+  // The other half of #67, and the reason the scoping is a predicate rather than a wall: opening
+  // the flat is what makes the shared facts about it readable, and the analysis B already paid for
+  // is one of them. A project pays OpenAI once per listing across the whole platform, still.
+  sees('...and the analysis B paid for is readable now A has opened it', await a.from('property_analysis').select('rightmove_id').eq('rightmove_id', LISTING_B));
+
+  // ----------------------------------------------------------------------------------------- //
+  console.log('\nthe stale page: an older reading does not overwrite a newer one');
+
+  // Two hunts, one flat, and one of them looking at a tab that has been open since yesterday. The
+  // write still happens — the link is made, `last_seen_at` moves — but the shared row keeps the
+  // newer numbers, and the caller is told which of the two it got.
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const stale = await rpc(a, 'record_property', {
+    p_project_id: PROJECT_A,
+    p_property: {
+      rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street',
+      postcode: 'RLS 1AA', price: '£1 pcm', observed_at: yesterday,
+    },
+  });
+  if (stale.error) fail('record_property: a page read yesterday', `refused outright: ${stale.error.message}`);
+  else is('record_property: a page read yesterday says it kept the newer reading', stale.data, false);
+  is('...and the newer price is still on the row', (await admin.from('property').select('price').eq('rightmove_id', LISTING_A).single()).data?.price, '£2,000 pcm');
+  // Refusing the numbers is not refusing the visit: this project did open the flat.
+  //
+  // On a listing nothing has opened, because the version of this that used LISTING_A proved
+  // nothing: setup links that one to A already, so the count was 1 before the call and 1 after,
+  // whether or not `record_property` made a link at all.
+  const staleUnseen = await rpc(a, 'record_property', {
+    p_project_id: PROJECT_A,
+    p_property: {
+      rightmove_id: LISTING_STALE, url: 'https://example.test/stale', display_address: 'Stale Street',
+      postcode: 'RLS 1BB', price: '£7 pcm', observed_at: yesterday,
+    },
+  });
+  if (staleUnseen.error) fail("record_property: yesterday's reading of a flat A has not opened", `refused outright: ${staleUnseen.error.message}`);
+  else is("record_property: yesterday's reading of a flat A has not opened keeps the newer one", staleUnseen.data, false);
+  is("...and B's newer price survived it", (await admin.from('property').select('price').eq('rightmove_id', LISTING_STALE).single()).data?.price, '£3,300 pcm');
+  const staleLinks = await admin.from('project_property').select('project_id').eq('rightmove_id', LISTING_STALE);
+  const linkedTo = ((staleLinks.data ?? []) as unknown[])
+    .map((r) => (r as { project_id?: unknown }).project_id)
+    .filter((id): id is string => typeof id === 'string');
+  is(
+    '...and the flat is now linked to the project that just looked at it',
+    linkedTo.join(','),
+    PROJECT_A,
+  );
+
+  const fresh = await rpc(a, 'record_property', {
+    p_project_id: PROJECT_A,
+    p_property: {
+      rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street',
+      postcode: 'RLS 1AA', price: '£2,100 pcm', observed_at: new Date().toISOString(),
+    },
+  });
+  if (fresh.error) fail('record_property: a page read just now', `refused: ${fresh.error.message}`);
+  else is('record_property: a page read just now writes', fresh.data, true);
+  is('...and the price moved', (await admin.from('property').select('price').eq('rightmove_id', LISTING_A).single()).data?.price, '£2,100 pcm');
+
+  // A clock a year fast must not be able to pin the row against everybody else for a year.
+  const future = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+  allowed('record_property: a page stamped a year in the future', await rpc(a, 'record_property', {
+    p_project_id: PROJECT_A,
+    p_property: {
+      rightmove_id: LISTING_A, url: 'https://example.test/a', display_address: 'A Street',
+      postcode: 'RLS 1AA', price: '£2,200 pcm', observed_at: future,
+    },
+  }));
+  const stampedAt = (await admin.from('property').select('observed_at').eq('rightmove_id', LISTING_A).single()).data?.observed_at;
+  if (stampedAt && new Date(stampedAt as string).getTime() > Date.now() + 60_000) {
+    fail('...is capped at the server clock', `the row now claims to have been read at ${stampedAt}`);
+  } else ok('...is capped at the server clock');
 
   // The three shared caches: a member may read them and may no longer write them.
   //
@@ -539,18 +713,95 @@ async function main() {
   denied('cache_travel: a journey of negative length, even from the server', await rpc(admin, 'cache_travel', { p_origin_postcode: 'RLS 1AA', p_dest_postcode: 'RLS 2BB', p_mode: 'walking', p_seconds: -5 }));
   denied('cache_station_point: half a coordinate, even from the server', await rpc(admin, 'cache_station_point', { p_name: 'RLS Half Station', p_lat: 51.5 }));
 
-  // And reading them is still exactly what every surface does.
-  allowed('travel_time: a member reading the shared cache', await a.from('travel_time').select('origin_postcode').limit(1));
-  allowed('station_point: a member reading the shared cache', await a.from('station_point').select('name').limit(1));
-  allowed('station_walk: a member reading the shared cache', await a.from('station_walk').select('postcode').limit(1));
+  // And reading them for this project's own flats is still exactly what every surface does. `sees`
+  // rather than `allowed`: since the policies grew a predicate, "no error" stopped meaning "a row
+  // came back", and the compare table full of dashes is what the difference looks like.
+  sees('travel_time: a member reading the cache for their own flat', await a.from('travel_time').select('origin_postcode').eq('origin_postcode', 'RLS 1AA'));
+  sees('station_point: ...and a station that flat is near', await a.from('station_point').select('name').eq('name', 'RLS Check Station'));
+  sees('station_walk: ...and the walk to it', await a.from('station_walk').select('postcode').eq('postcode', 'RLS 1AA'));
 
   refused('claim_analysis: a client claiming its own budget', await rpc(a, 'claim_analysis', { p_rightmove_id: LISTING_A, p_project_id: PROJECT_A, p_user_id: userA }));
   refused('record_api_usage: a client writing its own spend', await rpc(a, 'record_api_usage', { p_project_id: PROJECT_A, p_user_id: userA, p_model: 'gpt-5.6-terra', p_input_tokens: 1, p_cached_input_tokens: 0, p_output_tokens: 1 }));
 
+  // The travel reservation, which is `claim_analysis`'s problem on TfL's allowance rather than on
+  // money. `denied` rather than `refused` for both: one returns jsonb and the other returns void, so
+  // "the call affected nothing" is what success looks like too — which is the blind spot the four
+  // cache assertions above sat in for a deploy. A member who could claim would reserve somebody
+  // else's whole minute; one who could release would record calls nobody made against them.
+  denied('claim_travel_calls: a member reserving TfL capacity', await rpc(a, 'claim_travel_calls', { p_user_id: userA, p_project_id: PROJECT_A, p_calls: 1, p_limit: 300, p_window: '60 seconds' }));
+  denied('release_travel_calls: a member recording travel calls', await rpc(a, 'release_travel_calls', { p_reservation: 1, p_user_id: userA, p_project_id: PROJECT_A, p_made: 1 }));
+
+  // The audit log.
+  //
+  // THE ORDER HERE IS THE ASSERTION. A row is written first, and only then is the member asked to
+  // read the table — because `nothing()` passes on an empty table, and the suite tears down and
+  // starts from a fresh `supabase start` in CI, so a read asserted before anything had been logged
+  // would have passed identically against `using (true)` or against no policy at all. That is the
+  // same shape as the four cache assertions that sat green for a deploy against a grant that had
+  // never been revoked.
+  //
+  // The log records both figures, because "raised to 200" is half an answer: from 150 is a decision
+  // and from 5 is an incident. The starting cap is read rather than written as a literal — it is a
+  // column default nobody here owns.
+  const capBefore = Number((await admin.from('project').select('monthly_cap_usd').eq('id', PROJECT_A).single()).data?.monthly_cap_usd);
+  allowed('admin_set_project_cap: the server raising a cap', await rpc(admin, 'admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: capBefore + 1 }));
+  const logged = (await admin.from('admin_action').select('action, previous_value, new_value').eq('subject_project_id', PROJECT_A).order('id', { ascending: false }).limit(1)).data?.[0];
+  is('the audit log recorded what changed', [logged?.action, Number(logged?.previous_value), Number(logged?.new_value)], ['set_project_cap', capBefore, capBefore + 1]);
+
+  // ...and now that there is provably a row in it, what a member can see of it. Not their own rows,
+  // as `api_usage` would give them: nothing. What the log answers is which admin did this, and
+  // showing that to the person whose cap moved would make it a notification.
+  nothing('admin_action: a member reading the audit log, which is not empty', await a.from('admin_action').select('*'));
+  refused('admin_action: a member writing an entry', await a.from('admin_action').insert({ action: 'set_project_cap', subject_project_id: PROJECT_A, new_value: 999 }).select());
+  denied('admin_set_project_cap: a member raising their own project cap', await rpc(a, 'admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: 999 }));
+  denied('admin_set_max_members: a member raising their own member limit', await rpc(a, 'admin_set_max_members', { p_project_id: PROJECT_A, p_max: 99 }));
+  is('the cap did not move', Number((await admin.from('project').select('monthly_cap_usd').eq('id', PROJECT_A).single()).data?.monthly_cap_usd), capBefore + 1);
+  is('and the member wrote no entry', (await admin.from('admin_action').select('id').eq('new_value', 999)).data?.length, 0);
+
+  // And the half neither of those covers. Everything above reads the log with the service key,
+  // which bypasses RLS, or asserts that a member sees nothing — both of which a policy granting
+  // the read to nobody satisfies perfectly. This is an admin, authenticated, going through the
+  // policy, which is the only way anybody actually looks at this table.
+  const asAdmin = await signIn(EMAIL_ADMIN);
+  sees('admin_action: an admin reading the audit log', await asAdmin.from('admin_action').select('id'));
+  // Readable, still not writable by hand. The rows are written by `admin_set_project_cap` and
+  // its siblings, which are `SECURITY DEFINER`; an admin who could insert here could write a
+  // history of changes that never happened, which is the one thing an audit log must not allow.
+  refused(
+    'admin_action: an admin writing an entry by hand',
+    await asAdmin.from('admin_action').insert({ action: 'set_project_cap', subject_project_id: PROJECT_A, new_value: 998 }).select(),
+  );
+  is('and no entry was written', (await admin.from('admin_action').select('id').eq('new_value', 998)).data?.length, 0);
+
+  // A cap named on a project that does not exist used to report success and change nothing, which
+  // an audit row would then have recorded as a change that happened.
+  denied('admin_set_project_cap: a project that is not there', await rpc(admin, 'admin_set_project_cap', { p_project_id: '00000000-0000-4000-b000-0000000000ff', p_cap: 12 }));
+  await admin.rpc('admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: capBefore });
+
   // ----------------------------------------------------------------------------------------- //
+  // This section is what makes the publishable key safe to ship, and the reasoning is written here
+  // because this is where somebody will be standing when they wonder about it.
+  //
+  // That key is inside `apps/web/public/rightmove-house-hunt.zip`, which anybody may download, so
+  // anybody may read it out of the bundle. It is *publishable* — that is what the name means — and
+  // today it authorises nothing: every policy is `to authenticated` and `anon` holds no grant, so
+  // the key opens a door into an empty room. It is not a secret that has leaked and it is not worth
+  // rotating, and nothing here should be redesigned to hide it.
+  //
+  // What it does do is set up a failure. One policy written `to public` instead of `to authenticated`
+  // — a single word, in a migration that reads perfectly and denies nothing visible — would hand the
+  // database to everyone holding the zip, and there is no other symptom: the app works, the tests
+  // pass, and the only sign is a policy line nobody re-reads. That is the whole reason the block
+  // below exists rather than being taken as read. It is not belt-and-braces on a boundary already
+  // proved elsewhere; for the anon role it *is* the boundary. So it must keep running in CI
+  // (`.github/workflows/check.yml`), and a new table or RPC belongs in the lists below on the day
+  // it is added.
+  //
+  // Recorded against issue #70, which the owner settled as needing no code change — only that the
+  // argument stop living in a backlog entry and start living beside the check it is about.
   console.log('\nthe anon role — the key that ships in the bundle — holds nothing');
 
-  for (const table of [...PROJECT_SCOPED, ...GLOBAL, 'profile', 'project', 'project_member', 'model_price', 'admin_email'] as const) {
+  for (const table of [...PROJECT_SCOPED, ...GLOBAL, 'profile', 'project', 'project_member', 'model_price', 'admin_email', 'admin_action', 'travel_claim'] as const) {
     nothing(`anon: read ${table}`, await anon.from(table).select('*'));
   }
   refused('anon: insert a place', await anon.from('place').insert({ project_id: PROJECT_A, label: 'x', postcode: 'x' }).select());
@@ -560,6 +811,8 @@ async function main() {
   refused('anon: call record_property', await rpc(anon, 'record_property', { p_project_id: PROJECT_A, p_property: { rightmove_id: LISTING_A, url: 'u', display_address: 'd' } }));
   refused('anon: call cache_travel', await rpc(anon, 'cache_travel', { p_origin_postcode: 'X', p_dest_postcode: 'Y', p_mode: 'walking', p_seconds: 60 }));
   refused('anon: call claim_analysis', await rpc(anon, 'claim_analysis', { p_rightmove_id: LISTING_A, p_project_id: PROJECT_A, p_user_id: userA }));
+  denied('anon: call claim_travel_calls', await rpc(anon, 'claim_travel_calls', { p_user_id: userA, p_project_id: PROJECT_A, p_calls: 1, p_limit: 300, p_window: '60 seconds' }));
+  denied('anon: call admin_set_project_cap', await rpc(anon, 'admin_set_project_cap', { p_project_id: PROJECT_A, p_cap: 999 }));
   is('the travel cache is intact after anon', await count('travel_time', 'origin_postcode', 'RLS 1AA'), 2);
 
   // ----------------------------------------------------------------------------------------- //

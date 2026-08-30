@@ -38,7 +38,7 @@ export function Gallery({
    *  photo follows it, which is the only thing that tells you a swipe is a gesture this gallery
    *  understands before you have finished making it. */
   const [drag, setDrag] = useState<number | null>(null);
-  /** What keeps a finished swipe moving in the direction it was going.
+  /** What keeps a step moving in the direction it was going.
    *
    *  Advancing `at` re-centres the track on the new photo, which moves it a whole slide in one
    *  frame. Left alone that is a jump: the photo you were pulling in from the edge appears almost
@@ -53,10 +53,26 @@ export function Gallery({
   const [carry, setCarry] = useState<{ px: number; slides: number } | null>(null);
   const from = useRef<{ x: number; y: number; id: number } | null>(null);
 
-  const step = (by: number) => setAt((i) => (i + by + images.length) % images.length);
-
   // Only worth swiping through more than one photo, and `step` would be a no-op anyway.
   const swipeable = images.length > 1;
+
+  /** Go one photo along, and hand the track the slide that took.
+   *
+   *  `px` is where a finger left off, and it is the only thing that differs between the three ways
+   *  in. An arrow button and an arrow key have no finger, so it is zero — and the carry is then the
+   *  whole of the animation for those two. Without it they set `at` and nothing else: the track's
+   *  inline transform was `undefined` before the step and `undefined` after, so there was no
+   *  property change for the transition to run against and the next photo simply appeared in place.
+   *  One path rather than a second animation beside the swipe's, so the two cannot drift.
+   *
+   *  A single photo is left alone. `step` is a no-op on the index either way — it wraps — but the
+   *  neighbouring slides are empty when there is nothing to put in them, so a carry would translate
+   *  the track onto a blank screen and back. */
+  const step = (by: number, px = 0) => {
+    if (!swipeable) return;
+    setAt((i) => (i + by + images.length) % images.length);
+    setCarry({ px, slides: by });
+  };
 
   /** The photos either side, which are on screen the moment a swipe starts.
    *
@@ -109,11 +125,10 @@ export function Gallery({
     // Left means forward, the way every photo gallery on a phone works: the next photo comes in
     // from the right as the current one leaves.
     if (Math.abs(dx) < SWIPE_MIN_PX) return;
-    const by = dx < 0 ? 1 : -1;
-    step(by);
-    // Batched into the one commit as the step above, which is what makes the hand-back exact: the
-    // track is re-centred and offset back by the same slide before anything is painted.
-    setCarry({ px: dx, slides: by });
+    // Where the finger left off is handed back in the same commit as the index, which is what makes
+    // the hand-back exact: the track is re-centred and offset back by the same slide before
+    // anything is painted.
+    step(dx < 0 ? 1 : -1, dx);
   }
 
   /** The gesture was taken away rather than finished — an edge swipe the browser claimed as a
@@ -197,10 +212,10 @@ export function Gallery({
           and clickable the moment a drag begins, and a tap that lands on one must not be read as a
           tap on the backdrop asking to leave. */}
       {/* Three positions, and the transition belongs to only one of them. Under the finger and in
-          the frame a swipe is handed back its slide (`carry`) the track is placed exactly, with no
+          the frame a step is handed back its slide (`carry`) the track is placed exactly, with no
           transition — animating either would be animating towards where the finger already is. At
-          rest it has none, and the transition is what springs a short swipe back and what carries a
-          completed one home.
+          rest it has none, and the transition is what springs a short swipe back, what carries a
+          completed one home, and what slides an arrow-button or arrow-key step across.
 
           One-to-one with the finger, where a lone photo was damped to keep it from being dragged
           off the screen and stranded. The damping was also what stopped the neighbours lining up
