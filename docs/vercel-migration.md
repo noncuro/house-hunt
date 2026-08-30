@@ -350,6 +350,25 @@ It matters unevenly, which is worth knowing when deciding how much to care:
   anywhere; it should still be pinned with the rest, because a per-route region exception is a thing
   somebody has to remember.
 
+### The one thing in `travel` not to port faithfully
+
+`travel` makes **five sequential HTTPS round trips over the public Supabase hostname** per request —
+auth, profile, rate limit, `station_walk`, `station_point` — while the SQL behind them runs in about
+a tenth of a millisecond on a primary key index. That is most of the latency on every travel read,
+and it is invisible in a diff: port it line by line and it survives the move intact, having been
+made slightly worse by the region change and no longer explicable by it.
+
+It is a shape the Edge runtime encouraged and a Vercel route does not need. The reads go through one
+server-side client rather than five HTTP calls, and the ones that do not depend on each other go
+concurrently rather than in a chain. Auth has to come first — nothing else should run for a caller
+who is not one — but the profile, the rate-limit read and the two caches do not depend on one
+another.
+
+Flagged as a deliberate change rather than a port, so it is reviewable as one: if the moved function
+is faster than the old one by more than the region accounts for, this is why, and it should not be
+mistaken for the move having done it. Found while triaging #44, whose own subject (station walks
+refetched on every triage step, 150–250ms) is the smaller half of what it turned up.
+
 ## What must not change
 
 - **The reply convention is a contract.** A non-2xx means the caller got something wrong or
