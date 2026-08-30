@@ -9,7 +9,7 @@
  *  happens on the surface that needs it — the triage list, the panel — at render, so a score is
  *  never persisted and never stale. This route's whole job is to produce the weights.
  *
- *  Why the fit runs here rather than on Supabase's Edge runtime: `docs/vercel-migration.md`.
+ *  Why the fit runs here rather than on Supabase's Edge runtime: `docs/server-side.md`.
  */
 import {
   DEFAULT_LABEL_MODE,

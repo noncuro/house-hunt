@@ -107,22 +107,15 @@ Two things that look like bugs and are not:
   $20 a month against the owner's OpenAI key. Past that, analysis stops until the month rolls over;
   everything else — travel times, verdicts, the shortlist, sweeping — keeps working.
 
-## Deploying the travel function (admins only)
+## Deploying the server side (admins only)
 
-```bash
-pnpm sync:function --check          # the function's copy of packages/core must be current
-pnpm deploy:function                # does the check, then deploys
-```
+There is nothing to deploy but the website. `analyse`, `invite`, `password`, `resolve-location`,
+`listing`, `predict` and `travel` are all routes under `apps/web/src/app/api/`, so a Vercel deploy
+is the whole of it — no `supabase functions deploy`, no second artefact, and one place to look when
+something server-side is wrong.
 
-One function is left. `analyse`, `invite`, `password`, `resolve-location`, `listing` and `predict`
-are routes on the website and ship with a Vercel deploy — see below, and
-`docs/vercel-migration.md`.
-
-`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected into *Edge Functions* by the platform;
-don't set them there.
-
-**A route on the website is a different matter, and this is a trap worth reading twice.** Vercel
-injects neither. Anything under `apps/web/src/app/api/` reads the project URL from
+**The environment is the trap, and it is worth reading twice.** Supabase used to inject
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` into every Edge Function. Vercel injects neither. Anything under `apps/web/src/app/api/` reads the project URL from
 `NEXT_PUBLIC_SUPABASE_URL`, which is already set — but the privileged key has no such substitute and
 has to be added to the Vercel project (Settings → Environment Variables), and to the workspace-root
 `.env` for `pnpm dev:web`.
@@ -132,8 +125,20 @@ Set it as **`SUPABASE_SECRET_KEY`** (an `sb_secret_…`), which is the counterpa
 `SUPABASE_SERVICE_ROLE_KEY`, because that is the name the Supabase↔Vercel integration syncs — so a
 project with that integration connected has a working key already, under a name nobody chose.
 
-Without either, the failure is a 500 at the moment somebody presses the button. `docs/vercel-migration.md`
-says why these are moving.
+Without either, the failure is a 500 at the moment somebody presses the button.
+
+**With `travel`:** `TFL_PRIMARY_KEY` (with `TFL_SECONDARY_KEY` and `TFL_APP_KEY` read after it, in
+that order), and `TRAVEL_BACKFILL_TOKEN` — the same value the `travel_backfill_token` vault secret
+holds, because the scheduled backfill sends it and the route compares it. Rotating it means changing
+both, in either order, with one failed run in between. The TfL key is optional and degrades rather
+than breaks: unkeyed is 50 requests a minute against 500 keyed.
+
+**The schedule points at the website now.** `run_travel_backfill` posts to
+`<travel_functions_url>/travel`, so that vault secret holds the site origin plus `/api`, with no
+trailing slash. `travel_publishable_key` existed only to get past Supabase's gateway and a Vercel
+route ignores it — delete the secret rather than leave one nothing reads. If Vercel's Deployment
+Protection is ever enabled on the project, an unauthenticated `pg_net` POST is bounced by the
+platform before the route sees it, and the symptom is a column of dashes.
 
 ### The analysis key goes on Vercel, not on Supabase
 
@@ -148,7 +153,8 @@ caps before it is made, and it defaults to $0.10. Set it on Vercel only if a lis
 drifted far enough from that for the reservation to stop bounding anything.
 
 A phone whose **Add a flat** button fails, or an analysis that never starts, is therefore a website
-problem — a missing environment variable on Vercel — and not a missed `deploy:function`.
+problem — a missing environment variable on Vercel — and there is no longer any second deploy it
+could be instead.
 
 **Analysis verifies its caller.** It used to deploy `--no-verify-jwt`, which was defensible when
 there was no auth and the worst a stranger could do was make us re-analyse a flat we had already
@@ -156,17 +162,18 @@ chosen to look at. It is not defensible once calls are charged against somebody'
 the route resolves the caller's JWT, checks they are a member of the project they name, checks the
 project has actually opened the listing, and claims against both caps before it spends anything.
 
-## The travel backfill's three secrets (admins only)
+## The travel backfill's two secrets (admins only)
 
-A pg_cron job asks the `travel` function to work the journey backlog down every fifteen minutes.
-The credentials it calls with live in the project's own vault rather than in the repository, so a
-fresh deployment has to put them there once.
+A pg_cron job asks the `travel` route to work the journey backlog down every fifteen minutes. The
+credentials it calls with live in the project's own vault rather than in the repository, so a fresh
+deployment has to put them there once.
 
-First generate the token and give it to the function, from a shell:
+First generate the token and give it to the **Vercel project** — that is where the route reads it,
+and `supabase secrets set` would now set one nothing reads:
 
 ```bash
 export TRAVEL_BACKFILL_TOKEN="$(openssl rand -hex 32)"
-supabase secrets set TRAVEL_BACKFILL_TOKEN="$TRAVEL_BACKFILL_TOKEN" --project-ref "$SUPABASE_PROJECT_REF"
+vercel env add TRAVEL_BACKFILL_TOKEN production   # paste the value
 ```
 
 Then hand the same value to the vault from that shell, so it goes into the database without ever
@@ -174,26 +181,29 @@ being printed — `psql -v` interpolates it and the token stays out of scrollbac
 
 ```bash
 PGPASSWORD="$SUPABASE_DB_PASSWORD" psql -h ... -U "postgres.$SUPABASE_PROJECT_REF" -d postgres \
-  -v tok="$TRAVEL_BACKFILL_TOKEN" -v pub="$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" <<'SQL'
+  -v tok="$TRAVEL_BACKFILL_TOKEN" <<'SQL'
 select vault.create_secret(
-  'https://<project-ref>.supabase.co/functions/v1', 'travel_functions_url',
-  'Where run_travel_backfill posts. No trailing slash.'
+  'https://<the site>/api', 'travel_functions_url',
+  'Where run_travel_backfill posts. The function name is appended. No trailing slash.'
 );
-select vault.create_secret(:'pub', 'travel_publishable_key',
-  'Gets the scheduled call past the gateway. Grants nothing on its own.');
 select vault.create_secret(:'tok', 'travel_backfill_token',
-  'What tells the travel function this is the schedule. Must match the TRAVEL_BACKFILL_TOKEN secret.');
+  'What tells the travel route this is the schedule. Must match the Vercel TRAVEL_BACKFILL_TOKEN.');
 SQL
 ```
 
 (The connection line is the one in AGENTS.md.)
 
-All three names are exactly what `run_travel_backfill` looks for; missing any of them it raises and
-says which, rather than returning quietly — the whole reason this moved out of GitHub Actions is
-that the workflow it replaced needed two repository secrets nobody knew were missing and failed 40
-runs out of 40 while the app showed a column of dashes that looked like a slow backlog.
+Both names are exactly what `run_travel_backfill` looks for; missing either it raises and says
+which, rather than returning quietly — the whole reason this moved out of GitHub Actions is that the
+workflow it replaced needed two repository secrets nobody knew were missing and failed 40 runs out
+of 40 while the app showed a column of dashes that looked like a slow backlog.
 
-**Why three rather than the one service-role key this used to send.** That key opens every table in
+**There used to be a third, `travel_publishable_key`.** It existed to get the scheduled call past
+Supabase's gateway, which validated `Authorization` and `apikey` as project keys. A Vercel route has
+no such gateway and ignores both, so on an existing deployment delete it rather than leave a secret
+nothing reads: `delete from vault.secrets where name = 'travel_publishable_key';`
+
+**Why a token of our own rather than the one service-role key this used to send.** That key opens every table in
 the database and the schedule needs to do exactly one thing with it, so a leak of the thing that
 spends the TfL budget was a leak of everything, and neither purpose could be rotated without the
 other. It was also tied to a moving part: Supabase issues both a legacy JWT and a newer `sb_secret_`
@@ -201,13 +211,14 @@ service key and injects whichever is current as `SUPABASE_SERVICE_ROLE_KEY`, so 
 the function's copy stopped being the same string with nothing on either side to show it — every
 scheduled run came back 401 while a hand-rolled call with the other key returned 200 on the same
 deployment. The token above is ours, means one thing, and is not tied to the platform's key rotation
-at all. It cannot go in `Authorization` or `apikey` because the gateway validates those as project
-keys, which is what the publishable key is for; the token travels in `X-Backfill-Token`.
+at all. It travels in `X-Backfill-Token`, its own header, which is what the route compares — a habit
+worth keeping now that there is no gateway with an opinion about `Authorization`.
 
-**Upgrading an existing deployment:** add the two new secrets, confirm a run works, then drop the
-old one — `delete from vault.secrets where name = 'travel_service_role_key';`. Nothing removes it
-for you: a migration that deletes a secret it did not create destroys a working deployment if it is
-ever re-run mid-rollout.
+**Upgrading an existing deployment:** repoint `travel_functions_url` at the site, put
+`TRAVEL_BACKFILL_TOKEN` on Vercel, confirm a run works, then drop what nothing reads any more —
+`delete from vault.secrets where name in ('travel_service_role_key', 'travel_publishable_key');`.
+Nothing removes them for you: a migration that deletes a secret it did not create destroys a working
+deployment if it is ever re-run mid-rollout.
 
 To check it, on the database connection in AGENTS.md:
 

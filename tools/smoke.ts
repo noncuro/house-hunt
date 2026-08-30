@@ -22,8 +22,7 @@ import {
 } from './fixture-session';
 import { listingFromHtml } from './read-listing';
 import { keepOffline, OFFLINE_ARGS } from './offline';
-import { startFunctions } from './edge-functions';
-import { stopTree } from './servers';
+import { startWebApp, stopTree } from './servers';
 import { localCredentials } from './supabase-local';
 
 const { path: EXTENSION, allowedHosts: ALLOWED_HOSTS } = smokeBuild();
@@ -44,12 +43,10 @@ mkdirSync(SHOTS, { recursive: true });
 // keeps the panel fast and its numbers fixed, rather than depending on what TfL says this morning.
 //
 // It is not what keeps the panel off the network, though — that was the belief this harness ran on
-// for a while, and it was wrong. The panel asks the `travel` function for the station walks
-// regardless and the function decides what it already knows, so with nothing serving the functions
-// it gets a 502, waits, and reports "panel never left its loading state": a sentence about a
-// spinner for what is really a process nobody started. It only ever passed because a
-// `supabase functions serve` happened to be running from something else. Hence `startFunctions`
-// below, which is now explicit and shared with `smoke:web`.
+// for a while, and it was wrong. The panel asks `/api/travel` for the station walks regardless and
+// the route decides what it already knows, so with nothing serving it the panel gets a connection
+// refused, waits, and reports "panel never left its loading state": a sentence about a spinner for
+// what is really a server nobody started. Hence `startWebApp` below, shared with `smoke:web`.
 const listing = listingFromHtml(fixturePath, url);
 const alsoCache =
   listing.postcode === null
@@ -74,16 +71,19 @@ if (alsoCache.length === 0) {
 const fixture = await seedFixture({ alsoCache });
 console.log(`fixture: signed in as ${FIXTURE_EMAIL}, opening listing ${listingId} for the first time`);
 
-// Before the browser: the panel asks for travel the moment it renders, and a function that comes
-// up late is a panel that has already given up.
-const functions = await startFunctions({ supabaseUrl: localCredentials().url });
+// Before the browser: the panel asks for travel the moment it renders, and a server that comes up
+// late is a panel that has already given up. The extension under test is built against
+// `WEB_APP_PORT` (`tools/build-smoke.ts`), which is the port this serves on — a build against one
+// port and a server on another is an extension whose every call is refused with nothing on screen
+// to say why.
+const website = await startWebApp(localCredentials());
 
-// The function server runs in a process group of its own so that stopping it stops the server
-// under the `supabase` wrapper too, which means Ctrl-C no longer reaches it through the terminal.
-// Passed on here, or giving up on a run is the way to leave one behind.
+// The website runs in a process group of its own so that stopping it stops the `next start`
+// underneath pnpm too, which means Ctrl-C no longer reaches it through the terminal. Passed on
+// here, or giving up on a run is the way to leave one behind.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    stopTree(functions);
+    stopTree(website);
     process.exit(130);
   });
 }
@@ -232,7 +232,7 @@ try {
   try {
     await context.close();
   } finally {
-    stopTree(functions);
+    stopTree(website);
   }
 }
 

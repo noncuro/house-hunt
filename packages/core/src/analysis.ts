@@ -580,10 +580,9 @@ function yesNo(parent: Record<string, unknown>, key: string): { present: boolean
   };
 }
 
-/** `console` is the only logging surface both a bundled MV3 service worker and a Deno Edge
- *  Function have without a dependency, and this module takes none by design (it is copied verbatim
- *  into `supabase/functions/_shared/` by `pnpm sync:function`). The prefix is what makes these
- *  findable in the function logs, where they sit among Supabase's own output. */
+/** `console` is the only logging surface a bundled MV3 service worker and a server route both have
+ *  without a dependency, and this module takes none by design. The prefix is what makes these
+ *  findable in the route's logs, where they sit among the platform's own output. */
 function warn(message: string): void {
   console.warn(`[analysis] ${message}`);
 }

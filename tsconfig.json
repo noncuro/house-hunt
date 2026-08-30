@@ -5,6 +5,5 @@
     "types": ["node"],
     "allowImportingTsExtensions": true
   },
-  "include": ["tools"],
-  "exclude": ["supabase/functions"]
+  "include": ["tools"]
 }

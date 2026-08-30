@@ -443,7 +443,7 @@ export async function addListingByUrl(url: string): Promise<AddListingResult> {
     };
   }
 
-  // The website's own route rather than an Edge Function; `docs/vercel-migration.md` says why.
+  // The website's own route rather than an Edge Function; `docs/server-side.md` says why.
   // A refusal comes back as a thrown sentence, which is the one the reader is shown.
   let reply: any;
   try {
@@ -663,7 +663,7 @@ export type RetrainResult =
 export async function retrainModel(labelMode?: LabelMode): Promise<RetrainResult> {
   await requireSession();
 
-  // A route on the website rather than an Edge Function; `docs/vercel-migration.md` says why the fit
+  // A route on the website rather than an Edge Function; `docs/server-side.md` says why the fit
   // could not stay on the Edge runtime. `callRoute` holds the relative URL, the bearer, and the
   // refusal that makes this unreachable from the extension — see its header for the whole argument.
   return await callRoute<RetrainResult>('predict', labelMode ? { labelMode } : {});
@@ -979,7 +979,7 @@ export async function getCachedTravelFor(
  *  a refusal is worse than no helper at all, because it reads as a supported thing to do. The
  *  readers below stay: reading these tables is exactly what every surface does.
  *
- *  Why the writes moved is on `supabase/functions/travel/index.ts`. Short version: the tables are
+ *  Why the writes moved is on `apps/web/src/app/api/travel/route.ts`. Short version: the tables are
  *  global on purpose, and validation there could only ever check that a number was plausible, not
  *  that it was true. */
 

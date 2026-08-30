@@ -36,12 +36,13 @@ The extension bundles only `WXT_*` vars, the website only `NEXT_PUBLIC_*`; both 
 Supabase project. `WXT_WEB_APP_URL` is where the extension sends sign-ins and the origin its
 bridge trusts. It is also where the extension's API calls go: four of them are routes on the
 website now, so `host_permissions` covers that origin as well as Supabase's. Nothing runs locally in
-production: analysis, invites, passwords and location lookups are routes in `apps/web/src/app/api/`,
-and travel/postcode resolution is the one Supabase Edge Function left (`docs/vercel-migration.md`).
-Deploy: website to Vercel (`apps/web`), the function via `pnpm sync:function && pnpm deploy:function`
-(refuses stale copies of `packages/core/src/{tfl,postcode,hubs}.ts` — keep those Deno-clean: no
-`node:` imports, no
-`import.meta.env`). Second machine: `SETUP.md`.
+production: analysis, invites, passwords, location lookups and travel are all routes in
+`apps/web/src/app/api/`. **Deploying the website is now the whole deployment** — there is one
+artefact and one place to look when something server-side is wrong, which is what the move off
+Supabase's Edge runtime bought. `apps/web/vercel.json` pins the region to `lhr1`, beside the
+database: the default is Washington, and every server-side query would cross the Atlantic while
+looking like success. **`docs/server-side.md`** is what a route here is: the reply convention, the
+hand-written gate, the region and the environment. Second machine: `SETUP.md`.
 
 ## Standing rules
 
@@ -138,8 +139,7 @@ script in your own browser. So:
 | web `lib/persist.ts` + `public/sw.js` | The offline half: the hunt in IndexedDB, the shell/build/photographs in the Cache API |
 | web `public/manifest.webmanifest` | What makes it installable, and the share target Rightmove shares into. Icons are drawn by `pnpm icons` |
 | `packages/core/` | Facts, hubs, listing extraction, stage (the funnel), sweep, travel, analysis, db, bridge contract |
-| web `app/api/` | The routes that hold the service role: `predict` (fit the verdict-score model), `listing` (one listing page, read server-side), `analyse` (vision, holds the OpenAI key), `invite`, `resolve-location`, `password`. Every one is `authedRoute` or a stated `publicRoute`, and `pnpm check:routes` is what holds that. `server/cors.ts` is what lets the extension and a Rightmove content script call the last four |
-| `supabase/functions/` | What has not moved yet (`docs/vercel-migration.md`): `travel` alone — TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set |
+| web `app/api/` | Everything that runs server-side, and the only thing holding the service role: `predict` (fit the verdict-score model), `listing` (one listing page, read server-side), `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `invite`, `resolve-location`, `password`. Every one is `authedRoute` or a stated `publicRoute`, and `pnpm check:routes` is what holds that — its `PUBLIC_ROUTES` is the whole record of what this deployment answers without a session. `server/cors.ts` is what lets the extension and a Rightmove content script call the ones they need |
 
 ## Decisions an agent might otherwise "fix"
 
@@ -315,9 +315,7 @@ listing, and what a share hands over), `invite` (what state an invitation is in,
 screens that show one), `hubs`, `stage`, `shortlist`, `sweep`, `travel` (what a cached journey means,
 and what one ask may cost before it is dispatched),
 `geo` (the sentence a refused position gets, and a maps link that is not a guess about the phone),
-`png`, `analysis`, `functions` (deno check — the Edge Function is outside tsc/oxlint), `sync` (the
-`_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a
-shared fix could sit unshipped with every check green), `routes` (every route says whether it needs a
+`png`, `analysis`, `routes` (every route says whether it needs a
 session, and the ones that do not are on a list with a reason),
 `one-client`, `migrations` (no two migrations claim the same version string),
 `bridge`, `withdrawn`, `recheck`, `full-sweep` (the unattended sweep's sequencing,
@@ -353,7 +351,7 @@ problem is collected and reported together.
 `smoke:web` takes names too, one level down: `pnpm smoke:web list rating` runs those sections and
 `pnpm smoke:web joining` runs that one, in the order the file declares them (`session`, `list`,
 `rating`, `funnel`, `offmarket`, `table`, `map`, `triage`, `tabs`, `refusals`, `joining`). The setup is not optional — the
-fixture, the Edge Functions and a production build of the website happen either way — so a subset
+fixture and a production build of the website happen either way — so a subset
 saves the browser work and a few seconds of a forty-second run, which is the difference worth having
 while you iterate on one assertion. A name that matches no section stops the run and prints the
 list, as `smoke:all` does with harnesses.
@@ -362,13 +360,19 @@ list, as `smoke:all` does with harnesses.
 `unsafe-eval` and React's dev build needs `eval()`, so under `next dev` the bundle dies on load and
 renders nothing. Needing no Rightmove page is what makes it the browser check CI can run.
 
-**Both `smoke` and `smoke:web` serve the Edge Functions themselves** (`tools/edge-functions.ts`,
-`functions serve --env-file supabase/.env`), because the runtime `supabase start` brings up has no
-environment of its own: without `WEB_APP_ORIGIN` every travel call is refused by CORS and the page
-spins forever. `smoke` did not, and passed anyway whenever a server left over from something else
-happened to be answering — a green tick that turns red on a clean machine with a message about a
-spinner. Its readiness probe is origin-matched for the same reason: Kong answers the CORS preflight
-204 by itself with nothing behind it, so "did anything reply" stays green with no backend at all.
+**Both `smoke` and `smoke:web` start the website themselves** (`startWebApp` in
+`tools/servers.ts`), because everything this app runs server-side is a route on it. That is new for
+`smoke`, which drives the extension against a real listing: the panel asks `/api/travel` for its
+station walks the moment it renders, so with nothing serving that it sits on a spinner and the
+harness reports "panel never left its loading state" — a sentence about a spinner for what is really
+a server nobody started. It used to start `supabase functions serve` for the same reason, and before
+that started nothing and passed only when a server left over from something else happened to be
+answering.
+
+The cost is that `pnpm smoke` now waits for a `next build` like `smoke:web` does. Both are built and
+served against the local stack, on `WEB_APP_PORT` — which the smoke extension is compiled to call
+(`tools/build-smoke.ts`), so a build on one port and a server on another is an extension whose every
+call is refused with nothing on screen to say why.
 
 **A harness owns the servers it starts, and refuses the ones it did not** (`tools/servers.ts`).
 Both are spawned in a process group of their own and stopped as a group: `pnpm exec next start` is
@@ -377,8 +381,7 @@ exited, which the next run then asserted against — green, about a build from a
 visible only as a page stuck on "Working…" or a connection refused halfway through. The group means
 Ctrl-C no longer reaches them through the terminal, so both harnesses pass the interrupt on. Before
 starting, `smoke:web` checks that 3199 is free and stops with the port and a `lsof` line if it is
-not, and `startFunctions` says so when another `supabase functions serve` is already running rather
-than letting the two take turns holding the container.
+not.
 
 Harness rules live in `tools/offline.ts` and the harness files; the cross-cutting one: no harness
 may reach Rightmove (`OFFLINE_ARGS` kills DNS for the domain). `SMOKE_LOG=all` widens the output —

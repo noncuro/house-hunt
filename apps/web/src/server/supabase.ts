@@ -9,7 +9,7 @@
  *  No CORS. These routes are same-origin to the page, so the browser sends no preflight. The day a
  *  route here is called by the extension or by a Rightmove content script it needs a real
  *  allowance — that is a gate, not a formality, and leaving it out silently is how the extension
- *  half of a migrated function stops working. `docs/vercel-migration.md` has the shape it must have.
+ *  half of a migrated function stops working. `docs/server-side.md` has the shape it must have.
  */
 
 /** Product-level outcomes are 200 with a `status`; this is for the cases where the caller got
