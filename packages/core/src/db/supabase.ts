@@ -22,6 +22,7 @@ import { MIN_PASSWORD_LENGTH } from '../contracts';
 import { rightmoveListingId } from '../listing';
 import type {
   AddListingResult,
+  AdminAction,
   AdminProject,
   AdminUser,
   AuthState,
@@ -2054,6 +2055,34 @@ export async function adminProjects(): Promise<AdminProject[]> {
     maxMembers: r.max_members,
     createdAt: r.created_at,
     spentThisMonthUsd: spentByProject.get(r.id) ?? 0,
+  }));
+}
+
+/** What admins have changed, newest first.
+ *
+ *  RLS returns nothing at all to a non-admin — unlike every other read here, where a member sees
+ *  their own rows — because the answer is which admin did it, and that is not the subject's to read.
+ *  `LIMIT` rather than the keyset walk `usageSince` does: nothing is summed from these rows, so a
+ *  page of the most recent is the whole question. */
+const ADMIN_ACTION_PAGE = 200;
+
+export async function adminActions(): Promise<AdminAction[]> {
+  const { data, error } = await db()
+    .from('admin_action')
+    .select('id, occurred_at, actor_id, action, subject_user_id, subject_project_id, previous_value, new_value')
+    .order('id', { ascending: false })
+    .limit(ADMIN_ACTION_PAGE);
+  fail('reading what admins have changed', error);
+
+  return ((data ?? []) as any[]).map((r) => ({
+    id: String(r.id),
+    occurredAt: r.occurred_at,
+    actorId: r.actor_id ?? null,
+    action: r.action,
+    subjectUserId: r.subject_user_id ?? null,
+    subjectProjectId: r.subject_project_id ?? null,
+    previousValue: r.previous_value === null ? null : Number(r.previous_value),
+    newValue: Number(r.new_value),
   }));
 }
 

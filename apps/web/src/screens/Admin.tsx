@@ -5,12 +5,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   MIN_PASSWORD_LENGTH,
   listingUrl,
+  type AdminAction,
   type AdminProject,
   type AdminUser,
   type Invite,
   type UsageRow,
 } from '@house-hunt/core';
 import {
+  adminActions,
   adminProjects,
   adminSetMaxMembers,
   adminSetPassword,
@@ -22,6 +24,7 @@ import {
   revokeInvite,
 } from '@house-hunt/core/db';
 import { charge, Icon, money, SpendBar } from '@house-hunt/ui';
+import { inviteState, type InviteState } from '@/lib/invite';
 
 /** What everyone is spending, and the ceilings on it.
  *
@@ -44,7 +47,7 @@ import { charge, Icon, money, SpendBar } from '@house-hunt/ui';
  *  here *is* the signal — a cap is a threshold with a right and a wrong side, which is exactly the
  *  case confidence was not. */
 export function Admin() {
-  const [tab, setTab] = useState<'users' | 'projects' | 'invites' | 'charges'>('users');
+  const [tab, setTab] = useState<'users' | 'projects' | 'invites' | 'charges' | 'changes'>('users');
   /** Set by clicking a row's charge count; the charges tab opens filtered to it. Drilling in from
    *  the row that raised the question is the whole point of the drill-down. */
   const [focus, setFocus] = useState<Focus>(null);
@@ -55,6 +58,7 @@ export function Admin() {
   const users = useQuery({ queryKey: ['admin', 'users'], queryFn: adminUsers });
   const projects = useQuery({ queryKey: ['admin', 'projects'], queryFn: adminProjects });
   const invites = useQuery({ queryKey: ['admin', 'invites'], queryFn: () => listInvites() });
+  const changes = useQuery({ queryKey: ['admin', 'changes'], queryFn: adminActions });
 
   // One usage read covers both jobs: the per-row "and last month" figures, and the charge list.
   // Asking for a month more than the tables strictly need costs one query and saves a second.
@@ -94,6 +98,7 @@ export function Admin() {
             ['projects', 'Projects', projects.data ? String(projects.data.length) : null],
             ['invites', 'Invites', invites.data ? String(invites.data.length) : null],
             ['charges', 'Charges', usage.data ? charge(spentThisMonth) : null],
+            ['changes', 'Changes', changes.data ? String(changes.data.length) : null],
           ] as const
         ).map(([key, label, count]) => (
           <button
@@ -139,6 +144,9 @@ export function Admin() {
           users={users.data ?? []}
           projects={projects.data ?? []}
         />
+      )}
+      {tab === 'changes' && (
+        <Changes query={changes} users={users.data ?? []} projects={projects.data ?? []} />
       )}
     </section>
   );
@@ -666,19 +674,9 @@ function nameOf(row: Named): string {
 // Invites.
 // ------------------------------------------------------------------------------------------------
 
-/** The four states an invite can be in, and the one that is not stored.
- *
- *  Nothing ages an invite out: a pending row keeps `status: 'pending'` for ever, so an invite two
- *  months past its date still says it is waiting to be accepted unless the date is read. The
- *  contract derives `expired` when it builds the row, and this derives it again from `expires_at`
- *  at render time — the two agree on load, and only this one stays right on a tab left open across
- *  the expiry, which is exactly the tab someone is watching an invite on. */
-function inviteState(invite: Invite, now: number): 'pending' | 'expired' | 'accepted' | 'revoked' {
-  if (invite.status !== 'pending') return invite.status;
-  return invite.expired || Date.parse(invite.expiresAt) <= now ? 'expired' : 'pending';
-}
-
-const INVITE_WORD: Record<'pending' | 'expired' | 'accepted' | 'revoked', string> = {
+/** The words this table uses. Which of the four states an invite is in is decided in
+ *  `lib/invite.ts`, alongside the Project screen that renders the same fact in a sentence. */
+const INVITE_WORD: Record<InviteState, string> = {
   pending: 'waiting',
   expired: 'expired',
   accepted: 'accepted',
@@ -759,6 +757,99 @@ function Invites({ query, onNotice }: { query: Loadable<Invite[]>; onNotice: (me
 // ------------------------------------------------------------------------------------------------
 // The charges themselves.
 // ------------------------------------------------------------------------------------------------
+
+// ------------------------------------------------------------------------------------------------
+// What admins have changed.
+//
+// Being an admin is a row in a table, and until now raising a cap or a member ceiling left no mark:
+// the figure was different afterwards. That was fine while there was one admin who was also
+// the person paying the bill, because there was nobody to audit against. This is the table that
+// answers "who raised this, and from what" the first time somebody has to ask it.
+//
+// Written by the same functions that perform the change and readable by admins alone — a member sees
+// an empty list, because RLS returns them nothing rather than their own rows.
+// ------------------------------------------------------------------------------------------------
+
+const CHANGE_WORD: Record<AdminAction['action'], string> = {
+  set_user_cap: 'personal cap',
+  set_project_cap: 'project cap',
+  set_max_members: 'member limit',
+};
+
+function Changes({
+  query,
+  users,
+  projects,
+}: {
+  query: Loadable<AdminAction[]>;
+  users: AdminUser[];
+  projects: AdminProject[];
+}) {
+  const userName = new Map(users.map((u) => [u.id, u.displayName || u.email]));
+  const projectName = new Map(projects.map((p) => [p.id, p.name]));
+
+  const waiting = loadState(query, 'changes');
+  if (waiting) return waiting;
+  const rows = query.data ?? [];
+  if (rows.length === 0) return <p className="dim">No caps or limits have been changed.</p>;
+
+  return (
+    <>
+      <p className="dim admin-lede">
+        Every cap and member limit an admin has moved, newest first. A change made by the server
+        rather than by a person — anything operational — has no admin against it.
+      </p>
+      <div className="admin-scroll">
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Admin</th>
+              <th>Changed</th>
+              <th>For</th>
+              <th>From</th>
+              <th>To</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td className="dim">
+                  {ago(row.occurredAt)} {clock(row.occurredAt)}
+                </td>
+                <td>
+                  {row.actorId === null ? (
+                    <span className="dim" title="Not a person: an operational change made as the service role">
+                      the server
+                    </span>
+                  ) : (
+                    named(row.actorId, userName)
+                  )}
+                </td>
+                <td>{CHANGE_WORD[row.action]}</td>
+                <td>
+                  {row.subjectUserId !== null
+                    ? named(row.subjectUserId, userName)
+                    : named(row.subjectProjectId, projectName)}
+                </td>
+                {/* A cap set on a row that had none is a first figure rather than a rise, and a dash
+                    is what to draw where there is no number. */}
+                <td className="dim">{row.previousValue === null ? '—' : figure(row.action, row.previousValue)}</td>
+                <td>{figure(row.action, row.newValue)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+/** A member limit is a count of people and a cap is money. Drawing both as money would put a dollar
+ *  sign in front of "six". */
+function figure(action: AdminAction['action'], value: number): string {
+  return action === 'set_max_members' ? String(value) : money(value);
+}
 
 function Charges({
   query,
