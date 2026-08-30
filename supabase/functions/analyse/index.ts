@@ -64,7 +64,8 @@ type Claim =
 
 type Result =
   | { status: 'cached' | 'analysed' | 'in-progress' }
-  | { status: 'capped'; scope: 'project' | 'user'; spent: number; cap: number; resets_at: string };
+  | { status: 'capped'; scope: 'project' | 'user'; spent: number; cap: number; resets_at: string }
+  | { status: 'failed'; error: string };
 
 serve(async (request) => {
   requireEnv({ OPENAI_API_KEY, SUPABASE_URL, SERVICE_KEY });
@@ -130,10 +131,19 @@ async function analyse(rightmoveId: string, projectId: string, userId: string): 
   }
 
   if (claim.status === 'busy') {
-    const rows = await rest<Array<{ status: string }>>(
-      `property_analysis?rightmove_id=eq.${eq(rightmoveId)}&select=status`,
+    const rows = await rest<Array<{ status: string; error: string | null }>>(
+      `property_analysis?rightmove_id=eq.${eq(rightmoveId)}&select=status,error`,
     );
-    return { status: rows[0]?.status === 'running' ? 'in-progress' : 'cached' };
+    const held = rows[0];
+    if (held?.status === 'running') return { status: 'in-progress' };
+    // A refused claim over a failed row is new, and it is not a cache hit. It used to be
+    // unreachable — `claim_analysis` re-took every failed row, so a failure was always claimed —
+    // and now that a row can be waiting out its backoff or have spent its attempts, `cached` would
+    // draw a flat with no analysis as though it had one. That is the blank that looks like data.
+    if (held?.status === 'failed') {
+      return { status: 'failed', error: held.error ?? 'the analysis failed and has not been retried yet' };
+    }
+    return { status: 'cached' };
   }
 
   try {
@@ -170,7 +180,15 @@ async function analyse(rightmoveId: string, projectId: string, userId: string): 
 
     // Release the claim — which is also what drains the reservation — or one bad run would block
     // this listing, and hold budget against it, until the stale timeout.
-    await patch(rightmoveId, { status: 'failed', error: e instanceof Error ? e.message : String(e) });
+    //
+    // Through the RPC rather than a patch, because the count has to be `attempts + 1` computed in
+    // the same statement that writes it. Reading it here and writing it back would drop increments
+    // exactly when two runs fail the same listing at once, which is when a listing is failing hard
+    // — and a count that never climbs is a ceiling that is never reached.
+    await rpc('record_analysis_failure', {
+      p_rightmove_id: rightmoveId,
+      p_error: e instanceof Error ? e.message : String(e),
+    });
     throw e;
   }
 }

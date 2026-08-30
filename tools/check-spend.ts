@@ -441,6 +441,63 @@ async function main() {
   is('...unattributed to any budget', stillDone?.claimed_by_project, null);
 
   // ----------------------------------------------------------------------------------------- //
+  console.log('\na failure that keeps failing stops being paid for');
+
+  // The case this section exists for cost real money. `claim_analysis` used to re-take *any* row
+  // sitting at `failed`, so a listing whose analysis fails deterministically — output truncated,
+  // or output that will not validate — was re-analysed, and re-charged, on every sweep run,
+  // for ever, with nothing on screen saying so.
+  const failed = async (id: string, over: Record<string, unknown>) =>
+    must(`seeding a failure for ${id}`, (await db.from('property_analysis').upsert({
+      rightmove_id: id, model: MODEL, status: 'failed', image_count: 0, has_floorplan: false,
+      ...over,
+    })).error);
+
+  await resetBudget({ project: 20, user: 20 }, [one, two]);
+
+  // Still retried while it has attempts left and its wait is up: a transient failure has to stay
+  // recoverable, or one bad minute at OpenAI would write a listing off permanently.
+  await failed(listing(0), { attempts: 1, next_attempt_at: new Date(Date.now() - 60_000).toISOString() });
+  is('a failure whose wait is up is retried', (await claim(listing(0), one)).status, 'claimed');
+
+  // Inside its backoff, nothing takes it — which is the doubling doing its job.
+  await failed(listing(1), { attempts: 1, next_attempt_at: new Date(Date.now() + 3_600_000).toISOString() });
+  is('a failure still inside its backoff is not retried', (await claim(listing(1), one)).status, 'busy');
+
+  // And once the attempts are spent it is never taken again, whatever the clock says. A row with
+  // its wait long past is the exact shape the old code re-claimed on every run.
+  await failed(listing(2), { attempts: 5, next_attempt_at: new Date(Date.now() - 86_400_000).toISOString() });
+  is('a failure that has spent its attempts is never retried', (await claim(listing(2), one)).status, 'busy');
+  is('...and none of that charged anybody', await usageRows(), 0);
+
+  // A null wait is a row that failed before the backoff existed. It reads as "now", so it gets one
+  // more go rather than being written off on a count nobody was keeping.
+  await failed(listing(3), { attempts: 0, next_attempt_at: null });
+  is('a failure from before the backoff existed is retried once more', (await claim(listing(3), one)).status, 'claimed');
+
+  // The count is incremented in SQL, not read and written back, so two runs failing the same
+  // listing at once leave 2. Read-modify-write would leave 1 — and a count that does not climb is
+  // a ceiling that is never reached, which is the bug wearing a fix's clothes.
+  await failed(listing(4), { attempts: 0, next_attempt_at: null });
+  await Promise.all([
+    rpc('record_analysis_failure', { p_rightmove_id: listing(4), p_error: 'one' }),
+    rpc('record_analysis_failure', { p_rightmove_id: listing(4), p_error: 'two' }),
+  ]);
+  const { data: counted } = await db.from('property_analysis')
+    .select('attempts, next_attempt_at').eq('rightmove_id', listing(4)).single();
+  is('two concurrent failures count as two', counted?.attempts, 2);
+  is('...and a recorded failure sets a wait', counted?.next_attempt_at !== null, true);
+
+  // A successful analysis clears the history, so a listing that failed twice and then worked is
+  // not carrying two attempts against its next bad day.
+  must('finishing the analysis', (await db.from('property_analysis')
+    .update({ status: 'done' }).eq('rightmove_id', listing(4))).error);
+  const { data: cleared } = await db.from('property_analysis')
+    .select('attempts, next_attempt_at').eq('rightmove_id', listing(4)).single();
+  is('a successful analysis clears the attempt count', cleared?.attempts, 0);
+  is('...and the wait with it', cleared?.next_attempt_at, null);
+
+  // ----------------------------------------------------------------------------------------- //
   console.log('\nin-flight claims hold budget, and stale ones give it back');
 
   // Cap 0.25, estimate 0.10. Nothing spent, so the first claim (0 + 0 + 0.10) fits and the second
