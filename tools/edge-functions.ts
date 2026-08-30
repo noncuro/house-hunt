@@ -18,7 +18,7 @@
  *  first time somebody runs the harness on a clean machine and the message is about a panel.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { stopTree, wasAskedToStop } from './servers';
 
@@ -32,6 +32,64 @@ export const WEB_APP_ORIGIN = 'http://127.0.0.1:3199';
  *  rather than imported because the functions run on Deno and this runs on Node, and because the
  *  point is to notice when the two lists drift apart. */
 const SDK_HEADERS = ['content-type', 'authorization', 'apikey', 'x-client-info', 'x-retry-count'];
+
+/** An origin nothing grants, for the half of the assertion that a permissive parser would pass. */
+const STRANGER = 'https://not-the-site.example';
+
+/** The origins `supabase/.env` grants — which is what the running functions were started with, so
+ *  it is the right thing to hold them to. Last assignment wins, as `set -a; source` would. */
+function grantedOrigins(envFile: string): string[] {
+  const line = readFileSync(envFile, 'utf8')
+    .split('\n')
+    .findLast((l) => l.startsWith('WEB_APP_ORIGIN='));
+  return (line ?? '')
+    .slice('WEB_APP_ORIGIN='.length)
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin !== '');
+}
+
+async function allowedOriginFor(supabaseUrl: string, origin: string): Promise<string | null> {
+  const response = await fetch(`${supabaseUrl}/functions/v1/travel`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: origin,
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': SDK_HEADERS.join(', '),
+    },
+    signal: AbortSignal.timeout(3_000),
+  });
+  return response.headers.get('access-control-allow-origin');
+}
+
+/** Collected and reported together: told one at a time, a list that is wrong in two places takes
+ *  two runs to find out about. */
+async function checkGrantedOrigins(
+  supabaseUrl: string,
+  envFile: string,
+  child: ChildProcess,
+): Promise<void> {
+  const problems: string[] = [];
+  for (const granted of grantedOrigins(envFile)) {
+    const answered = await allowedOriginFor(supabaseUrl, granted);
+    if (answered !== granted) {
+      problems.push(`supabase/.env grants ${granted}, but the functions answered ${answered}`);
+    }
+  }
+  // The other half. Every origin passing the loop above is also what a parser that allows anything
+  // looks like, and that is the failure worth catching here rather than in production.
+  const answered = await allowedOriginFor(supabaseUrl, STRANGER);
+  if (answered !== 'null') {
+    problems.push(`nothing grants ${STRANGER}, but the functions answered ${answered}`);
+  }
+  if (problems.length > 0) {
+    stopTree(child);
+    throw new Error(
+      `the functions' allowed origins do not match supabase/.env:\n  ${problems.join('\n  ')}\n` +
+        'See `cors()` in supabase/functions/_shared/http.ts.',
+    );
+  }
+}
 
 export interface FunctionsOptions {
   /** Where the local stack answers, from `localCredentials()`. */
@@ -145,6 +203,11 @@ export async function startFunctions({
             'supabase/functions/_shared/http.ts.',
         );
       }
+      // Every origin the file grants, and one it does not. `cors()` reads a comma-separated list,
+      // and the singular parser it replaced compared the whole string as one origin — so a site
+      // served on two names was refused on both, while this probe went green on the one name the
+      // harness happens to use. One origin cannot tell those two parsers apart. Two can.
+      await checkGrantedOrigins(supabaseUrl, envFile, child);
       console.log(`edge functions accept ${origin}`);
       return child;
     }
