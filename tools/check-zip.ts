@@ -19,12 +19,32 @@ import { EXPECTED_EXTENSION_VERSION } from '../apps/web/src/lib/extension-versio
 import { ROOT, STAMP, ZIP, hashOf, stampNow, type Stamp } from './package-stamp';
 import { checkArchiveIsComplete } from './manifest-paths';
 
-// Advisory on a pull request, fatal everywhere else. On a branch that bumps the extension, the zip
-// and its stamp are legitimately behind — `package.yml` rebuilds and commits them when the change
-// reaches main, which is the whole point of having a workflow do it — so failing here would block
-// every extension PR on a step the robot is about to take anyway. Locally and on main it is a real
-// failure: there is nothing else coming.
-const advisory = process.env.GITHUB_EVENT_NAME === 'pull_request';
+// A stale archive is fatal on your own machine and a note in CI. It used to be a note on a pull
+// request and fatal everywhere else, and "everywhere else" included the one place it could not be
+// acted on.
+//
+// The reasoning it replaces was "locally and on main it is a real failure: there is nothing else
+// coming". On main something is coming. `package.yml` triggers on the same push and the two
+// workflows run concurrently, so `check` reads the archive as it stood before the merge and fails
+// on drift that is being repaired while it reads. Nothing then supersedes that result either: the
+// repackage commit is pushed with the default `GITHUB_TOKEN`, and GitHub does not trigger workflows
+// for those by design, so `check` is never re-run on the corrected tree. Main sat red from #113 to
+// #116 for that alone — three merges of real work all reporting failure, which is worse than no
+// check at all, because the next red one would have been read as normal.
+//
+// Locally it stays fatal because there the sentence is true: nothing is coming, `pnpm package` is
+// the answer, and the person reading it is the one who can run it.
+//
+// It is not re-armed for the packaging job, and that is not a gap. That job runs this immediately
+// after `pnpm package`, which has just written the stamp from the sources in the tree — so drift
+// there is unreachable unless `pnpm package` is itself broken, in which case the build, the zip and
+// the stamp steps have already failed. The three assertions that step is actually for — the
+// versions agree, the archive holds every file its own manifest names, the stamp is of this
+// archive — are untouched and fatal everywhere, including there.
+//
+// What no longer has a CI check is "the zip on main is a build of main" in the case where
+// `package.yml` did not run at all, which its `paths:` filter decides. See #120.
+const advisory = Boolean(process.env.GITHUB_ACTIONS);
 
 let failures = 0;
 /** `stale` marks a check that a pending repackage will fix by itself, which is the whole set of
@@ -35,7 +55,7 @@ function check(what: string, got: unknown, want: unknown, stale = false): void {
   const ok = got === want;
   if (!ok && !(stale && advisory)) failures++;
   const how = ok ? 'ok  ' : stale && advisory ? 'note' : 'FAIL';
-  const why = stale && advisory ? ' (main will rebuild it on merge)' : '';
+  const why = stale && advisory ? ' (package.yml rebuilds it on main)' : '';
   console.log(`  ${how} ${what}${ok ? '' : ` — got ${got}, want ${want}${why}`}`);
 }
 
@@ -103,7 +123,10 @@ const changed = Object.keys(now.files)
 if (changed.length > 0) {
   if (!advisory) failures++;
   const how = advisory ? 'note' : 'FAIL';
-  console.log(`  ${how} ${changed.length} source file(s) changed since it was packaged${advisory ? ' — main will rebuild it on merge' : ' — run `pnpm package`'}:`);
+  console.log(
+    `  ${how} ${changed.length} source file(s) changed since it was packaged` +
+      `${advisory ? ' — package.yml rebuilds it on main' : ' — run `pnpm package`'}:`,
+  );
   for (const path of changed.slice(0, 12)) console.log(`         ${path}`);
   if (changed.length > 12) console.log(`         …and ${changed.length - 12} more`);
 } else {
