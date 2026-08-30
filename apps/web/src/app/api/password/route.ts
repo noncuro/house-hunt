@@ -3,47 +3,44 @@
  *  `redeem` — somebody who was invited turns their code into an account.
  *  `reset`  — an admin sets somebody's password for them, because they forgot it.
  *
- *  Both are here rather than in two functions because they are the same act from two directions:
+ *  Both are here rather than in two routes because they are the same act from two directions:
  *  writing a password into `auth.users` for a person who cannot write one themselves. Splitting
- *  them would mean two deploys, two entries in `config.toml` and two copies of the password rules,
- *  and the rules are the part that must not drift.
+ *  them would mean two copies of the password rules, and the rules are the part that must not
+ *  drift.
  *
  *  ---------------------------------------------------------------------------------------------
  *  THIS IS THE ONLY UNAUTHENTICATED ENDPOINT IN THIS SYSTEM, AND ONLY HALF OF IT IS.
  *
  *  `redeem` cannot require a caller: the person calling it has no account yet, which is the entire
- *  point. So the platform's `verify_jwt` is off for this function (see `[functions.password]` in
- *  supabase/config.toml and the `--no-verify-jwt` in `pnpm deploy:function`), and every gate is
- *  written out by hand below:
+ *  point. So this is the one `publicRoute` in the deployment — `pnpm check:routes` holds every one
+ *  of those against a list, and the list is the record of what is open — and every gate is written
+ *  out by hand below:
  *
  *    - `redeem` is gated by the invite code, checked with the address it was sent to, through
- *      `redeem_code()` — which rate-limits guessing in the database, because an isolate cannot
- *      count. Read the block above that function in the migration for what that covers and what it
- *      does not.
- *    - `reset` is gated by `requireCaller` plus `isAdmin`, exactly as if the platform had verified
- *      nothing — which it has not. Turning `verify_jwt` off for the *function* is why this check
- *      cannot be left implicit.
+ *      `redeem_code()` — which rate-limits guessing in the database, because a serverless
+ *      invocation cannot count. Read the block above that function in the migration for what that
+ *      covers and what it does not.
+ *    - `reset` is gated by `requireCaller` plus `isAdmin`, called by hand inside the handler rather
+ *      than by the wrapper. That is the cost of the two halves sharing a route, and it is why
+ *      `reset` reads its caller as its first statement.
  *
  *  A refusal is a stated status wherever the product has a story for it (`no-such-code`,
  *  `already-registered`, `rate-limited`), and an HTTP error where the caller got something wrong.
- *  That is the convention in `_shared/http.ts` and it matters most here: "something went wrong"
+ *  That is the convention in `server/handler.ts` and it matters most here: "something went wrong"
  *  gets the same code typed in again, which is precisely what the limiter counts.
  *  ---------------------------------------------------------------------------------------------
- *
- *  Deploy:
- *    supabase functions deploy password --project-ref <ref> --no-verify-jwt
  */
-import { requireCaller } from '../_shared/caller.ts';
-import { callerAddressHash, hashCode, normaliseCode } from '../_shared/code.ts';
-import { body, HttpError, requireEnv, rpc, SERVICE_KEY, serve, SUPABASE_URL } from '../_shared/http.ts';
+import { MIN_PASSWORD_LENGTH } from '@house-hunt/core';
 
-/** Ten characters. Kept in step with `MIN_PASSWORD_LENGTH` in `src/lib/auth.ts` by hand — the
- *  extension cannot import from a Deno function and this function cannot import from the bundle,
- *  and the two checks are not redundant: the client one is so a person is told before they submit,
- *  and this one is the one that is actually enforced. If you change one, change the other. */
-const MIN_PASSWORD_LENGTH = 10;
+import { requireCaller } from '@/server/caller';
+import { callerAddressHash, hashCode, normaliseCode } from '@/server/code';
+import { jsonBody, preflightRoute, publicRoute } from '@/server/handler';
+import { HttpError, rpc, serviceKey, supabaseUrl } from '@/server/supabase';
 
-interface Request_ {
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+interface Input {
   action?: 'redeem' | 'reset';
   email?: string;
   password?: string;
@@ -51,19 +48,24 @@ interface Request_ {
   userId?: string;
 }
 
-serve(async (request) => {
-  requireEnv({ SUPABASE_URL, SERVICE_KEY });
+export const POST = publicRoute(
+  'redeem: an invitee has no account yet, so there is no caller to require. Gated by the invite ' +
+    'code through redeem_code(), which rate-limits guessing in the database. The reset half calls ' +
+    'requireCaller itself and refuses a non-admin.',
+  async (request) => {
+    const input = await jsonBody<Input>(request);
+    switch (input.action) {
+      case 'redeem':
+        return await redeem(request, input);
+      case 'reset':
+        return await reset(request, input);
+      default:
+        throw new HttpError(400, 'bad-request', 'action must be "redeem" or "reset"');
+    }
+  },
+);
 
-  const input = await body<Request_>(request);
-  switch (input.action) {
-    case 'redeem':
-      return await redeem(request, input);
-    case 'reset':
-      return await reset(request, input);
-    default:
-      throw new HttpError(400, 'bad-request', 'action must be "redeem" or "reset"');
-  }
-});
+export const OPTIONS = preflightRoute();
 
 // ------------------------------------------------------------------------------------------------
 // Redeeming an invite.
@@ -75,7 +77,7 @@ type Redeemed =
   | { status: 'already-registered'; email: string }
   | { status: 'rate-limited'; retryAfterSeconds: number };
 
-async function redeem(request: Request, input: Request_): Promise<Redeemed> {
+async function redeem(request: Request, input: Input): Promise<Redeemed> {
   const email = normalise(input.email);
   const password = requirePassword(input.password);
   const code = normaliseCode(input.code);
@@ -103,21 +105,24 @@ async function redeem(request: Request, input: Request_): Promise<Redeemed> {
   if (created === 'exists') return { status: 'already-registered', email };
 
   // Membership is NOT granted here. `consume_invites()` runs on first successful sign-in and is the
-  // only thing that turns an invite into membership; the extension signs in immediately after this
+  // only thing that turns an invite into membership; the client signs in immediately after this
   // returns, on exactly the path an existing user takes. One path, one invariant.
-  console.log(`redeemed an invite for ${email}`);
+  // The outcome, not the address. Same argument as the invite route's log above.
+  console.log('an invite was redeemed and an account created');
   return { status: 'redeemed', email };
 }
 
 async function createUser(email: string, password: string): Promise<'created' | 'exists'> {
-  const response = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+  const key = serviceKey();
+  const response = await fetch(`${supabaseUrl()}/auth/v1/admin/users`, {
     method: 'POST',
     headers: {
-      apikey: SERVICE_KEY!,
-      Authorization: `Bearer ${SERVICE_KEY}`,
+      apikey: key,
+      Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ email, password, email_confirm: true }),
+    cache: 'no-store',
   });
   if (response.ok) return 'created';
 
@@ -137,7 +142,7 @@ async function createUser(email: string, password: string): Promise<'created' | 
 // Admin view and tells the user what it is, the same way they told them their invite code.
 // ------------------------------------------------------------------------------------------------
 
-async function reset(request: Request, input: Request_): Promise<{ status: 'reset'; userId: string }> {
+async function reset(request: Request, input: Input): Promise<{ status: 'reset'; userId: string }> {
   const caller = await requireCaller(request);
   if (!caller.isAdmin) {
     throw new HttpError(403, 'not-allowed', "only an admin can set somebody else's password");
@@ -149,23 +154,26 @@ async function reset(request: Request, input: Request_): Promise<{ status: 'rese
   }
   const password = requirePassword(input.password);
 
-  const response = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+  const key = serviceKey();
+  const response = await fetch(`${supabaseUrl()}/auth/v1/admin/users/${userId}`, {
     method: 'PUT',
     headers: {
-      apikey: SERVICE_KEY!,
-      Authorization: `Bearer ${SERVICE_KEY}`,
+      apikey: key,
+      Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ password }),
+    cache: 'no-store',
   });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`admin updateUser: ${response.status} ${text.slice(0, 300)}`);
   }
 
-  // The id and never the password. Function logs are readable by anyone with dashboard access, and
-  // a password in a log is a password in a place nobody thinks to look for one.
-  console.log(`${caller.email} set the password for ${userId}`);
+  // Two ids, never the password and never an address. A deployment's logs are readable by anyone
+  // with dashboard access: a password in one is a password in a place nobody thinks to look for
+  // one, and an address is the personal detail the standing rule names.
+  console.log(`${caller.userId} set the password for ${userId}`);
   return { status: 'reset', userId };
 }
 
@@ -182,6 +190,12 @@ function normalise(email: string | undefined): string {
 }
 
 /** The password rule, in the one place it is enforced.
+ *
+ *  `MIN_PASSWORD_LENGTH` is imported rather than restated. The Edge Function held its own copy of
+ *  the number with a comment asking whoever changed one to change the other, because a Deno
+ *  function could not import from the workspace; a route can, so the two checks now read the same
+ *  constant. They are still not redundant: the client one is so a person is told before they
+ *  submit, and this one is the one that is enforced.
  *
  *  The message says the length and nothing else — no "must contain a symbol", because there is no
  *  such rule here, and a refusal that describes a rule the system does not have is how somebody

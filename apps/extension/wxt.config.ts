@@ -15,11 +15,19 @@ const supabaseHost = env.WXT_SUPABASE_URL;
 if (!supabaseHost) {
   throw new Error(`WXT_SUPABASE_URL missing from ${repoRoot}.env — the extension cannot reach its database`);
 }
-
-// Where the website lives. The bridge content script is injected on this origin and no other, so
-// this is a trust boundary and not only a destination (design D3).
+// Where the website lives, and now two things at once. The bridge content script is injected on
+// this origin and no other, so it is a trust boundary and not only a destination (design D3) — and
+// four of the functions the extension calls are routes on it, so it is also a host permission.
+// One constant deliberately: the origin the extension injects into and the origin it calls must be
+// the same, and two derivations of one variable is how they stop being.
+//
+// Origin, not the URL as written: a match pattern built from a URL with a path in it matches
+// nothing.
 if (!env.WXT_WEB_APP_URL) {
-  throw new Error(`WXT_WEB_APP_URL missing from ${repoRoot}.env — the bridge has no origin to trust`);
+  throw new Error(
+    `WXT_WEB_APP_URL missing from ${repoRoot}.env — the bridge has no origin to trust and the ` +
+      'extension cannot reach its API routes',
+  );
 }
 const webAppOrigin = new URL(env.WXT_WEB_APP_URL).origin;
 
@@ -79,16 +87,19 @@ export default defineConfig({
     // a bridge on the website's origin, and holds no page of its own to pop up. Clicking the icon
     // opens the website — see the `action.onClicked` handler in background.ts.
     action: { default_title: 'House hunt' },
-    // One host, and that is the whole list on purpose.
+    // Two hosts, and that is the whole list on purpose.
     //
     // `api.tfl.gov.uk` and `api.postcodes.io` used to be here, because the worker called both
-    // directly. They moved into the `travel` Edge Function — partly because a browser tab has no
-    // host permissions and the website needs the same answers, but mostly because `travel_time`
-    // and `station_point` are shared by every project and the client was the one writing them.
-    // The TfL key went with them; it used to ship in this bundle, where it was public.
+    // directly. They moved server-side — partly because a browser tab has no host permissions and
+    // the website needs the same answers, but mostly because `travel_time` and `station_point` are
+    // shared by every project and the client was the one writing them. The TfL key went with them;
+    // it used to ship in this bundle, where it was public.
     //
-    // Covers both the REST API and the Edge Functions, which live on the same host.
-    host_permissions: [`${supabaseHost}/*`],
+    // The Supabase host covers the REST API, GoTrue and whatever Edge Functions are left. The
+    // website's own origin is here because `analyse`, `invite`, `password` and `resolve-location`
+    // are routes on it now: without it every one of those fetches is blocked before it leaves the
+    // worker, and it fails as `TypeError: Failed to fetch`, which reads like the site being down.
+    host_permissions: [`${supabaseHost}/*`, `${webAppOrigin}/*`],
   },
   hooks: {
     // The one thing in the manifest that cannot be written by the entrypoint itself — see

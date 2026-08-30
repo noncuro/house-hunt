@@ -3,10 +3,10 @@
  *  A person reads this off a phone screen and types it into a laptop, or reads it down a phone
  *  line. Every decision here follows from that and from nothing else.
  *
- *  Hand-written, like `http.ts` and `caller.ts` — not one of the generated copies of `src/lib/`
- *  that `tools/sync-edge-function.ts` maintains. It lives here rather than in `src/lib/` because
- *  only the server side ever generates or hashes a code: the extension sends the plaintext exactly
- *  as it was typed and never learns what it hashes to.
+ *  It lives beside the routes rather than in `packages/core` because only the server side ever
+ *  generates or hashes a code: the extension and the website send the plaintext exactly as it was
+ *  typed and never learn what it hashes to. A copy in a shared package would be a copy in the
+ *  extension bundle, which publishes the hashing to anybody who unzips it.
  */
 
 /** Thirty-one characters: digits 2-9 and A-Z without I, L or O.
@@ -88,9 +88,10 @@ export async function hashCode(code: string): Promise<string> {
  *  none.
  *
  *  `x-forwarded-for` is a header, and a header is a claim. It is worth counting only because this
- *  function is unreachable except through Supabase's edge, which sets it; if that ever stopped
- *  being true the per-address ceiling would quietly become decorative, and nothing here would
- *  notice. The other two ceilings in `redeem_code` are what still hold in that case. */
+ *  route is unreachable except through Vercel's edge, which overwrites the header with the address
+ *  the connection came from; if that ever stopped being true the per-address ceiling would quietly
+ *  become decorative, and nothing here would notice. The other two ceilings in `redeem_code` are
+ *  what still hold in that case. */
 export async function callerAddressHash(request: Request): Promise<string | null> {
   const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
   if (!forwarded) return null;

@@ -601,23 +601,30 @@ export async function extensionLog(
 
 /** Invite somebody, and get the code back in the clear.
  *
- *  Through the `invite` Edge Function rather than by writing a row, because the code is the whole
- *  point and the row never holds it: `create_invite` is given a *hash*, and the plaintext exists
- *  for exactly one moment, in that function's reply. A fixture that inserted its own invite row
- *  would have to hash a code itself, and would then be testing its own hashing rather than the
- *  path a real invite takes.
+ *  Through the `invite` route rather than by writing a row, because the code is the whole point and
+ *  the row never holds it: `create_invite` is given a *hash*, and the plaintext exists for exactly
+ *  one moment, in that route's reply. A fixture that inserted its own invite row would have to hash
+ *  a code itself, and would then be testing its own hashing rather than the path a real invite
+ *  takes.
+ *
+ *  `origin` is the website, and it is a parameter because the route is on the website now — this
+ *  used to POST to `{supabaseUrl}/functions/v1/invite`, which every harness could reach because
+ *  every harness has a local Supabase. Only `smoke:web` calls this, and it is the harness that
+ *  starts the website, so it is the one that knows where it is. Defaulting to 3199 here would make
+ *  this look callable from `smoke` and `smoke:search`, where the failure would be a connection
+ *  refused in setup rather than a sentence saying why.
  *
  *  The address is deliberately a parameter with no default. This mints a real invite against the
  *  fixture project, and the caller is the one who knows whether it is about to redeem it. */
 export async function createInvite(
   session: Session,
   email: string,
+  origin: string,
 ): Promise<{ status: string; code: string | null }> {
-  const response = await fetch(`${url}/functions/v1/invite`, {
+  const response = await fetch(`${origin}/api/invite`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${session.access_token}`,
-      apikey: anonKey,
       'content-type': 'application/json',
     },
     body: JSON.stringify({ email, projectId: FIXTURE_PROJECT }),

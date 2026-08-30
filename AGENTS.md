@@ -34,10 +34,13 @@ Xvfb, and why updating the extension is an `ExecStartPre` rather than its own ti
 
 The extension bundles only `WXT_*` vars, the website only `NEXT_PUBLIC_*`; both point at the same
 Supabase project. `WXT_WEB_APP_URL` is where the extension sends sign-ins and the origin its
-bridge trusts. Nothing runs locally in production: analysis, travel/postcode resolution, invites
-and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: website to Vercel
-(`apps/web`), functions via `pnpm sync:function && pnpm deploy:function` (refuses stale copies of
-`packages/core/src/{analysis,png}.ts` — keep those Deno-clean: no `node:` imports, no
+bridge trusts. It is also where the extension's API calls go: four of them are routes on the
+website now, so `host_permissions` covers that origin as well as Supabase's. Nothing runs locally in
+production: analysis, invites, passwords and location lookups are routes in `apps/web/src/app/api/`,
+and travel/postcode resolution is the one Supabase Edge Function left (`docs/vercel-migration.md`).
+Deploy: website to Vercel (`apps/web`), the function via `pnpm sync:function && pnpm deploy:function`
+(refuses stale copies of `packages/core/src/{tfl,postcode,hubs}.ts` — keep those Deno-clean: no
+`node:` imports, no
 `import.meta.env`). Second machine: `SETUP.md`.
 
 ## Standing rules
@@ -135,8 +138,8 @@ script in your own browser. So:
 | web `lib/persist.ts` + `public/sw.js` | The offline half: the hunt in IndexedDB, the shell/build/photographs in the Cache API |
 | web `public/manifest.webmanifest` | What makes it installable, and the share target Rightmove shares into. Icons are drawn by `pnpm icons` |
 | `packages/core/` | Facts, hubs, listing extraction, stage (the funnel), sweep, travel, analysis, db, bridge contract |
-| web `app/api/` | The routes that hold the service role: `predict` (fit the verdict-score model), `listing` (one listing page, read server-side). Every one is `authedRoute` or a stated `publicRoute`, and `pnpm check:routes` is what holds that |
-| `supabase/functions/` | What has not moved yet (`docs/vercel-migration.md`): `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `invite`, `resolve-location`, `password` |
+| web `app/api/` | The routes that hold the service role: `predict` (fit the verdict-score model), `listing` (one listing page, read server-side), `analyse` (vision, holds the OpenAI key), `invite`, `resolve-location`, `password`. Every one is `authedRoute` or a stated `publicRoute`, and `pnpm check:routes` is what holds that. `server/cors.ts` is what lets the extension and a Rightmove content script call the last four |
+| `supabase/functions/` | What has not moved yet (`docs/vercel-migration.md`): `travel` alone — TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set |
 
 ## Decisions an agent might otherwise "fix"
 
@@ -207,7 +210,7 @@ script in your own browser. So:
   module the content script uses, which is why that module moved out of the extension: one page
   shape read two ways is a fork, and the day Rightmove renames a field the copy that did not learn
   about it returns a flat with no postcode rather than an error. Read the block at the top of
-  `resolve-location/index.ts`; the argument there is the whole permission this has. What is
+  `app/api/resolve-location/route.ts`; the argument there is the whole permission this has. What is
   forbidden, still, is turning a *list* into fetches — a sweep's sightings are opened in front of
   the reader by the paced opener, and must never be handed to this.
 
@@ -312,9 +315,10 @@ listing, and what a share hands over), `invite` (what state an invitation is in,
 screens that show one), `hubs`, `stage`, `shortlist`, `sweep`, `travel` (what a cached journey means,
 and what one ask may cost before it is dispatched),
 `geo` (the sentence a refused position gets, and a maps link that is not a guess about the phone),
-`png`, `analysis`, `functions` (deno check — Edge Functions are outside tsc/oxlint), `sync` (the
+`png`, `analysis`, `functions` (deno check — the Edge Function is outside tsc/oxlint), `sync` (the
 `_shared/` copies still match `packages/core` — it used to be asserted only at deploy time, so a
-shared fix could sit unshipped with every check green),
+shared fix could sit unshipped with every check green), `routes` (every route says whether it needs a
+session, and the ones that do not are on a list with a reason),
 `one-client`, `migrations` (no two migrations claim the same version string),
 `bridge`, `withdrawn`, `recheck`, `full-sweep` (the unattended sweep's sequencing,
 against a fake extension and clock). Each pins reasoning invisible when wrong — a bad bearing still

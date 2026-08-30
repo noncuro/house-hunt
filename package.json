@@ -57,7 +57,7 @@
     "fixture:search": "tsx tools/fixture-search.ts",
     "sync:function": "tsx tools/sync-edge-function.ts",
     "check:sync": "tsx tools/sync-edge-function.ts --check",
-    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; if [ -n \"$WEB_APP_ORIGIN\" ]; then supabase secrets set WEB_APP_ORIGIN=\"$WEB_APP_ORIGIN\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; else echo \"warning: WEB_APP_ORIGIN unset in .env — unsetting any existing secret so CORS does not keep allowing a stale origin\" >&2; supabase secrets unset WEB_APP_ORIGIN --project-ref \"$SUPABASE_PROJECT_REF\" 2>/dev/null || true; fi; for fn in analyse invite resolve-location travel; do supabase functions deploy \"$fn\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; done; supabase functions deploy password --project-ref \"$SUPABASE_PROJECT_REF\" --no-verify-jwt'"
+    "deploy:function": "tsx tools/sync-edge-function.ts --check && bash -c 'set -a; source ./.env; set +a; if [ -n \"$WEB_APP_ORIGIN\" ]; then supabase secrets set WEB_APP_ORIGIN=\"$WEB_APP_ORIGIN\" --project-ref \"$SUPABASE_PROJECT_REF\" || exit 1; else echo \"warning: WEB_APP_ORIGIN unset in .env — unsetting any existing secret so CORS does not keep allowing a stale origin\" >&2; supabase secrets unset WEB_APP_ORIGIN --project-ref \"$SUPABASE_PROJECT_REF\" 2>/dev/null || true; fi; supabase functions deploy travel --project-ref \"$SUPABASE_PROJECT_REF\"'"
   },
   "devDependencies": {
     "@supabase/supabase-js": "^2.112.2",

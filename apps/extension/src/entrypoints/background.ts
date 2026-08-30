@@ -1,5 +1,5 @@
 import { configureCore, startSessionHeartbeat } from '@/lib/auth';
-import { webAppUrl } from '@/lib/web-app';
+import { webAppOrigin, webAppUrl } from '@/lib/web-app';
 // What signing in means, and everything that reads the database with the result, is shared with the
 // website. What keeping a session alive in a service worker means is not, and stays above.
 import { accessToken, requireSession, signIn, signOut, Unauthenticated } from '@house-hunt/core/db';
@@ -64,13 +64,17 @@ import {
 } from '@house-hunt/core/db';
 import { logWarn } from '@house-hunt/core';
 
-/** The analysis runs on Supabase, not on anyone's laptop.
+/** The analysis runs on the website's server, not on anyone's laptop.
  *
  *  It used to be a local Node process holding the OpenAI key, which meant a listing was only ever
  *  analysed while one laptop was awake with a terminal open — the other person's laptop could read
- *  every result and produce none. It is now an Edge Function on the same project as the database.
- *  See supabase/functions/analyse/. */
-const ANALYSIS_FUNCTION = `${import.meta.env.WXT_SUPABASE_URL}/functions/v1/analyse`;
+ *  every result and produce none. Then a Supabase Edge Function, and now a route on the site.
+ *  See `apps/web/src/app/api/analyse/route.ts`.
+ *
+ *  Built here rather than through `callRoute` because this call reads a shape of its own: five
+ *  statuses that each become a different `AnalysisRequest`, including two that arrive on a non-2xx.
+ *  `callRoute` throws on those, which would collapse "capped" into a failure. */
+const ANALYSIS_ROUTE = `${webAppOrigin()}/api/analyse`;
 
 /** A sweep fill-in tab is disposable: it exists so a listing loads far enough for the content
  *  script to record it and cache its travel times, not to be read. Left open, a run of a few
@@ -439,11 +443,12 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
   }
 }
 
-/** Ask the Edge Function to analyse this listing's photos.
+/** Ask the website to analyse this listing's photos.
  *
- *  The bearer is the user's access token, not the publishable key: the function verifies its
- *  caller, checks the project's membership and its `project_property` link, and charges the call
- *  against both caps (design D10). The key identifies the project and authorises nothing.
+ *  The bearer is the user's access token. The route verifies its caller, checks the project's
+ *  membership and its `project_property` link, and charges the call against both caps (design D10).
+ *  The publishable key that used to ride along is gone with the Edge Function: PostgREST wanted an
+ *  `apikey` header and a route does not read one.
  *
  *  A refusal is a state rather than a failure. "capped" in particular has to reach the panel
  *  intact — "the monthly analysis budget is used up" is a sentence a person can act on, and a
@@ -453,11 +458,10 @@ async function requestAnalysis(rightmoveId: string): Promise<AnalysisRequest> {
   if (!token) throw new Unauthenticated();
 
   try {
-    const response = await fetch(ANALYSIS_FUNCTION, {
+    const response = await fetch(ANALYSIS_ROUTE, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        apikey: import.meta.env.WXT_SUPABASE_PUBLISHABLE_KEY,
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ rightmoveId }),
@@ -492,12 +496,12 @@ async function requestAnalysis(rightmoveId: string): Promise<AnalysisRequest> {
       // Worth recording rather than swallowing: this is the difference between "the analysis is
       // still running" and "it will never arrive", and the panel used to report both as neither.
       const message = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`;
-      logWarn('analysis', `the analyse function refused ${rightmoveId}`, { status: response.status, message });
+      logWarn('analysis', `the analyse route refused ${rightmoveId}`, { status: response.status, message });
       return { status: 'failed', message };
     }
     return { status: 'queued' };
   } catch (e) {
-    logWarn('analysis', 'could not reach the analyse function', { rightmoveId, error: describe(e) });
+    logWarn('analysis', 'could not reach the analyse route', { rightmoveId, error: describe(e) });
     return { status: 'failed', message: describe(e) };
   }
 }

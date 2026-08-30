@@ -44,7 +44,8 @@ export {
   type StationInfo,
 } from './tfl';
 
-// `analysis` and `png` are deliberately absent. They are the source of truth for the `analyse`
-// Edge Function, copied into it by `pnpm sync:function`, and the only things that import them are
-// that function and the checks over it. Re-exporting them would put an image decoder in every
-// bundle that wanted a type.
+// `analysis` and `png` are deliberately absent from this barrel. `analysis` has a subpath of its
+// own (`@house-hunt/core/analysis`) because the `analyse` route imports it directly — the generated
+// Deno copy that used to stand in for that import is gone — and `png` reaches it through that.
+// Re-exporting either here would put an image decoder in every bundle that wanted a type; a subpath
+// puts it only in the one that asks.

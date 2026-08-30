@@ -7,9 +7,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./db": "./src/db/index.ts",
-    "./tfl": "./src/tfl.ts"
+    "./tfl": "./src/tfl.ts",
+    "./analysis": "./src/analysis.ts"
   },
-  "//exports": "Two entry points, and the split is the point. '.' is types, contracts and pure domain logic and pulls in no supabase-js; './db' is the data layer and does. packages/ui may import the first and never the second \u2014 see tools/check-one-client.ts.",
+  "//exports": "Three entry points, and the split is the point. '.' is types, contracts and pure domain logic and pulls in no supabase-js; './db' is the data layer and does; './analysis' is the vision pass and its PNG decoder, which only the analyse route imports. packages/ui may import the first and never the second \u2014 see tools/check-one-client.ts.",
   "dependencies": {
     "@supabase/supabase-js": "^2.112.2"
   }

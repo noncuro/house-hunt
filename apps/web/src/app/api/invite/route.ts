@@ -1,7 +1,7 @@
 /** Invites, and the account that comes into existence because of one.
  *
  *  Public signup is disabled at the Supabase project — that is the whole enforcement, and this
- *  function is where the exception is granted. It runs with the service role, so nothing here is
+ *  route is where the exception is granted. It runs with the service role, so nothing here is
  *  protected by RLS and every gate is written out by hand (design D7):
  *
  *    - an **admin** may invite any address, to any project, or to the platform with no project at
@@ -11,24 +11,24 @@
  *      non-expired invites** — otherwise six outstanding invites all land and the project holds
  *      twelve people.
  *
- *  **The ceiling is the database's invariant, not this function's.** `create_invite` counts and
+ *  **The ceiling is the database's invariant, not this route's.** `create_invite` counts and
  *  inserts in one transaction under an advisory lock on the project, so two members inviting at the
- *  same moment cannot both read five and both write a sixth. This function used to insert and then
- *  re-count and withdraw, which never over-admitted but was a compensation where the specification
- *  asked for an invariant. What stays here is the one rule the database cannot know: that a
- *  non-admin may only name their **active** project. `create_invite` re-checks the weaker form of
- *  it — admin, or a member of the named project — where it cannot be skipped.
+ *  same moment cannot both read five and both write a sixth. This used to insert and then re-count
+ *  and withdraw, which never over-admitted but was a compensation where the specification asked for
+ *  an invariant. What stays here is the one rule the database cannot know: that a non-admin may only
+ *  name their **active** project. `create_invite` re-checks the weaker form of it — admin, or a
+ *  member of the named project — where it cannot be skipped.
  *
  *  Being at capacity is a stated result, not an error. A generic failure at this point gets the
  *  same address typed in again; "this project is at its limit of 6 people" does not.
  *
  *  **What the invite hands over is a code, and this is the only moment it exists in the clear.**
- *  This function used to create the `auth.users` row here and leave it passwordless, because
- *  sign-in was a code emailed on demand and the account only had to exist for that email to be
- *  sendable. Sign-in is a password now and nothing sends email, so the account is created at the
- *  moment the invitee chooses a password — in the `password` function, against the code minted
- *  here. Only the hash is stored (see the migration), so the plaintext returned below is the one
- *  copy there will ever be: the inviter texts it, or resends to mint another.
+ *  This used to create the `auth.users` row here and leave it passwordless, because sign-in was a
+ *  code emailed on demand and the account only had to exist for that email to be sendable. Sign-in
+ *  is a password now and nothing sends email, so the account is created at the moment the invitee
+ *  chooses a password — in `api/password`, against the code minted here. Only the hash is stored
+ *  (see the migration), so the plaintext returned below is the one copy there will ever be: the
+ *  inviter texts it, or resends to mint another.
  *
  *  **An address that already has an account is not invited; it is added.** `create_invite` writes
  *  the membership in the same transaction and answers `added`, and no code comes back, because
@@ -38,15 +38,16 @@
  *
  *  For a stranger's address, membership is still not created here. The invite is consumed on
  *  first successful sign-in, so a pending invite that is never used leaves nothing behind.
- *
- *  Deploy:
- *    supabase functions deploy invite --project-ref <ref>
  */
-import { requireCaller, requireMembership, type Caller } from '../_shared/caller.ts';
-import { formatCode, generateCode, hashCode } from '../_shared/code.ts';
-import { body, HttpError, requireEnv, rpc, SERVICE_KEY, serve, SUPABASE_URL } from '../_shared/http.ts';
+import { type Caller, requireMembership } from '@/server/caller';
+import { formatCode, generateCode, hashCode } from '@/server/code';
+import { authedRoute, jsonBody, preflightRoute } from '@/server/handler';
+import { HttpError, rpc } from '@/server/supabase';
 
-interface Request_ {
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+interface Input {
   email?: string;
   /** Absent means the caller's active project. `null` means a platform invite, admins only. */
   projectId?: string | null;
@@ -71,11 +72,8 @@ interface Created {
   invite: Invite | null;
 }
 
-serve(async (request) => {
-  requireEnv({ SUPABASE_URL, SERVICE_KEY });
-
-  const caller = await requireCaller(request);
-  const input = await body<Request_>(request);
+export const POST = authedRoute(async (request, caller) => {
+  const input = await jsonBody<Input>(request);
   const email = normalise(input.email);
   const projectId = await target(caller, input);
 
@@ -101,19 +99,24 @@ serve(async (request) => {
     invite: created.invite,
   };
   if (created.status === 'added') {
-    console.log(`added ${email} to ${projectId ?? 'a hunt of their own'} by ${caller.email}`);
+    console.log(`added a member to ${projectId ?? 'a hunt of their own'} by ${caller.userId}`);
     return outcome;
   }
   if (created.status !== 'invited' || !created.invite) return outcome;
 
-  // The address and the project, never the code. A function log is readable by anyone with
-  // dashboard access, and a code in a log is a code somewhere it was not handed to.
-  console.log(`invited ${email} to ${projectId ?? 'the platform'} by ${caller.email}`);
+  // The invite's id and the project, never the code and never either address. A deployment's logs
+  // are readable by anyone with dashboard access: a code in one is a code somewhere it was not
+  // handed to, and an email address in one is the personal detail the standing rule names, in a
+  // place with its own retention and no reason to hold it. The id says which row this was, which
+  // is the whole question a log is asked, and `invite` holds the address for anyone entitled to it.
+  console.log(`invited ${created.invite.id} to ${projectId ?? 'the platform'} by ${caller.userId}`);
   return { ...outcome, code: formatCode(code) };
 });
 
+export const OPTIONS = preflightRoute();
+
 /** Which project this invite is for, and whether the caller has any standing to say so. */
-async function target(caller: Caller, input: Request_): Promise<string | null> {
+async function target(caller: Caller, input: Input): Promise<string | null> {
   // `projectId: null`, written explicitly, is the platform invite. Absent is not the same thing —
   // that is "my project", and the two must not be confused, because one of them creates a project.
   if ('projectId' in input && input.projectId === null) {

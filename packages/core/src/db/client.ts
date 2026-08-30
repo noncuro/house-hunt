@@ -28,6 +28,17 @@ let client: SupabaseClient | null = null;
  *  them can be written here. */
 export interface Host {
   ensureSession?: () => Promise<Session | null>;
+  /** Where the website is, for the surfaces that are not it.
+   *
+   *  The third thing that differs between the two hosts, and it arrived with the move off Supabase's
+   *  Edge runtime (`docs/vercel-migration.md`). A route is reached at `/api/<name>`, relative, so it
+   *  follows whichever origin the page is served from — production, a preview, or localhost — and
+   *  never becomes a second copy of an origin to keep in step. The extension's background worker has
+   *  no such origin: a relative fetch there resolves against `chrome-extension://` and 404s with a
+   *  body that parses as nothing, so it says where the website is and the extension is the only
+   *  thing that sets this. The website leaves it unset, deliberately — a website that named its own
+   *  origin would be the copy that goes stale. */
+  apiOrigin?: string;
 }
 
 let ensure: () => Promise<Session | null> = async () => {
@@ -49,6 +60,14 @@ export function configure(next: SupabaseClient, host: Host = {}): void {
   }
   client = next;
   if (host.ensureSession) ensure = host.ensureSession;
+  if (host.apiOrigin !== undefined) apiOrigin = host.apiOrigin;
+}
+
+/** Set by the extension, unset on the website. Read by `callRoute`. */
+let apiOrigin: string | null = null;
+
+export function configuredApiOrigin(): string | null {
+  return apiOrigin;
 }
 
 /** A session that is usable now, or null for signed out — never an exception. */

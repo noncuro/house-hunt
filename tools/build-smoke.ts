@@ -7,6 +7,11 @@
  *  `wxt build` as environment variables, which Vite prefers over the `.env` file for prefixed
  *  keys — so nothing about the hub's `.env` changes and nothing about it is read.
  *
+ *  `WXT_WEB_APP_URL` is set here for the same reason and with more at stake: four of the functions
+ *  the extension calls are routes on the website now, so that variable decides which *server* a
+ *  harness talks to. Pointed at the deployed site — which is what the repo's `.env` says — a smoke
+ *  run would call production.
+ *
  *  It writes to `apps/extension/.output/smoke`, not `.output`. The extension you have loaded in
  *  Chrome lives in the second one, and quietly repointing it at a database that is empty whenever
  *  Docker is not running would turn a working install into an empty one with nothing on screen to
@@ -14,6 +19,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { WEB_APP_PORT } from './servers';
 import { localCredentials } from './supabase-local';
 
 const { url, anonKey } = localCredentials();
@@ -36,6 +42,14 @@ const result = spawnSync(
       ...process.env,
       WXT_SUPABASE_URL: url,
       WXT_SUPABASE_PUBLISHABLE_KEY: anonKey,
+      // Where the extension's API routes are, and it has to be said here for the same reason the
+      // two above do: it is compiled in, through Vite for the bundle and `loadEnv` for the
+      // manifest's `host_permissions`. Left to the repo's `.env` this would be the *deployed* site,
+      // and `requestAnalysis` fires on every listing the panel records — so every `pnpm smoke` run
+      // would POST to production. Nothing serves this port unless `smoke:web` is running, which is
+      // the point: the call fails as a connection refused and is logged, rather than arriving
+      // somewhere real.
+      WXT_WEB_APP_URL: `http://127.0.0.1:${WEB_APP_PORT}`,
     },
   },
 );

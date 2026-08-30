@@ -92,7 +92,7 @@ refresh_token_reuse_interval = 10
 # cutover step that cannot be skipped.
 enable_signup = false
 # Ten, matching MIN_PASSWORD_LENGTH in src/lib/messages.ts and in
-# supabase/functions/password/index.ts. It belongs to [auth] and not to [auth.email] — the CLI
+# apps/web/src/app/api/password/route.ts. It belongs to [auth] and not to [auth.email] — the CLI
 # reports an unknown field there rather than refusing, so a misplaced line is a rule that silently
 # is not applied. The two checks in the code are the ones a person actually meets, and they say so
 # in a sentence; this is the backstop under them.
@@ -193,9 +193,6 @@ url = ""
 # who has no account yet, so there is no token to present; the function checks the invite code
 # instead and rate-limits guessing in the database. Its other half (an admin setting a password)
 # calls `requireCaller` itself, precisely because this line means nothing verified it first.
-[functions.password]
-verify_jwt = false
-
 [analytics]
 enabled = false
 port = 54347

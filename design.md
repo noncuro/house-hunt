@@ -196,10 +196,10 @@ membership is created on first successful sign-in, never at invite time, so an u
 invite leaves nothing behind.
 
 The account-creation moment moved with the password change (D1): the invite mints a code
-(only its hash is stored) and the `password` function creates the account when the
+(only its hash is stored) and the `password` route creates the account when the
 invitee chooses a password against that code.
 
-**Still true because** `supabase/functions/invite/index.ts:1-36`,
+**Still true because** `apps/web/src/app/api/invite/route.ts:1-41`,
 `supabase/migrations/20260809310000_multi_tenant.sql:614,640-650`.
 
 ### D7 (split-web-app) — The web app is client-rendered
@@ -258,21 +258,24 @@ treated as unlimited. `capped` is a structured result the panel renders as a sta
 everything that costs no money keeps working.
 
 **Still true because** `supabase/migrations/20260809310000_multi_tenant.sql:765-887`,
-`supabase/functions/analyse/index.ts:54,111`, `packages/ui/src/Spend.tsx:5`.
+`apps/web/src/app/api/analyse/route.ts:48,123`, `packages/ui/src/Spend.tsx:5`.
 
-### D10 — Edge Functions verify their caller from the JWT
+### D10 — The server verifies its caller from the JWT
 
 The bearer token is the user's access token; the publishable key identifies the project
 and authorises nothing. `requireCaller` resolves the user, their active project and
-its membership. It, not platform JWT verification, is what gates these functions.
+its membership. It, not platform JWT verification, is what gates this code — which is
+why the gate survived the move off Supabase's Edge runtime unchanged, and why
+`authedRoute` exists to make it unskippable rather than remembered.
 `analyse` additionally checks the project has claimed the property
 (`project_property`), so it cannot be driven to analyse arbitrary listing ids. Then it
-checks caps, claims, calls OpenAI, records usage. Functions keep a service-role client
-for writes because the tables they write are deliberately not client-writable (D4); the
-JWT is identity, not write authority.
+checks caps, claims, calls OpenAI, records usage. The service role does the writes
+because the tables written are deliberately not client-writable (D4); the JWT is
+identity, not write authority.
 
-**Still true because** `supabase/functions/_shared/caller.ts:7`,
-`supabase/functions/_shared/http.ts:48`, `supabase/functions/analyse/index.ts:22-32`.
+**Still true because** `apps/web/src/server/caller.ts:22`,
+`apps/web/src/server/handler.ts:35`, `apps/web/src/app/api/analyse/route.ts:13-21`,
+`supabase/functions/_shared/caller.ts:7`.
 
 ### D11 — Hubs are project data
 
@@ -285,12 +288,12 @@ corollary: `SEED_HUBS` is for dev tools only, and a hub with no coordinates is s
 never defaulted (see also D15).
 
 Adding a hub resolves a name to a Rightmove location identifier through the
-`resolve-location` function, which stays inside the standing no-crawl rule: **one**
+`resolve-location` route, which stays inside the standing no-crawl rule: **one**
 request, initiated by a person adding **one** hub, never in the background, never
 enumerating, rate-limited per user — restated at the call site because it is the kind of
 thing that looks like precedent later.
 
-**Still true because** `supabase/functions/resolve-location/index.ts:13`,
+**Still true because** `apps/web/src/app/api/resolve-location/route.ts:16-40`,
 `packages/core/src/hubs.ts:9,97,182`.
 
 ### D13 — Signed-out and no-project are rendered states, resolved before anything else

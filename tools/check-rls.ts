@@ -389,7 +389,7 @@ async function signIn(email: string): Promise<SupabaseClient> {
 
 async function main() {
   await tearDown();
-  const { userA, userB, userAdmin } = await setUp();
+  const { userA, userB } = await setUp();
   const a = await signIn(EMAIL_A);
 
   // ----------------------------------------------------------------------------------------- //

@@ -19,6 +19,7 @@
  *  Why the gate is here rather than in the platform or in middleware: `docs/vercel-migration.md`.
  */
 import { type Caller, requireCaller } from './caller';
+import { corsHeaders, preflight } from './cors';
 import { HttpError } from './supabase';
 
 export async function jsonBody<T>(request: Request): Promise<T> {
@@ -48,31 +49,50 @@ export function publicRoute<T>(
   return route(work);
 }
 
+/** The `OPTIONS` a cross-origin caller sends first.
+ *
+ *  A third kind of export, and named rather than left as a bare function on purpose: `check:routes`
+ *  holds every exported HTTP method to one of these builders, and an `OPTIONS` that escaped that
+ *  rule would be the one method nobody was checking. It answers headers only — there is no caller
+ *  to resolve, because a preflight carries no credentials by design.
+ *
+ *  Only the routes with a non-page caller export one. A same-origin request is never preflighted,
+ *  so `predict` and `listing` need none and do not have one. */
+export function preflightRoute(): (request: Request) => Promise<Response> {
+  return async (request: Request) => preflight(request);
+}
+
 /** Mirrors `serve()`: 405 for anything but POST, `HttpError` at its own status, and everything else
  *  a 500 that still says what happened — a blank 500 is the failure mode this codebase calls
- *  "blanks look like real data". */
+ *  "blanks look like real data".
+ *
+ *  Every reply carries the CORS headers, including the failures. A refusal without them is read by
+ *  the browser as a CORS error and the body — which says what was actually wrong — is thrown away
+ *  before any code sees it, so the caller gets "something went wrong" about a 403 that named the
+ *  problem. For a same-origin caller the headers are inert. */
 function route<T>(work: (request: Request) => Promise<T>): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
+    const cors = corsHeaders(request.headers.get('Origin'));
     try {
       if (request.method !== 'POST') {
         throw new HttpError(405, 'method-not-allowed', `${request.method} is not allowed here`);
       }
-      return reply(200, await work(request));
+      return reply(200, await work(request), cors);
     } catch (e) {
       if (e instanceof HttpError) {
         console.error(`${request.url}: ${e.code}: ${e.message}`);
-        return reply(e.status, { code: e.code, error: e.message });
+        return reply(e.status, { code: e.code, error: e.message }, cors);
       }
       const message = e instanceof Error ? e.message : String(e);
       console.error(`${request.url}: ${message}`);
-      return reply(500, { code: 'failed', error: message });
+      return reply(500, { code: 'failed', error: message }, cors);
     }
   };
 }
 
-function reply(status: number, payload: unknown): Response {
+function reply(status: number, payload: unknown, cors: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors },
   });
 }
