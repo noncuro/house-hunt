@@ -759,8 +759,9 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
     mutationFn: async () => await createInvite(email.trim(), project.id),
     onSuccess: async (outcome) => {
       setResult(outcome);
-      // Only a real invite clears the field. Every other outcome is about the address that is
-      // still in it, and clearing it would leave the sentence underneath pointing at nothing.
+      // Both ways an invite can finish clear the field: a code sent, and an existing account added
+      // outright. Every other outcome is about the address that is still in it, and clearing it
+      // would leave the sentence underneath pointing at nothing.
       if (outcome.status === 'invited' || outcome.status === 'added') setEmail('');
       await refresh();
     },
