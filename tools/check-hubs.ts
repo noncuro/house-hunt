@@ -14,6 +14,8 @@ import {
   initialBearing,
   locationLookupFor,
   nearestHub,
+  sweepableHubs,
+  travelDestinations,
 } from '../packages/core/src/hubs';
 import type { Place } from '../packages/core/src/types';
 
@@ -145,6 +147,7 @@ const place = (over: Partial<Place>): Place => ({
   displayLocationIdentifier: null,
   sweepRadiusMiles: null,
   maxDaysSinceAdded: null,
+  travelTimed: true,
   ...over,
 });
 
@@ -242,6 +245,44 @@ check(
   nearestHub(duncanTerrace, hubsFromProject([nearbyOffice]))?.hub.name,
   'Work',
 );
+
+// Which places a journey is asked about. Two clauses and two different facts: no postcode means a
+// place *cannot* be routed to, and untimed means it is not *worth* routing to. Conflating them is
+// how a postcode arriving on a neighbourhood later leaves it silently untimed, and how a place
+// somebody switched off goes on costing TfL calls.
+//
+// The same predicate is written again in SQL, in `travel_gaps`, which is where the spend is and the
+// copy that gets forgotten — `check:travel` is what holds the two together.
+console.log('\nwhich places a journey is asked about');
+const office = place({ label: 'Work', postcode: 'EC1V 1JN', lat: 51.53, lon: -0.09 });
+const neighbourhood = place({ label: 'Angel', postcode: null, lat: ANGEL.lat, lon: ANGEL.lon });
+/** The shape this whole issue is about: a neighbourhood the hunt sweeps, with a postcode good
+ *  enough to route to, that nobody wants a commute to. */
+const untimed = swept({ label: 'Borough', postcode: 'SE1 1JA', lat: 51.501, lon: -0.094, travelTimed: false });
+check(
+  'a timed place with a postcode is a destination',
+  travelDestinations([office]).map((p) => p.label),
+  ['Work'],
+);
+check(
+  'a place switched off is not, however good its postcode',
+  travelDestinations([office, untimed]).map((p) => p.label),
+  ['Work'],
+);
+check(
+  'and neither is one with no postcode, for the other reason entirely',
+  travelDestinations([office, neighbourhood]).map((p) => p.label),
+  ['Work'],
+);
+// Nothing is deleted when a place is switched off, so switching it back on is the whole undo.
+check(
+  'switching it back on makes it a destination again',
+  travelDestinations([{ ...untimed, travelTimed: true }]).map((p) => p.label),
+  ['Borough'],
+);
+// Sweeping and the compass are the jobs an untimed place is kept for, and it must not lose either.
+check('an untimed place is still swept', sweepableHubs([untimed]).map((p) => p.label), ['Borough']);
+check('and still names a flat on the compass', hubsFromProject([untimed])[0]?.name, 'Borough');
 
 // What gets sent to Rightmove when somebody looks up the area to sweep around a place.
 //

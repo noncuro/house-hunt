@@ -254,18 +254,34 @@ export function isSwept(place: Place): boolean {
   );
 }
 
-/** The places a journey can actually be timed to: the ones with a postcode.
+/** The places a journey can be timed to: the ones with a postcode that somebody wants them
+ *  timed.
  *
  *  Routing is postcode to postcode (see `TRAVEL_BASIS` in tfl.ts), so a place without one has no
  *  journey — which is the normal state for somewhere the hunt searches around rather than commutes
  *  to, and for every neighbourhood the `places_are_hubs` migration folded in.
  *
+ *  `travelTimed` is the second clause and a different fact: a place with a perfectly good postcode
+ *  that nobody wants a commute to. Two clauses rather than one derived from the radius, because a
+ *  place can be both — you can search around Angel and still want to know the journey there — and
+ *  deriving it would be the app quietly deciding, which is how somebody loses a commute they wanted
+ *  without being told.
+ *
  *  It matters that the travel views ask for this rather than iterating every place. They read an
  *  absent row as "no route", which is TfL saying the journey is impossible — so listing a
  *  postcode-less place would put a red "no route to Hampstead" on every listing in the hunt, a
- *  confident claim about a journey nobody asked for. */
-export function travelDestinations<T extends { postcode: string | null }>(places: T[]): T[] {
-  return places.filter((p) => p.postcode !== null);
+ *  confident claim about a journey nobody asked for.
+ *
+ *  The generic constraint is the enforcement: widen the fact and every caller that hands over
+ *  hand-built rows stops compiling until it selects the column. `travel_gaps` in the migrations
+ *  asks the same question in SQL and is the copy that gets forgotten. */
+export function travelDestinations<T extends { postcode: string | null; travelTimed: boolean }>(
+  places: T[],
+): T[] {
+  // `trim()` because the SQL copy says `nullif(trim(pl.postcode), '')`, and a place whose postcode
+  // is a couple of spaces would otherwise be a destination here and not there — the views would ask
+  // for a journey the backlog never derives, so it would read as "no route" for ever.
+  return places.filter((p) => p.postcode !== null && p.postcode.trim() !== '' && p.travelTimed);
 }
 
 /** The places a straight line can be drawn to, and where they are.
