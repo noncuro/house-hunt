@@ -30,6 +30,7 @@
 import { body, HttpError, requireEnv, rest, rpc, serve } from '../_shared/http.ts';
 import { requireCaller, type Caller } from '../_shared/caller.ts';
 import {
+  implausibleWalk,
   journeyTime,
   NO_REASON_RECORDED,
   resolveStation,
@@ -40,7 +41,7 @@ import {
   walkTo,
   type StationInfo,
 } from '../_shared/tfl.ts';
-import { lookupPostcode } from '../_shared/postcode.ts';
+import { lookupPostcode, type Point } from '../_shared/postcode.ts';
 import { TRAVEL_MODES, type JourneyOption, type TravelMode } from '../_shared/types.ts';
 import { distanceMiles } from '../_shared/hubs.ts';
 
@@ -321,6 +322,11 @@ async function resolveLeg(
     // asked (design D4). Through the queue so one request's fifteen legs, and a grid's worth of
     // requests at once, do not all hit TfL in the same instant.
     const journey = await withTflSlot(() => journeyTime(origin, to, mode, TFL_APP_KEY));
+    // Transient, deliberately, so it goes out uncached and is reported in its own words: a walk
+    // TfL's graph could not have measured honestly is a fault in the planner, not a fact about the
+    // journey, and a no-route row would make a 17-minute detour into a dash that outlives the fix.
+    const detour = implausibleWalk(mode, journey.seconds, straightLineMiles);
+    if (detour) throw new TflError(detour, true);
     // A failed cache write must not turn a good answer into a permanent "no route", which is what
     // happened when this sat inside the catch. It must still be *loud*: a write that silently fails
     // means every lookup costs a fresh TfL call forever, and the only visible symptom is that
@@ -523,6 +529,13 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
   let made = 0;
   const failures: string[] = [];
 
+  // Where the flat is, for the detour check on a walk — looked up once, and only if some station
+  // needs a walk measured, for the reason `resolveJourneys` gives: most asks are answered from
+  // the cache and owe postcodes.io nothing. A postcode that will not resolve leaves this null and
+  // the walk is kept as it always was; the check needs a measurement and does not guess one.
+  let originPoint: Promise<Point | null> | undefined;
+  const placeOrigin = () => (originPoint ??= lookupPostcode(postcode).then((r) => r.point));
+
   await Promise.all(
     ask.names.map(async (name) => {
       try {
@@ -545,9 +558,17 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
         }
         if (!station) return; // TfL does not know it — omit rather than invent a number.
 
+        // The lines as soon as the point resolves, the walk only if it succeeds. They used to be
+        // written together, so a walk that threw took the line dots with it and a station that had
+        // resolved perfectly rendered as though the cache had never heard of it — which is how an
+        // origin postcode TfL would not route from was diagnosed by a database query instead of by
+        // a glance at a row with dots and no time.
+        const entry: { seconds?: number; lines: string[] } = { lines: station.lines };
+        out[name] = entry;
+
         const known = knownWalks.get(name);
         if (known !== undefined) {
-          out[name] = { seconds: known, lines: station.lines };
+          entry.seconds = known;
           return;
         }
 
@@ -556,8 +577,12 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
         // resolved station in a const before handing it to the queue.
         const at = station;
         const seconds = await withTflSlot(() => walkTo(postcode, at, TFL_APP_KEY));
+        // Not cached and not shown: the straight-line distance beside the station stands in, which
+        // is what a station with no walk already shows. See `implausibleWalk` for the ratio.
+        const detour = implausibleWalk('walking', seconds, apartMiles(await placeOrigin(), at));
+        if (detour) throw new TflError(detour, true);
         await rpc('cache_station_walk', { p_postcode: postcode, p_station_name: name, p_seconds: seconds });
-        out[name] = { seconds, lines: station.lines };
+        entry.seconds = seconds;
       } catch (e) {
         // A missing walk degrades one row; the straight-line distance is still shown. Logged as an
         // error rather than swallowed or warned, because "every station is missing its walk" is a

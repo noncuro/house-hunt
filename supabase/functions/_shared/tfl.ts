@@ -349,6 +349,52 @@ export const NO_ROUTE_RETRY_DAYS = 30;
 export const NO_REASON_RECORDED =
   'no journey was recorded here and the row does not say why — it predates us writing the reason down';
 
+/** The pace TfL's planner walks at, in metres per second. Measured, not chosen: 4.43–4.52 km/h
+ *  across every leg in the #81 survey. Used only to turn a duration back into the distance TfL
+ *  must have routed, for the detour check below — never to estimate a walk. */
+const TFL_WALK_PACE_MPS = 4.5 * 1000 / 3600;
+
+/** How much longer than the straight line a walking route may be before it is not believed.
+ *
+ *  TfL's pedestrian graph is missing links at railway bridges: two points 105 m apart on Kilburn
+ *  High Road, either side of the Brondesbury bridge, are routed 1,297 m round via Willesden Lane,
+ *  and the 17-minute walk that produces is drawn beside an 11-minute station as though it were a
+ *  measurement. Over 51 real station walks the honest routes never exceeded 1.98 times the crow's
+ *  flight; the three broken ones were 2.14, 2.42 and 4.59. The line goes between, and it is thin:
+ *  this catches the bridges with one false positive and is triage rather than a destination —
+ *  the destination is a router whose foot graph crosses railways, which is its own issue. */
+export const MAX_WALK_DETOUR_RATIO = 2.1;
+
+/** Under this, in metres, the ratio is not asked. A walk round one block from next door is an
+ *  honest four or five times the straight line. */
+const MIN_METRES_FOR_DETOUR_CHECK = 50;
+
+/** Why a walk TfL returned is not to be believed, or null when it is.
+ *
+ *  Same shape as `tooFarToWalk`, and for the same reason: this decides not to *store* a number,
+ *  and the sentence it returns is what the caller reports in place of it. A refused walk is left
+ *  uncached rather than written as a no-route — it is not a fact about the journey, only about
+ *  the planner — so the straight-line distance beside a station stands in, and a later router or
+ *  a fixed graph is free to answer.
+ *
+ *  Only walking: the cycling graph crosses those bridges (it routes the Kilburn pair in 120 m), and
+ *  transit legs walk only to the nearest stop. Strictly greater than the ratio, so a route sitting
+ *  on it is kept. `null` miles means one end could not be placed, and a check needs a measurement.
+ *  Very short straight lines are skipped rather than compared: two points in the same building a
+ *  few metres apart can honestly need a walk round the block, and the ratio there says nothing. */
+export function implausibleWalk(mode: TravelMode, seconds: number, straightLineMiles: number | null): string | null {
+  if (mode !== 'walking' || straightLineMiles === null) return null;
+  const straightMetres = straightLineMiles * 1609.344;
+  if (straightMetres < MIN_METRES_FOR_DETOUR_CHECK) return null;
+  const routedMetres = seconds * TFL_WALK_PACE_MPS;
+  const ratio = routedMetres / straightMetres;
+  if (ratio <= MAX_WALK_DETOUR_RATIO) return null;
+  return (
+    `TfL's ${Math.round(seconds / 60)}-minute walk is ${ratio.toFixed(1)}× the ${Math.round(straightMetres)} m ` +
+    'straight line — its pedestrian map is probably missing a crossing here, so the number is not kept'
+  );
+}
+
 /** Why a walking leg is not worth asking TfL about, or null when it is.
  *
  *  A reason rather than a boolean, for the same purpose `staleTravel` returns one: this decides not

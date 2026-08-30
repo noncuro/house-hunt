@@ -14,7 +14,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+  implausibleWalk,
   journeyTime,
+  MAX_WALK_DETOUR_RATIO,
   NO_ROUTE_RETRY_DAYS,
   TflError,
   TRAVEL_BASIS,
@@ -373,6 +375,37 @@ check('a 300 is not a verdict on the journey', await classified(300), { transien
 check('a 404 is TfL saying there is no journey, and stays settled', await classified(404), { transient: false });
 check('an empty journey list is settled too', await classified(200, { journeys: [] }), { transient: false });
 check('a journey is a journey', await classified(200, { journeys: [{ duration: 12, legs: [] }] }), { seconds: 720 });
+
+/* A walk TfL cannot have measured honestly. Its pedestrian graph has no crossing at some railway
+ * bridges, so two points 105 m apart on one street are routed 1,297 m round, and the 17-minute
+ * result is drawn as a measurement (#81). Every honest route in the survey stayed under 1.98 times
+ * the straight line; the broken ones were 2.14, 2.42 and 4.59. The cases below are those legs.
+ * `implausibleWalk` takes seconds, and the distances are read back at TfL's own pace. */
+console.log('implausibleWalk');
+const MILE = 1609.344;
+const minutes = (n: number) => n * 60;
+// Kilburn High Road, either side of the Brondesbury bridge: 105 m apart, routed as a 17-minute walk.
+refused('105 m across a railway bridge is not a 17-minute walk', implausibleWalk('walking', minutes(17), 105 / MILE));
+// The flat to Kilburn station — the case in the issue's title: 17 minutes for a 530 m straight line.
+refused('a 2.4× detour to the station is refused', implausibleWalk('walking', minutes(17), 530 / MILE));
+// Finchley Road & Frognal, 186 m away, cached as 22 minutes.
+refused('186 m is not 22 minutes on foot', implausibleWalk('walking', minutes(22), 186 / MILE));
+// The control: Brondesbury Park, 813 m routed for a ~540 m straight line, is an ordinary 1.5× walk.
+usable('an ordinary 1.5× detour is kept', implausibleWalk('walking', minutes(11), 540 / MILE));
+// The worst honest ratio in the survey, and the boundary itself — on it is kept, past it is not.
+usable('the worst honest route in the survey is kept', implausibleWalk('walking', 792, 500 / MILE));
+usable('a route exactly on the ratio is kept', implausibleWalk('walking', MAX_WALK_DETOUR_RATIO * 400, 500 / MILE));
+refused('and one past it is not', implausibleWalk('walking', MAX_WALK_DETOUR_RATIO * 400 + 1, 500 / MILE));
+// A refusal needs a measurement, and the cycling graph crosses the bridge, so neither is checked.
+usable('a walk with nothing to measure against is kept', implausibleWalk('walking', minutes(17), null));
+usable('a cycle is never checked', implausibleWalk('cycling', minutes(17), 105 / MILE));
+// Next door can honestly be a walk round the block.
+usable('a few metres apart is not compared', implausibleWalk('walking', minutes(3), 20 / MILE));
+check(
+  'the refusal says the ratio and the straight line',
+  implausibleWalk('walking', minutes(17), 105 / MILE)?.startsWith("TfL's 17-minute walk is 12.1× the 105 m straight line"),
+  true,
+);
 
 if (failures > 0) {
   console.error(`\n${failures} failing`);
