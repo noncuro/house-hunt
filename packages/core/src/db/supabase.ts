@@ -15,11 +15,17 @@
  *    `station_walk` and `travel_time` are SELECT-only for `authenticated`; the writes go through
  *    `SECURITY DEFINER` RPCs that validate their arguments. This file already funnelled those
  *    writes through a handful of named functions, so what changed is what they call.
+ *
+ *  And a third that used to be a convention here and is now enforced underneath it: a shared fact
+ *  is readable only for a listing one of your projects has opened (`20260830190000`). Every read
+ *  below already joined through `project_property` and so is unchanged — but a new one that forgets
+ *  to now comes back empty rather than with the whole table.
  */
 import { db, ensureSession } from './client';
 import { accessToken, requireSession } from './session';
 import { MIN_PASSWORD_LENGTH } from '../contracts';
 import { rightmoveListingId } from '../listing';
+import { logWarn } from '../log';
 import type {
   AddListingResult,
   AdminProject,
@@ -344,11 +350,17 @@ async function displayNames(userIds: Array<string | null>): Promise<Map<string, 
  *
  *  `record_property` does both writes in one transaction now. What guards the shared row is not
  *  the ordering but the function itself: it is `SECURITY DEFINER`, it checks `is_member` against
- *  the project it is asked to write as, and no client holds a delete path. */
-export async function recordProperty(listing: Listing): Promise<void> {
+ *  the project it is asked to write as, and no client holds a delete path.
+ *
+ *  Returns false when the shared row already held a *newer* reading of the page and was kept — a
+ *  stale tab no longer overwrites this morning's numbers for everybody. The project's link and its
+ *  `last_seen_at` are written either way, so a refusal never costs anybody the flat; it costs only
+ *  the older numbers. Logged as well as returned, because the one caller that most needs to know is
+ *  a background worker with nowhere to put a return value. */
+export async function recordProperty(listing: Listing): Promise<boolean> {
   const projectId = await activeProjectId();
 
-  const { error } = await db().rpc('record_property', {
+  const { data, error } = await db().rpc('record_property', {
     p_project_id: projectId,
     p_property: {
       rightmove_id: listing.rightmoveId,
@@ -372,9 +384,22 @@ export async function recordProperty(listing: Listing): Promise<void> {
       // `last_seen_at` is not passed: `record_property` stamps it itself, in the same transaction
       // as the project link, so a client clock cannot disagree with the row it wrote.
       description: listing.description,
+      // And this one is passed for the opposite reason: it is a fact about the *page*, not about
+      // the write, and the server has no way to learn it. Capped at the server's now() there, so a
+      // wrong clock can refuse this client's own writes but cannot pin the row against everyone.
+      observed_at: listing.observedAt,
     },
   });
   fail('recording property', error);
+
+  const wrote = data !== false;
+  if (!wrote) {
+    logWarn(
+      'record',
+      `kept a newer reading of ${listing.rightmoveId} — this page was read at ${listing.observedAt}`,
+    );
+  }
+  return wrote;
 }
 
 /** Add a flat from a URL somebody pasted, shared or typed.
