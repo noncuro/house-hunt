@@ -22,7 +22,7 @@ import {
   type FullSweepSummary,
 } from '@/lib/full-sweep';
 import type { Place, SweepCriteria } from '@house-hunt/core';
-import { sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
+import { lastSweptFor, sweepSearchUrl, sweepWindow, windowLabel } from '@house-hunt/core';
 
 /** Going looking, in two separate halves.
  *
@@ -441,10 +441,11 @@ function Recheck() {
 /** One place we search around: the link to go looking with, how far back that search reaches, and how much
  *  of a sweep already in progress is still outstanding. */
 function HubRow({ hub, sweep, criteria }: { hub: Place; sweep: HubSweep | null; criteria: SweepCriteria | null }) {
-  // From `hub_sweep` and nowhere else. `project_hub` briefly carried a copy and the migration
-  // dropped it — two homes for this one date is how they come to disagree, and a disagreement here
-  // narrows the next window past listings nobody looked at.
-  const choice = sweepWindow(sweep?.lastSweptAt ?? null, new Date(), hub.maxDaysSinceAdded);
+  // From `hub_sweep` and nowhere else, and only for the search the hunt runs now: a row dated by a
+  // sweep of a different rent ceiling is not a date (`lastSweptFor`). `project_hub` briefly carried
+  // a copy and the migration dropped it — two homes for this one date is how they come to disagree,
+  // and a disagreement here narrows the next window past listings nobody looked at.
+  const choice = sweepWindow(lastSweptFor(sweep, criteria), new Date(), hub.maxDaysSinceAdded);
   const url = sweepSearchUrl({ hub: toSweepHub(hub), days: choice.days, criteria });
 
   // Which pages of a sweep in progress are still outstanding. This is the cross-tab answer to
