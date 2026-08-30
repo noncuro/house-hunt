@@ -33,6 +33,11 @@ const cases: Array<[string, number | null]> = [
   ['Garden. 1,200 sq ft of internal accommodation', 1200],
   ['Rear garden. Approximately 1,050 sq ft internal floor area.', 1050],
   ['800 sq ft of internal accommodation. 1,200 sq ft garden', 800],
+  // And the name that overrules the garden has to be in the same sentence as the number it names.
+  // Read on past the full stop and the next sentence's total speaks for the garden, which is the
+  // garden handed back as the flat all over again — with a bigger number than the real one.
+  ['Rear garden. 1,500 sq ft. Total floor area 900 sq ft.', 900],
+  ['Total floor area 900 sq ft. Rear garden. 1,500 sq ft.', 900],
   // Nothing names itself, so the largest that isn't obviously something else still wins.
   ['Two floors, 640 sq ft and 500 sq ft', 640],
   // Descriptions list room-by-room sizes; the total is what we want, so we take the largest.

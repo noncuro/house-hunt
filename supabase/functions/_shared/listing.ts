@@ -345,10 +345,19 @@ export function parseAreaFromText(html: string): number | null {
     // *next* sentence is a different number's business — see `SENTENCE_BREAK`.
     const before = text.slice(Math.max(0, at - ADJACENT), at).split(SENTENCE_BREAK).at(-1)!;
     const after = text.slice(end, end + ADJACENT).split(SENTENCE_BREAK)[0]!;
-    const namedAfter = THE_WHOLE_FLAT.test(text.slice(end, end + CONTEXT));
+    // The name that can overrule a noun behind a full stop is read to the end of this sentence and
+    // no further, for the same reason `after` is: read past the stop and "Rear garden. 1,500 sq ft.
+    // Total floor area 900 sq ft." licenses the garden with the next sentence's total and hands
+    // back 1,500 as the flat.
+    const namedAfter = THE_WHOLE_FLAT.test(text.slice(end, end + CONTEXT).split(SENTENCE_BREAK)[0]!);
     if (NOT_THE_FLAT.test(m[0]! + after)) continue;
     if (NOT_THE_FLAT.test(before) && !(STARTS_A_SENTENCE.test(before) && namedAfter)) continue;
 
+    // Deliberately wider than the windows above, and deliberately unbounded by the sentence: this
+    // only decides whether a number that has already survived the veto is a stated total, and
+    // `named` keeps the largest, so naming one too eagerly cannot promote a number over a bigger
+    // stated total. The windows above decide whether a number is admitted at all, which is where
+    // reading into the next sentence does damage.
     if (THE_WHOLE_FLAT.test(text.slice(Math.max(0, at - CONTEXT), end + CONTEXT))) {
       // Several stated totals should agree; if they don't, the larger is the whole property.
       if (named === null || sqft > named) named = sqft;
