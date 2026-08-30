@@ -11,14 +11,15 @@ code sent to your email, and that is the whole installation.
 | Panel on Rightmove, shortlist page | The browser |
 | Database (properties, verdicts, notes, travel cache) | Supabase Postgres |
 | Sign-in, invites | Supabase Auth |
-| Photo/floorplan analysis (holds the OpenAI key) | Supabase Edge Function `analyse` |
+| Photo/floorplan analysis (holds the OpenAI key) | The website, `apps/web/src/app/api/analyse` |
 | Travel times | TfL's public API, called from the browser |
 | Postcode → coordinates | postcodes.io, called from the browser |
 
 The one thing that used to be local was the analysis. It was a Node process on one laptop
 holding the OpenAI key, which meant a listing was only ever analysed while that laptop was awake
-with a terminal open. It is now `apps/web/src/app/api/analyse`, deployed with the website to the
-database.
+with a terminal open. Then a Supabase Edge Function, and now `apps/web/src/app/api/analyse` — so it
+ships with the website, and its key is a Vercel environment variable rather than a Supabase project
+secret.
 
 ## The zip is no longer the password
 

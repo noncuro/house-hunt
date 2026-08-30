@@ -187,8 +187,23 @@ async function analyse(rightmoveId: string, projectId: string, userId: string): 
   } catch (e) {
     // Tokens OpenAI billed have to be billed against a cap whether or not we got an answer out of
     // them, so a failure that carried a usage block is recorded before the claim is released.
+    //
+    // In a catch of its own, because this write must not be able to prevent the release below. It
+    // goes through `record_api_usage`, which raises when `model_price` has no row for the model it
+    // is given — so the first call with a model nobody had priced yet would throw here, skip the
+    // release, and leave the listing claimed and its budget reserved until the stale timeout. That
+    // is a pricing gap turning into a stuck flat and a shrinking cap, which is a worse failure than
+    // the one it came from. Unrecorded spend is the lesser loss and it is logged.
     const failed = failure(e);
-    if (failed) await record(projectId, userId, rightmoveId, failed.model, failed.usage);
+    if (failed) {
+      try {
+        await record(projectId, userId, rightmoveId, failed.model, failed.usage);
+      } catch (billing) {
+        console.error(
+          `could not record what ${rightmoveId} already spent: ${billing instanceof Error ? billing.message : String(billing)}`,
+        );
+      }
+    }
 
     // Release the claim — which is also what drains the reservation — or one bad run would block
     // this listing, and hold budget against it, until the stale timeout.

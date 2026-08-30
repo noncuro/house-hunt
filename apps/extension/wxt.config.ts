@@ -15,15 +15,19 @@ const supabaseHost = env.WXT_SUPABASE_URL;
 if (!supabaseHost) {
   throw new Error(`WXT_SUPABASE_URL missing from ${repoRoot}.env — the extension cannot reach its database`);
 }
-const webAppUrl = env.WXT_WEB_APP_URL;
-if (!webAppUrl) {
-  throw new Error(`WXT_WEB_APP_URL missing from ${repoRoot}.env — the extension cannot reach its API routes`);
-}
-
-// Where the website lives. The bridge content script is injected on this origin and no other, so
-// this is a trust boundary and not only a destination (design D3).
+// Where the website lives, and now two things at once. The bridge content script is injected on
+// this origin and no other, so it is a trust boundary and not only a destination (design D3) — and
+// four of the functions the extension calls are routes on it, so it is also a host permission.
+// One constant deliberately: the origin the extension injects into and the origin it calls must be
+// the same, and two derivations of one variable is how they stop being.
+//
+// Origin, not the URL as written: a match pattern built from a URL with a path in it matches
+// nothing.
 if (!env.WXT_WEB_APP_URL) {
-  throw new Error(`WXT_WEB_APP_URL missing from ${repoRoot}.env — the bridge has no origin to trust`);
+  throw new Error(
+    `WXT_WEB_APP_URL missing from ${repoRoot}.env — the bridge has no origin to trust and the ` +
+      'extension cannot reach its API routes',
+  );
 }
 const webAppOrigin = new URL(env.WXT_WEB_APP_URL).origin;
 
@@ -95,7 +99,7 @@ export default defineConfig({
     // website's own origin is here because `analyse`, `invite`, `password` and `resolve-location`
     // are routes on it now: without it every one of those fetches is blocked before it leaves the
     // worker, and it fails as `TypeError: Failed to fetch`, which reads like the site being down.
-    host_permissions: [`${supabaseHost}/*`, `${new URL(webAppUrl).origin}/*`],
+    host_permissions: [`${supabaseHost}/*`, `${webAppOrigin}/*`],
   },
   hooks: {
     // The one thing in the manifest that cannot be written by the entrypoint itself — see

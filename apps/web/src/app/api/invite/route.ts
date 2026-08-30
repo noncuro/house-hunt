@@ -99,14 +99,17 @@ export const POST = authedRoute(async (request, caller) => {
     invite: created.invite,
   };
   if (created.status === 'added') {
-    console.log(`added ${email} to ${projectId ?? 'a hunt of their own'} by ${caller.email}`);
+    console.log(`added a member to ${projectId ?? 'a hunt of their own'} by ${caller.userId}`);
     return outcome;
   }
   if (created.status !== 'invited' || !created.invite) return outcome;
 
-  // The address and the project, never the code. A deployment's logs are readable by anyone with
-  // dashboard access, and a code in a log is a code somewhere it was not handed to.
-  console.log(`invited ${email} to ${projectId ?? 'the platform'} by ${caller.email}`);
+  // The invite's id and the project, never the code and never either address. A deployment's logs
+  // are readable by anyone with dashboard access: a code in one is a code somewhere it was not
+  // handed to, and an email address in one is the personal detail the standing rule names, in a
+  // place with its own retention and no reason to hold it. The id says which row this was, which
+  // is the whole question a log is asked, and `invite` holds the address for anyone entitled to it.
+  console.log(`invited ${created.invite.id} to ${projectId ?? 'the platform'} by ${caller.userId}`);
   return { ...outcome, code: formatCode(code) };
 });
 

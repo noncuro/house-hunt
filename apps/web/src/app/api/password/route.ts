@@ -107,7 +107,8 @@ async function redeem(request: Request, input: Input): Promise<Redeemed> {
   // Membership is NOT granted here. `consume_invites()` runs on first successful sign-in and is the
   // only thing that turns an invite into membership; the client signs in immediately after this
   // returns, on exactly the path an existing user takes. One path, one invariant.
-  console.log(`redeemed an invite for ${email}`);
+  // The outcome, not the address. Same argument as the invite route's log above.
+  console.log('an invite was redeemed and an account created');
   return { status: 'redeemed', email };
 }
 
@@ -169,9 +170,10 @@ async function reset(request: Request, input: Input): Promise<{ status: 'reset';
     throw new Error(`admin updateUser: ${response.status} ${text.slice(0, 300)}`);
   }
 
-  // The id and never the password. A deployment's logs are readable by anyone with dashboard
-  // access, and a password in a log is a password in a place nobody thinks to look for one.
-  console.log(`${caller.email} set the password for ${userId}`);
+  // Two ids, never the password and never an address. A deployment's logs are readable by anyone
+  // with dashboard access: a password in one is a password in a place nobody thinks to look for
+  // one, and an address is the personal detail the standing rule names.
+  console.log(`${caller.userId} set the password for ${userId}`);
   return { status: 'reset', userId };
 }
 

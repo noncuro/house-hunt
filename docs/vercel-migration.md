@@ -1,9 +1,10 @@
 # Moving the Edge Functions to `apps/web`
 
-Seven Supabase Edge Functions become seven Next.js route handlers in `apps/web`, and
-`supabase/functions/` is deleted. Six are done and only `travel` is left. This
-document is the argument for the move, what it costs, the order to do it in, and the checklist for
-each remaining function. It is written to be picked up cold, several sessions apart.
+Seven Supabase Edge Functions become seven Next.js route handlers in `apps/web`, after which
+`supabase/functions/` is deleted. Six are done; `travel` is still there and `pnpm deploy:function`
+still deploys it. This document is the argument for the move, what it costs, the order to do it in,
+and the checklist for the one function left. It is written to be picked up cold, several sessions
+apart.
 
 ## Why
 

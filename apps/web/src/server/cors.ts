@@ -30,10 +30,13 @@
 const RIGHTMOVE = 'https://www.rightmove.co.uk';
 
 export function corsHeaders(origin: string | null): Record<string, string> {
-  const allowed =
-    origin && (origin.startsWith('chrome-extension://') || origin === RIGHTMOVE) ? origin : 'null';
+  const allowed = origin && (origin.startsWith('chrome-extension://') || origin === RIGHTMOVE);
   return {
-    'Access-Control-Allow-Origin': allowed,
+    // Absent rather than the string `null` when the origin is not one of ours. They are not the
+    // same refusal: `null` is a real origin — the one a sandboxed iframe, a `data:` document or a
+    // page opened from `file://` presents — so allowing it literally allows those, which is a wider
+    // door than the two this file means to open. No header at all is what refuses everybody.
+    ...(allowed && origin ? { 'Access-Control-Allow-Origin': origin } : {}),
     // supabase-js's own list, and more than the three obvious ones: it adds `x-client-info` to every
     // request and `x-retry-count` to retried ones. A browser refuses the whole preflight over a
     // single unlisted header, so the call never happens and the failure arrives as a CORS message
