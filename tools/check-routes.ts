@@ -1,20 +1,13 @@
 /** Every API route is either authenticated or a stated exception, and nothing else.
  *
- *  On Supabase this was the platform's job. `verify_jwt` was on for every function, set in
- *  `config.toml`, and the one exception was a line somebody had written on purpose:
- *  `[functions.password] verify_jwt = false`. A function could not become public by accident,
- *  because becoming public took an edit to a file that had nothing else in it.
+ *  Nothing sits in front of a route handler, so one that forgets to resolve its caller is open to
+ *  anyone who finds the URL — and open in the quietest way there is, because it works. Nothing goes
+ *  red, nothing looks odd, and the service role is behind it. So the rule is held here instead, by
+ *  reading every route file back:
  *
- *  Vercel has no such gate. Nothing sits in front of a route handler, so one that forgets to resolve
- *  its caller is open to anyone who finds the URL — and open in the quietest way there is, because
- *  it works. Nothing goes red, nothing looks odd, and the service role is behind it.
- *
- *  So the rule moves here. `authedRoute` in `apps/web/src/server/handler.ts` resolves the caller
- *  before the work runs; `publicRoute` is the exception and takes a sentence saying why. This check
- *  reads every route file back and holds three things:
- *
- *    1. every exported HTTP method is built by one of those two wrappers — not by a bare function,
- *       and not by something that merely looks like them;
+ *    1. every exported HTTP method is built by `authedRoute` or `publicRoute`
+ *       (`apps/web/src/server/handler.ts`) — not by a bare function, and not by something that
+ *       merely looks like them;
  *    2. every `publicRoute` is on the list below, so opening a route is a change to this file and
  *       shows up in a diff as one;
  *    3. every entry on the list is still a public route, because an allowlist nobody prunes is how

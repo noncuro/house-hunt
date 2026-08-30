@@ -53,14 +53,24 @@ the only gate, and a route that forgets to call it is open to the internet in th
 there is: it works.
 
 That is why the gate has been moved into the wrapper a route needs in order to exist at all.
-`authedRoute` in `apps/web/src/server/handler.ts:51` resolves the caller before the work runs and
-hands it in, so the work cannot see an unauthenticated request; `publicRoute` (`handler.ts:60`) is
+`authedRoute` in `apps/web/src/server/handler.ts:34` resolves the caller before the work runs and
+hands it in, so the work cannot see an unauthenticated request; `publicRoute` (`handler.ts:43`) is
 the deliberate exception and takes a sentence saying why. `pnpm check:routes`
 (`tools/check-routes.ts`) reads every route file back and holds three things: that every exported
 method is built by one of the two wrappers, that every `publicRoute` is on the `PUBLIC_ROUTES` list
 in that file, and that every entry on the list is still a public route. It also holds that
 `apps/web/src/server/` — where the service-role key is reachable — is imported by routes and by
-itself and by nothing else. It is in `check:all`.
+itself and by nothing else. It is in `check:all`. Being public is once again an edit somebody has to
+mean.
+
+Middleware was the other candidate for that gate and is weaker. A middleware that checks a token is
+*present* still lets a route that forgot its caller run for anyone holding any string; a middleware
+that verifies properly does a GoTrue round trip that the route then repeats, on every request, for
+the chatty functions as much as the slow ones. The check gives the guarantee at build time and costs
+nothing at run time. And note what the move is not: `requireCaller` verifies the token by asking
+GoTrue rather than decoding it, deliberately (`apps/web/src/server/caller.ts`), and that has always
+been the real authority — putting it behind a wrapper makes it unskippable, it does not make it
+stronger.
 
 **So the `[functions.password] verify_jwt = false` exception becomes a `PUBLIC_ROUTES` entry.**
 Today it is declared twice — in `supabase/config.toml`, and as the `--no-verify-jwt` flag on the
@@ -226,7 +236,7 @@ Two consequences, and they are the substance of this step:
   the page is served from — production, a Vercel preview, or localhost — instead of becoming another
   copy of a URL to keep in step. The extension's background worker cannot use a relative URL: it
   would resolve against `chrome-extension://` and 404. `predict` solved this by refusing
-  (`supabase.ts:639-644`), which is right for a website-only button and wrong for the five shared
+  (`supabase.ts:637-642`), which is right for a website-only button and wrong for the five shared
   ones. The natural place for the answer is the `Host` interface in `packages/core/src/db/client.ts`
   — it already exists to hold exactly this kind of "where am I running" difference, is set once per
   application (`apps/web/src/lib/client.ts:62`, `apps/extension/src/lib/auth.ts:160`), and can carry

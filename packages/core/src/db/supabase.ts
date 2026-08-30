@@ -624,10 +624,8 @@ export type RetrainResult =
 export async function retrainModel(labelMode?: LabelMode): Promise<RetrainResult> {
   await requireSession();
 
-  // A route on the website rather than an Edge Function. The fit is the one piece of work Supabase's
-  // hosted runtime could not run: it caps CPU at 2s per request, which the retrain crossed at around
-  // 200 examples — last success at 187, and nothing but "not enough compute resources" thereafter.
-  // `apps/web/src/app/api/predict/route.ts` has the rest of that argument.
+  // A route on the website rather than an Edge Function; `docs/vercel-migration.md` says why the fit
+  // could not stay on the Edge runtime.
   //
   // Relative, so it follows whichever origin the page is served from — production, a Vercel preview,
   // or localhost — rather than becoming a fourth copy of that URL to keep in step. Which is also why

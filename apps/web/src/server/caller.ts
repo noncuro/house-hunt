@@ -1,5 +1,4 @@
-/** Who is calling, and what they are allowed to speak for — the Node half of
- *  `supabase/functions/_shared/caller.ts`, unchanged in substance.
+/** Who is calling, and what they are allowed to speak for.
  *
  *  The token is verified by asking GoTrue rather than by decoding it here. That costs one round trip
  *  and buys three things a local decode does not: an expired token is rejected by the authority on
@@ -7,9 +6,8 @@
  *  not quietly depend on a platform setting still being switched on. The publishable key presented
  *  as a bearer fails it too, which is the case that matters most — that key is in every bundle.
  *
- *  On Vercel that last point is load-bearing in a way it was not on Supabase. There is no
- *  `verify_jwt` here: nothing in front of a route checks anything, so this file is the *only* gate.
- *  A route that forgets to call it is open to the internet.
+ *  Nothing in front of a route checks anything, so this file is the *only* gate: a route that
+ *  forgets to call it is open to the internet.
  */
 import { eq, HttpError, rest, serviceKey, supabaseUrl } from './supabase';
 

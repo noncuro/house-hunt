@@ -1,24 +1,15 @@
 /** The service role, on the website's own server rather than on Supabase's.
  *
- *  This is the Node half of `supabase/functions/_shared/http.ts`, and it exists because the Edge
- *  Functions are moving here (see `docs/vercel-migration.md`). The two will sit side by side while
- *  that happens — a function is either still Deno or already a route, never both — and the Deno copy
- *  is deleted with the last function that imports it. What is deliberately *not* duplicated is the
- *  work: a route imports `@house-hunt/core` directly, so the generated `_shared/` copies of those
- *  modules fall away with the function rather than being reproduced here.
+ *  Vercel injects no `SUPABASE_URL` and no privileged key, so the URL is read from the one the
+ *  browser bundle already uses and the key has to be added to the project by hand. Both are read
+ *  through `requireEnv` at the top of a request rather than at module scope, because a missing key
+ *  must fail that request loudly — a module-scope throw during the build turns a configuration
+ *  mistake into a failed deploy of the whole website.
  *
- *  Two differences from the Deno original, both forced:
- *
- *    - The platform sets `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on every Edge Function.
- *      Vercel sets neither, so the URL is read from the one the browser bundle already uses and the
- *      key has to be added to the Vercel project by hand. It is read through `requireEnv` at the top
- *      of a request rather than at module scope, because a missing key must fail that request
- *      loudly — a module-scope throw during the build turns a configuration mistake into a failed
- *      deploy of the whole website.
- *    - No CORS. These routes are same-origin to the page, so the browser sends no preflight. The
- *      day a route here is called by the extension or by a Rightmove content script, it needs the
- *      allowance from `_shared/http.ts:51` reproduced — that is a real gate, not a formality, and
- *      leaving it out silently is how the extension half of a migrated function stops working.
+ *  No CORS. These routes are same-origin to the page, so the browser sends no preflight. The day a
+ *  route here is called by the extension or by a Rightmove content script it needs a real
+ *  allowance — that is a gate, not a formality, and leaving it out silently is how the extension
+ *  half of a migrated function stops working. `docs/vercel-migration.md` has the shape it must have.
  */
 
 /** Product-level outcomes are 200 with a `status`; this is for the cases where the caller got

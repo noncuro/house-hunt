@@ -1,14 +1,5 @@
 /** Retrain a project's verdict-score model. This is the "Rerun ratings" button.
  *
- *  Moved here from `supabase/functions/predict` because it is the function the Edge runtime could
- *  not run. The fit is pure CPU inside one request, and Supabase's hosted runtime caps CPU at **2
- *  seconds** per request — not wall clock, and not configurable. The retrain crossed that at around
- *  200 examples: the last success was at 187, and at 604 it returned "Function failed due to not
- *  having enough compute resources" every time. Nothing about the code was wrong, and no amount of
- *  making it faster would have been a fix — it would only have moved the number at which a hunt
- *  stops being able to retrain, which is the wrong thing for that number to depend on. Vercel's
- *  functions have no separate CPU cap, so the ceiling here is `maxDuration` below.
- *
  *  Unlike `analyse`, this holds no secret and costs no third party — it is classical ML over the
  *  project's own verdicts, cheap enough to run on a button. It lives server-side anyway for one
  *  reason: `project_model` is a row every surface then trusts to score flats, so the thing that
@@ -18,10 +9,7 @@
  *  happens on the surface that needs it — the triage list, the panel — at render, so a score is
  *  never persisted and never stale. This route's whole job is to produce the weights.
  *
- *  The one structural change from the Deno original: it imports `@house-hunt/core` directly instead
- *  of the byte-copies under `supabase/functions/_shared/`. That is the point of the move — the copy
- *  existed only because Deno could not reach into the workspace, and `apps/web` already lists the
- *  package in `transpilePackages`. One fewer place for a shared fix to sit unshipped.
+ *  Why the fit runs here rather than on Supabase's Edge runtime: `docs/vercel-migration.md`.
  */
 import {
   DEFAULT_LABEL_MODE,
