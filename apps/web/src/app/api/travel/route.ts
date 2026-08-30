@@ -27,8 +27,9 @@
  *  project data it reads under RLS. This function decides what is cached, what is stale, what to
  *  call TfL for, and what the answer is.
  */
-import { body, HttpError, requireEnv, rest, rpc, serve } from '../_shared/http.ts';
-import { requireCaller, type Caller } from '../_shared/caller.ts';
+import { requireCaller, type Caller } from '@/server/caller';
+import { jsonBody, preflightRoute, publicRoute } from '@/server/handler';
+import { eq, HttpError, rest, rpc } from '@/server/supabase';
 import {
   implausibleWalk,
   journeyCallsNeeded,
@@ -44,15 +45,28 @@ import {
   TRAVEL_RATE_WINDOW_SECONDS,
   walkTo,
   type StationInfo,
-} from '../_shared/tfl.ts';
-import { lookupPostcode, type Point } from '../_shared/postcode.ts';
-import { TRAVEL_MODES, type JourneyOption, type TravelMode } from '../_shared/types.ts';
-import { distanceMiles } from '../_shared/hubs.ts';
+} from '@house-hunt/core/tfl';
+import {
+  distanceMiles,
+  lookupPostcode,
+  TRAVEL_MODES,
+  type JourneyOption,
+  type Point,
+  type TravelMode,
+} from '@house-hunt/core';
 
-requireEnv({
-  SUPABASE_URL: Deno.env.get('SUPABASE_URL'),
-  SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
-});
+/** Where this runs, and for how long.
+ *
+ *  `nodejs` rather than the Edge runtime: the region below is the point of the move and Edge would
+ *  put it back where the latency was. 300 seconds because that is what the backfill's `net.http_post`
+ *  is given (`timeout_milliseconds := 300000`), and the timeout that fires should be the one whose
+ *  failure is recorded in `net._http_response` rather than a platform kill nothing wrote down.
+ *
+ *  The region is pinned in `apps/web/vercel.json`, not here — it is a project setting and applies to
+ *  every route, which is what you want: a per-route exception is a thing somebody has to remember. */
+export const runtime = 'nodejs';
+export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
 
 /** Optional, and deliberately so. TfL answers unkeyed requests at a lower rate limit, so a missing
  *  key degrades rather than breaks — which is what you want on the day somebody rotates it.
@@ -65,9 +79,24 @@ requireEnv({
  *  TfL issues a subscription two keys, primary and secondary, so one can be rotated while the other
  *  keeps serving. They are two credentials against **one** quota — alternating them buys no extra
  *  allowance — so the primary is what we send and the secondary is the standby a rotation swaps in.
- *  `TFL_APP_KEY` is still read last so a deployment set up before the pair existed keeps working. */
-const TFL_APP_KEY =
-  Deno.env.get('TFL_PRIMARY_KEY') ?? Deno.env.get('TFL_SECONDARY_KEY') ?? Deno.env.get('TFL_APP_KEY') ?? undefined;
+ *  `TFL_APP_KEY` is still read last so a deployment set up before the pair existed keeps working.
+ *
+ *  Read per request rather than into a module constant, for the reason `serviceConfig()` gives: a
+ *  value captured at import time is captured once per instance, so rotating a key means waiting for
+ *  the instances to turn over rather than for the next request. */
+function tflKey(): string | undefined {
+  return process.env.TFL_PRIMARY_KEY ?? process.env.TFL_SECONDARY_KEY ?? process.env.TFL_APP_KEY ?? undefined;
+}
+
+/** One value inside a PostgREST `in.(…)` list.
+ *
+ *  Station names hold spaces, apostrophes and parentheses — `Shepherd's Bush (Central)` — and an
+ *  unquoted parenthesis ends the list early, so the filter would silently ask about a different set
+ *  of stations than the caller named. Each value is double-quoted, its own quotes and backslashes
+ *  escaped, and then percent-encoded like any other filter value (`eq`). */
+function inValue(name: string): string {
+  return eq(`"${name.replace(/(["\\])/g, '\\$1')}"`);
+}
 
 /** A ceiling on concurrent TfL calls, with the rest queued behind them.
  *
@@ -269,7 +298,7 @@ interface TravelRow {
 
 async function cachedJourneys(origin: string): Promise<Map<string, TravelRow>> {
   const rows = await rest<TravelRow[]>(
-    `travel_time?origin_postcode=eq.${encodeURIComponent(origin)}` +
+    `travel_time?origin_postcode=eq.${eq(origin)}` +
       '&select=dest_postcode,mode,seconds,changes,journeys,no_route,reason,basis,computed_at',
   );
   return new Map(rows.map((r) => [`${r.dest_postcode}:${r.mode}`, r]));
@@ -343,7 +372,7 @@ async function resolveLeg(
     // the only place that calls it, so the basis is a property of the system rather than of whoever
     // asked (design D4). Through the queue so one request's fifteen legs, and a grid's worth of
     // requests at once, do not all hit TfL in the same instant.
-    const journey = await withTflSlot(() => journeyTime(origin, to, mode, TFL_APP_KEY));
+    const journey = await withTflSlot(() => journeyTime(origin, to, mode, tflKey()));
     // Transient, deliberately, so it goes out uncached and is reported in its own words: a walk
     // TfL's graph could not have measured honestly is a fault in the planner, not a fact about the
     // journey, and a no-route row would make a 17-minute detour into a dash that outlives the fix.
@@ -556,10 +585,26 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
   const postcode = ask.postcode.trim();
   if (!postcode) throw new HttpError(400, 'bad-request', 'a station walk needs a postcode');
 
-  const walkRows = await rest<Array<{ station_name: string; seconds: number }>>(
-    `station_walk?postcode=eq.${encodeURIComponent(postcode)}&select=station_name,seconds`,
-  );
+  // Both caches in one pair of concurrent reads rather than a walk read followed by a point read per
+  // name. This was the clearest of the sequential round trips #97 names: eight nearby stations meant
+  // nine requests to PostgREST, one after another over the public hostname, in front of SQL that
+  // takes a fraction of a millisecond each. They are independent — a station's coordinates have
+  // nothing to do with the walk from this postcode — so nothing here had to be sequential.
+  const [walkRows, pointRows] = await Promise.all([
+    rest<Array<{ station_name: string; seconds: number }>>(
+      `station_walk?postcode=eq.${eq(postcode)}&select=station_name,seconds`,
+    ),
+    ask.names.length === 0
+      ? Promise.resolve([])
+      : rest<Array<{ name: string; lat: number | null; lon: number | null; lines: string[] | null }>>(
+          `station_point?name=in.(${ask.names.map(inValue).join(',')})&select=name,lat,lon,lines`,
+        ),
+  ]);
   const knownWalks = new Map(walkRows.map((r) => [r.station_name, r.seconds]));
+  // Absent from this map means "never looked up", which is what sends the name to TfL below. A row
+  // that is present with a null point is a different fact — TfL does not know the station — and it
+  // is cached precisely so we stop asking.
+  const knownPoints = new Map(pointRows.map((r) => [r.name, r]));
 
   // The upper bound, claimed before any of it is dispatched: a placing call per name and a walk per
   // name we have not measured. The point cache is read inside the loop rather than in bulk, so a
@@ -595,16 +640,16 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
     await Promise.all(
       ask.names.map(async (name) => {
         try {
-          const points = await rest<Array<{ lat: number | null; lon: number | null; lines: string[] | null }>>(
-            `station_point?name=eq.${encodeURIComponent(name)}&select=lat,lon,lines`,
-          );
+          const cached = knownPoints.get(name);
           let station: StationInfo | null;
-          if (points.length > 0) {
-            const p = points[0]!;
-            station = p.lat === null || p.lon === null ? null : { lat: p.lat, lon: p.lon, lines: p.lines ?? [] };
+          if (cached) {
+            station =
+              cached.lat === null || cached.lon === null
+                ? null
+                : { lat: cached.lat, lon: cached.lon, lines: cached.lines ?? [] };
           } else {
             made++;
-            station = await withTflSlot(() => resolveStation(name, TFL_APP_KEY));
+            station = await withTflSlot(() => resolveStation(name, tflKey()));
             await rpc('cache_station_point', {
               p_name: name,
               p_lat: station?.lat ?? null,
@@ -632,7 +677,7 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
           // A `let` loses its post-guard non-null narrowing inside a closure, so capture the
           // resolved station in a const before handing it to the queue.
           const at = station;
-          const seconds = await withTflSlot(() => walkTo(postcode, at, TFL_APP_KEY));
+          const seconds = await withTflSlot(() => walkTo(postcode, at, tflKey()));
           // Not cached and not shown: the straight-line distance beside the station stands in, which
           // is what a station with no walk already shows. See `implausibleWalk` for the ratio.
           const detour = implausibleWalk('walking', seconds, apartMiles(await placeOrigin(), at));
@@ -760,7 +805,6 @@ function checkModes(gaps: Gap[]): void {
  *
  *  SETUP.md has the rest, including why tying this to the platform's own service key turned out to
  *  be a way of failing silently. */
-const BACKFILL_TOKEN = Deno.env.get('TRAVEL_BACKFILL_TOKEN');
 const BACKFILL_HEADER = 'x-backfill-token';
 
 /** Is this the scheduled backfill calling, rather than a person?
@@ -770,11 +814,12 @@ const BACKFILL_HEADER = 'x-backfill-token';
  *  this answers no, and the caller falls through to `requireCaller` and is refused as a person
  *  would be. */
 function isBackfill(request: Request): boolean {
+  const expected = process.env.TRAVEL_BACKFILL_TOKEN;
   const token = request.headers.get(BACKFILL_HEADER);
-  if (token === null || !BACKFILL_TOKEN) return false;
-  if (token.length !== BACKFILL_TOKEN.length) return false;
+  if (token === null || !expected) return false;
+  if (token.length !== expected.length) return false;
   let differences = 0;
-  for (let at = 0; at < token.length; at++) differences |= token.charCodeAt(at) ^ BACKFILL_TOKEN.charCodeAt(at);
+  for (let at = 0; at < token.length; at++) differences |= token.charCodeAt(at) ^ expected.charCodeAt(at);
   return differences === 0;
 }
 
@@ -902,35 +947,44 @@ function toCached(row: TravelRow) {
 }
 
 
-serve(async (request) => {
-  // The scheduled backfill first, and settled from the header alone before anything is read or any
-  // round trip is made. Deliberately ahead of `requireCaller`: it is the only caller that is not a
-  // person, it holds no session and has no hourly allowance to check, and leaving the order below
-  // untouched means an unauthenticated request still gets its 401 before its body is parsed.
-  if (isBackfill(request)) {
-    // `body` is a cast and nothing more, so a JSON `null` or a bare string would reach the field
-    // access below as a TypeError and leave through the 500 path — a broken request reported as a
-    // broken server, which is the one distinction the reply convention exists to keep.
-    const ask = (await body<SystemAsk>(request)) as SystemAsk | null;
-    if (typeof ask !== 'object' || ask === null || ask.kind !== 'backfill') {
-      throw new HttpError(400, 'bad-request', `the backfill token asks for backfill, not ${String((ask as SystemAsk | null)?.kind)}`);
+export const POST = publicRoute(
+  'the scheduled backfill is the caller, and pg_cron holds no session. It is settled from ' +
+    'x-backfill-token before anything else is read, and every other caller falls straight through ' +
+    'to requireCaller below — an unauthenticated request still gets its 401 before its body is ' +
+    'parsed. See isBackfill for why the token is its own header rather than Authorization.',
+  async (request) => {
+    // The scheduled backfill first, and settled from the header alone before anything is read or any
+    // round trip is made. Deliberately ahead of `requireCaller`: it is the only caller that is not a
+    // person, it holds no session and has no hourly allowance to check, and leaving the order below
+    // untouched means an unauthenticated request still gets its 401 before its body is parsed.
+    if (isBackfill(request)) {
+      // `jsonBody` is a cast and nothing more, so a JSON `null` or a bare string would reach the field
+      // access below as a TypeError and leave through the 500 path — a broken request reported as a
+      // broken server, which is the one distinction the reply convention exists to keep.
+      const ask = (await jsonBody<SystemAsk>(request)) as SystemAsk | null;
+      if (typeof ask !== 'object' || ask === null || ask.kind !== 'backfill') {
+        throw new HttpError(400, 'bad-request', `the backfill token asks for backfill, not ${String((ask as SystemAsk | null)?.kind)}`);
+      }
+      return await runBackfill(ask);
     }
-    return await runBackfill(ask);
-  }
 
-  const caller = await requireCaller(request);
-  // No rate check here any more. What one ask costs is only knowable once its body has been read
-  // and the cache consulted, so each resolver below claims its own capacity — see `claimCalls`.
-  const ask = await body<Ask>(request);
+    const caller = await requireCaller(request);
+    // No rate check here any more. What one ask costs is only knowable once its body has been read
+    // and the cache consulted, so each resolver below claims its own capacity — see `claimCalls`.
+    const ask = await jsonBody<Ask>(request);
 
-  switch (ask.kind) {
-    case 'journeys':
-      return await resolveJourneys(caller, ask);
-    case 'stations':
-      return await resolveStations(caller, ask);
-    case 'postcode':
-      return await resolvePostcode(caller, ask);
-    default:
-      throw new HttpError(400, 'bad-request', `unknown kind ${String((ask as { kind?: unknown }).kind)}`);
-  }
-});
+    switch (ask.kind) {
+      case 'journeys':
+        return await resolveJourneys(caller, ask);
+      case 'stations':
+        return await resolveStations(caller, ask);
+      case 'postcode':
+        return await resolvePostcode(caller, ask);
+      default:
+        throw new HttpError(400, 'bad-request', `unknown kind ${String((ask as { kind?: unknown }).kind)}`);
+    }
+  },
+);
+
+/** The extension calls this cross-origin, so the preflight has to be answered. */
+export const OPTIONS = preflightRoute();

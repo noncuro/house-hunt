@@ -41,6 +41,13 @@ const PUBLIC_ROUTES = new Map<string, string>([
       'the session, and redeem_code() counts the guesses in the database. Its reset half calls ' +
       'requireCaller itself and refuses a non-admin.',
   ],
+  [
+    'apps/web/src/app/api/travel/route.ts',
+    'the scheduled backfill is a caller with no session — pg_cron holds none. It is settled from ' +
+      'the x-backfill-token header, compared in constant time, before anything is read; an unset ' +
+      'token is not a wildcard, and every other caller falls through to requireCaller in the same ' +
+      'handler and is refused exactly as a person would be.',
+  ],
 ]);
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];

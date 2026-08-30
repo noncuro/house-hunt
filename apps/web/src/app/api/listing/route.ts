@@ -42,7 +42,8 @@
 import { listingFromHtml, ListingWithdrawn, listingUrl, rightmoveListingId } from '@house-hunt/core';
 import { requireActiveProject } from '@/server/caller';
 import { authedRoute, jsonBody } from '@/server/handler';
-import { eq, HttpError, rest } from '@/server/supabase';
+import { claimHourlyCall, type RateLimited } from '@/server/rate-limit';
+import { HttpError } from '@/server/supabase';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
@@ -67,7 +68,8 @@ export const dynamic = 'force-dynamic';
  *  Counted out of `api_usage` rather than held in memory, and that is not a detail of the old
  *  runtime that stopped mattering on this one: a Vercel function instance is recycled without
  *  warning and several may serve the same person at once, so a counter in a module variable is a
- *  limit that silently stops existing. The row is the limit. */
+ *  limit that silently stops existing. The row is the limit — claimed and written in one step, for
+ *  the reason `@/server/rate-limit` gives. */
 const LIMIT_PER_HOUR = 60;
 const KIND = 'fetch_listing';
 
@@ -88,7 +90,7 @@ type Result =
    *  we understand: this is the one that means Rightmove has changed something and the extension is
    *  about to break too, so it must not be dressed up as "that flat is gone". */
   | { status: 'unreadable'; rightmoveId: string; message: string }
-  | { status: 'rate-limited'; used: number; limit: number; retry_after_seconds: number };
+  | RateLimited;
 
 export const POST = authedRoute(async (request, caller): Promise<Result> => {
   // Adding a flat is only meaningful inside a hunt, and the usage row this writes is charged to
@@ -106,13 +108,15 @@ export const POST = authedRoute(async (request, caller): Promise<Result> => {
     );
   }
 
-  const used = await recentFetches(caller.userId);
-  if (used >= LIMIT_PER_HOUR) {
-    return { status: 'rate-limited', used, limit: LIMIT_PER_HOUR, retry_after_seconds: 3600 };
-  }
-  // Before the request goes out, so a fetch that fails still spends its slot — charged after, every
-  // failure would be free and the limit unreachable by retrying.
-  await note(projectId, caller.userId, id);
+  const refused = await claimHourlyCall({
+    userId: caller.userId,
+    projectId,
+    kind: KIND,
+    limit: LIMIT_PER_HOUR,
+    rightmoveId: id,
+  });
+  if (refused) return refused;
+  console.log(`reading listing ${id} for ${caller.userId}`);
 
   return await read(id);
 });
@@ -175,32 +179,3 @@ async function read(id: string): Promise<Result> {
   }
 }
 
-async function recentFetches(userId: string): Promise<number> {
-  const since = new Date(Date.now() - 3600_000).toISOString();
-  const rows = await rest<Array<{ id: number }>>(
-    `api_usage?user_id=eq.${eq(userId)}&kind=eq.${KIND}&occurred_at=gt.${eq(since)}&select=id`,
-  );
-  return rows.length;
-}
-
-async function note(projectId: string, userId: string, rightmoveId: string): Promise<void> {
-  await rest('api_usage', {
-    method: 'POST',
-    body: {
-      project_id: projectId,
-      user_id: userId,
-      kind: KIND,
-      // Costs nothing, so it must sum to nothing: the row exists to be counted by the limiter
-      // above, and a non-zero cost here would move a spend cap that has nothing to do with it.
-      // Inserted with the service role rather than through `record_api_usage`, which raises without
-      // a `model_price` row and would turn the limiter into an outage — same note as
-      // `resolve-location`.
-      cost_usd: 0,
-      rightmove_id: rightmoveId,
-      input_tokens: 0,
-      cached_input_tokens: 0,
-      output_tokens: 0,
-    },
-  });
-  console.log(`reading listing ${rightmoveId} for ${userId}`);
-}

@@ -41,7 +41,8 @@
  */
 import { requireActiveProject } from '@/server/caller';
 import { authedRoute, jsonBody, preflightRoute } from '@/server/handler';
-import { eq, HttpError, rest } from '@/server/supabase';
+import { claimHourlyCall } from '@/server/rate-limit';
+import { HttpError } from '@/server/supabase';
 
 export const runtime = 'nodejs';
 
@@ -63,7 +64,8 @@ const LIMIT_PER_HOUR = 10;
  *  is recycled without warning, which is exactly when a limit held in memory stops existing.
  *  `api_usage` is the log of external calls this system makes on a user's behalf, `kind` is there to
  *  tell them apart, and the row is written with `cost_usd = 0` so nothing here moves a spend cap or
- *  shows up as money in the admin view. Counting rows in that table is the whole limiter. */
+ *  shows up as money in the admin view. Counting rows in that table is the whole limiter, and the
+ *  count and the row are one step — `@/server/rate-limit`. */
 const KIND = 'resolve_location';
 
 export const POST = authedRoute(async (request, caller) => {
@@ -73,19 +75,14 @@ export const POST = authedRoute(async (request, caller) => {
   const input = await jsonBody<{ query?: string; slug?: string }>(request);
   const slug = toSlug(input.slug ?? input.query);
 
-  const used = await recentLookups(caller.userId);
-  if (used >= LIMIT_PER_HOUR) {
-    return {
-      status: 'rate-limited',
-      used,
-      limit: LIMIT_PER_HOUR,
-      retry_after_seconds: 3600,
-    } as const;
-  }
-
-  // Counted before the request goes out, not after, so a lookup that fails still spends its slot.
-  // Charged after would make every failure free and the limit unreachable by retrying.
-  await note(projectId, caller.userId, slug);
+  const refused = await claimHourlyCall({
+    userId: caller.userId,
+    projectId,
+    kind: KIND,
+    limit: LIMIT_PER_HOUR,
+  });
+  if (refused) return refused;
+  console.log(`resolving ${slug} for ${caller.userId}`);
 
   return await resolve(slug);
 });
@@ -110,37 +107,6 @@ function toSlug(input: string | undefined): string {
   return slug;
 }
 
-async function recentLookups(userId: string): Promise<number> {
-  const since = new Date(Date.now() - 3600_000).toISOString();
-  const rows = await rest<Array<{ id: number }>>(
-    `api_usage?user_id=eq.${eq(userId)}&kind=eq.${KIND}&occurred_at=gt.${eq(since)}&select=id`,
-  );
-  return rows.length;
-}
-
-async function note(projectId: string, userId: string, slug: string): Promise<void> {
-  await rest('api_usage', {
-    method: 'POST',
-    body: {
-      project_id: projectId,
-      user_id: userId,
-      kind: KIND,
-      // No model and no tokens: this call costs nothing. The row exists to be counted, and a zero
-      // cost is what keeps it out of every sum the caps and the admin view take.
-      //
-      // Inserted directly with the service role, and it must stay that way. `record_api_usage`
-      // raises when there is no `model_price` row for the model it is given, so routing this
-      // through it would have every rate-limit write throw on a price for a model that does not
-      // exist — turning the limiter into an outage on the path it is supposed to protect.
-      cost_usd: 0,
-      rightmove_id: null,
-      input_tokens: 0,
-      cached_input_tokens: 0,
-      output_tokens: 0,
-    },
-  });
-  console.log(`resolving ${slug} for ${userId}`);
-}
 
 type Resolved =
   | { status: 'not-found'; slug: string }

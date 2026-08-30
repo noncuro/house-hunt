@@ -53,8 +53,7 @@ import {
 import { ratingOf } from '../packages/ui/src/ratings';
 import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
-import { startFunctions } from './edge-functions';
-import { demandFreePort, stopTree, WEB_APP_PORT } from './servers';
+import { startWebApp, stopTree, WEB_APP_PORT } from './servers';
 import { checkArchiveIsComplete } from './manifest-paths';
 
 /** Must match `storageKey` in `apps/web/src/lib/client.ts`. Asserted below rather than trusted:
@@ -148,7 +147,6 @@ console.log(
 // Declared out here and started inside the try, so the `finally` covers every one of them. Started
 // above it, a website that failed to build left the function server running — and a stray server is
 // worse than an obvious crash, because the next run's readiness probe passes against it.
-let functions: ChildProcess | undefined;
 let server: ChildProcess | undefined;
 let browser: Browser | undefined;
 
@@ -159,14 +157,12 @@ let browser: Browser | undefined;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     stopTree(server);
-    stopTree(functions);
     process.exit(130);
   });
 }
 
 try {
-  functions = await startFunctions({ supabaseUrl, origin: ORIGIN });
-  server = await startWebApp();
+  server = await startWebApp({ url: supabaseUrl, anonKey, serviceKey });
 
   // A browser rather than a persistent context, because the sign-in sections need one that is
   // genuinely signed out and this one has a session planted in it. `signedOutPage` makes them a
@@ -212,7 +208,6 @@ try {
   // ones after it.
   await browser?.close().catch(() => {});
   stopTree(server);
-  stopTree(functions);
 }
 
 if (problems.length > 0) {
@@ -1527,72 +1522,3 @@ async function settleOn<T>(
  *  extension reads `WXT_*` — so, like `build:smoke`, it cannot be arranged at runtime and is passed
  *  in here. The service-role key is passed the same way but is read per request, so it reaches the
  *  server rather than the bundle. Nothing about the repo's `.env` is read or changed. */
-async function startWebApp(): Promise<ChildProcess> {
-  // Before the build rather than after it, so a port somebody else holds costs a second instead of
-  // a minute — and so nothing is built for a server that is not going to be started.
-  await demandFreePort(PORT, 'the website under test');
-
-  const cwd = resolve(import.meta.dirname, '..');
-  const env = {
-    ...process.env,
-    NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
-    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anonKey,
-    // The local stack's service role, because the routes need one and this is the deployment they
-    // are running as. `invite` and `password` are routes now and `checkJoining` drives both, so
-    // without this the joining section fails as a 500 saying the key is missing — which is the
-    // route's own sentence, correct, and one step away from a harness that simply did not set it.
-    // Read at request time rather than baked into the bundle, so `next start` gets it here rather
-    // than the build above.
-    SUPABASE_SECRET_KEY: serviceKey,
-  };
-  // Note: this writes the ordinary `apps/web/.next`, so it replaces whatever `pnpm dev:web` last
-  // built — with a bundle pointed at the *local* stack. Harmless (the next `dev:web` rebuilds from
-  // the root `.env`) but worth knowing if a dev server is running while this does.
-
-  console.log(`building the website against ${supabaseUrl} (this takes a minute)`);
-  const built = spawn('pnpm', ['--filter', '@house-hunt/web', 'exec', 'next', 'build'], {
-    cwd,
-    env,
-    stdio: ['ignore', 'inherit', 'inherit'],
-  });
-  const code = await new Promise<number>((done) => built.on('exit', (c) => done(c ?? 1)));
-  if (code !== 0) throw new Error(`next build failed with code ${code} — the harness cannot run`);
-
-  console.log(`starting the website on ${ORIGIN}`);
-  const child = spawn('pnpm', ['--filter', '@house-hunt/web', 'exec', 'next', 'start', '-p', String(PORT)], {
-    cwd,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    // In a process group of its own, so `stopTree` can take the `next start` underneath pnpm with
-    // it. Signalling pnpm alone leaves the server holding the port, and the run after this one
-    // then asserts against it — see `tools/servers.ts`.
-    detached: true,
-  });
-
-  child.stderr?.on('data', (chunk: Buffer) => {
-    const text = chunk.toString();
-    if (/Error|error:/.test(text)) process.stderr.write(`[next] ${text}`);
-  });
-
-  // Poll rather than parse the banner: the "ready" line has moved between Next versions, and a
-  // harness that waits for a string it no longer prints hangs for its whole timeout with the
-  // server up and healthy behind it.
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`next dev exited with code ${child.exitCode}`);
-    try {
-      const response = await fetch(ORIGIN, { signal: AbortSignal.timeout(2_000) });
-      if (response.ok) {
-        console.log('website is up');
-        return child;
-      }
-    } catch {
-      // not up yet
-    }
-    await new Promise((r) => setTimeout(r, 1_000));
-  }
-  // The caller never got a handle on this one, so its `finally` cannot stop it and this is the only
-  // place that can.
-  stopTree(child);
-  throw new Error(`the website did not come up on ${ORIGIN} within 120s`);
-}
