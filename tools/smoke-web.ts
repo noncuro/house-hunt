@@ -55,6 +55,8 @@ import { localCredentials } from './supabase-local';
 import { keepOffline, OFFLINE_ARGS } from './offline';
 import { startWebApp, stopTree, WEB_APP_PORT } from './servers';
 import { checkArchiveIsComplete } from './manifest-paths';
+import { BRIDGE } from '../packages/core/src/bridge';
+import { EXPECTED_EXTENSION_VERSION } from '../apps/web/src/lib/extension-version';
 
 /** Must match `storageKey` in `apps/web/src/lib/client.ts`. Asserted below rather than trusted:
  *  a session written under the wrong key renders a perfectly good sign-in form, and every
@@ -116,6 +118,7 @@ const SECTIONS = [
   { name: 'table', run: checkTable },
   { name: 'map', run: checkMap },
   { name: 'triage', run: checkTriage },
+  { name: 'sweep', run: checkFillIn },
   { name: 'tabs', run: checkTabs },
   { name: 'refusals', run: checkRefusals },
   { name: 'joining', run: checkJoining },
@@ -1021,6 +1024,157 @@ async function closeFlat(page: Page): Promise<void> {
  *  Settings and Project also read the fixture's own rows, so the landmark is a value rather than a
  *  heading wherever there is one to name: `Work` is a place this fixture created, and the two
  *  members are the two accounts it created. */
+/** The fill-in run: the last opener in the product, and the one thing here that needs an
+ *  extension on the other end.
+ *
+ *  The website has no `chrome.tabs.create`. A run asks for one over the bridge per listing, so the
+ *  screen refuses to offer a run at all unless something answered `hello` — which is why no harness
+ *  has ever pressed this button, and why the entry that became #75 asked for a stub.
+ *
+ *  **The stub is not an extension.** The bridge is a `window.postMessage` on the page's own origin
+ *  and nothing more (`apps/web/src/lib/bridge.ts`), so what has to exist is a listener, not a
+ *  browser extension — which is the whole reason this can live in `smoke:web`, the harness CI can
+ *  run, rather than needing a loaded build and a saved Rightmove page.
+ *
+ *  What it proves, and it is the part `check:full-sweep` cannot: the worklist really is read out of
+ *  Postgres, the run really is offered only when something answers, and the tabs really are asked
+ *  for one at a time in the order the screen claims. `check:full-sweep` drives the same sequencing
+ *  against a fake clock, which is the right way to assert pacing and no way at all to assert that
+ *  the button is wired to it. */
+async function checkFillIn({ browser }: Stage): Promise<void> {
+  const wanted = fixture.pendingSightings;
+  if (wanted.length === 0) {
+    note('the fixture seeded no unopened sightings, so the fill-in run had no worklist to drive');
+    return;
+  }
+
+  // Its own context rather than the shared page, because the stub has to be installed before the
+  // app's first render — `hello` is asked once, on mount, and a page that has already decided there
+  // is no extension will not ask again.
+  const context = await browser.newContext(CONTEXT);
+  await context.addInitScript(
+    ([key, value]) => window.localStorage.setItem(key as string, value as string),
+    [SESSION_KEY, JSON.stringify(fixture.session)],
+  );
+  // Before any navigation, so the listener is there when the app asks `hello` on first render — and
+  // the pace before the component reads it, since it is read once into state at mount. Three
+  // seconds is the minimum the control allows, and the run is `0 + 3s + 3s` for three listings.
+  await context.addInitScript(
+    ({ bridge, version, email, paceKey }) => {
+      const opened: Array<{ url: string; at: number }> = [];
+      (window as unknown as { __opened: typeof opened }).__opened = opened;
+      window.localStorage.setItem(paceKey, '3000');
+      window.addEventListener('message', (event: MessageEvent) => {
+        if (event.source !== window) return;
+        const data = event.data as { source?: string; id?: string; ask?: { kind?: string; url?: string } };
+        if (data?.source !== bridge || typeof data.id !== 'string' || !data.ask) return;
+        // Only the two a fill-in run makes. Anything else is left unanswered, which is exactly what
+        // an extension that does not understand a message would do.
+        if (data.ask.kind === 'hello') {
+          window.postMessage(
+            { source: bridge, id: data.id, reply: { kind: 'hello', signedIn: true, email, version } },
+            window.location.origin,
+          );
+          return;
+        }
+        if (data.ask.kind === 'open-tab' && typeof data.ask.url === 'string') {
+          opened.push({ url: data.ask.url, at: Date.now() });
+          window.postMessage(
+            { source: bridge, id: data.id, reply: { kind: 'open-tab' } },
+            window.location.origin,
+          );
+        }
+      });
+    },
+    { bridge: BRIDGE, version: EXPECTED_EXTENSION_VERSION, email: FIXTURE_EMAIL, paceKey: PACE_KEY },
+  );
+
+  const offline = await keepOffline(context, { allow: ALLOW });
+  const page = await context.newPage();
+  page.on('console', (m: ConsoleMessage) => {
+    if (process.env.SMOKE_LOG === 'all') console.log(`[page:${m.type()}] ${m.text()}`);
+    else if (m.type() === 'error') note(`console: ${m.text()}`);
+  });
+  page.on('pageerror', (e) => note(`pageerror: ${e.message}`));
+
+  try {
+    await openView(page, 'sweep');
+
+    const go = page.locator('[data-testid="opener-go"]');
+    if ((await go.count()) === 0) {
+      note(
+        'the Sweep tab offered no fill-in run — either the worklist came back empty or the stub ' +
+          'extension never answered `hello`, and the screen draws the same nothing for both',
+      );
+      await page.screenshot({ path: resolve(SHOTS, 'web-sweep-no-run.png'), fullPage: true });
+      return;
+    }
+
+    // The button says how many it is about to open, which is the worklist as the screen understands
+    // it. Asserted before pressing: a run that opens the right tabs off a button that promised a
+    // different number is a screen disagreeing with itself, and afterwards there is nothing to
+    // compare against.
+    const offer = (await go.innerText()).replace(/\s+/g, ' ');
+    if (!offer.includes(`Open the ${wanted.length} `)) {
+      note(`the fill-in button offered "${offer}" where it should offer ${wanted.length} listings`);
+    }
+
+    await go.click();
+
+    // One at a time, and read as it goes rather than only at the end: a run that opened all three in
+    // the same tick would leave the same three URLs behind as one that paced them properly.
+    const opened = await settleOn(
+      () => page.evaluate(() => (window as unknown as { __opened: Array<{ url: string; at: number }> }).__opened),
+      (rows) => rows.length >= wanted.length,
+      80,
+    );
+
+    console.log(`fill-in: asked for ${opened.length} tab(s) of ${wanted.length}`);
+    if (opened.length !== wanted.length) {
+      note(`the fill-in run asked for ${opened.length} background tab(s), expected ${wanted.length}`);
+    }
+
+    // Newest sighting first, across hubs — the order `pendingSightings` hands back and the order the
+    // screen promises. A run that opened the right listings in the wrong order would be invisible
+    // on screen and would open the flat most likely to be gone last.
+    const expected = wanted.map((s) => `https://www.rightmove.co.uk/properties/${s.rightmoveId}`);
+    const got = opened.slice(0, expected.length).map((row) => row.url);
+    if (got.join('|') !== expected.join('|')) {
+      note(`the fill-in run opened ${got.join(', ')} where it should open ${expected.join(', ')}`);
+    }
+
+    // Paced, not burst. The first is immediate by design; every one after it waits, and the gap is
+    // the assertion the whole opener exists for — `window.open` from a timer is throttled to the
+    // first tab, which is why this goes through the extension at all.
+    const gaps = opened.slice(1).map((row, i) => row.at - opened[i]!.at);
+    const tooQuick = gaps.filter((gap) => gap < PACE_FLOOR_MS);
+    console.log(`fill-in: gaps ${gaps.map((g) => `${g}ms`).join(', ') || '(none)'}`);
+    if (tooQuick.length > 0) {
+      note(
+        `the fill-in run opened ${tooQuick.length} tab(s) less than ${PACE_FLOOR_MS}ms apart ` +
+          `(${gaps.join(', ')}) — the pace was set to 3s, so they were not paced at all`,
+      );
+    }
+
+    await page.screenshot({ path: resolve(SHOTS, 'web-sweep-fill-in.png'), fullPage: true });
+  } finally {
+    // The same rule the rest of the harness keeps: a run that reached Rightmove is a run that broke
+    // the standing rule, and the opener is the one place in the product whose whole job is to open
+    // Rightmove pages. The stub answers instead of a browser, so nothing should have been requested
+    // — this is what says so rather than assuming it.
+    console.log(`fill-in: ${offline()}`);
+    await context.close();
+  }
+}
+
+/** Where the opener remembers the pace, and the floor a paced run must clear.
+ *
+ *  The floor is well under the 3s asked for: this asserts the tabs were spaced rather than that the
+ *  timer is accurate, and a loaded CI runner drifts. A burst — the failure worth catching — is
+ *  single-digit milliseconds apart, nowhere near this. */
+const PACE_KEY = 'house-hunt/open-interval-ms';
+const PACE_FLOOR_MS = 1_500;
+
 async function checkTabs({ page }: Stage): Promise<void> {
   for (const [view, landmarks] of [
     // Settings is one person's own now — a display name and the diagnostics. The places moved to
