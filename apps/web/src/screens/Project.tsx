@@ -6,6 +6,7 @@ import { keys as shellKeys, useAuth, useProjectSettings, useSetProjectSettings }
 import { AmenityLabel, Hint, Icon, TRANSIT_BASIS_NOTE, type IconName } from '@house-hunt/ui';
 import '@/app/hunt.css';
 import { attempt } from '@/lib/attempt';
+import { expiryInWords, inviteIsLive, inviteState } from '@/lib/invite';
 import {
   addPlace as addPlaceRow,
   listHubSweeps,
@@ -832,14 +833,14 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
       {outstanding.map((invite) => (
         <div className="place" key={invite.id}>
           <span>
-            {invite.email} <span className="dim">{inviteState(invite)}</span>
+            {invite.email} <span className="dim">{inviteWords(invite, now)}</span>
           </span>
           <span>
             {/* Resending is the answer to "they lost the code" — it revokes this invite and mints
                 a fresh one, which is the only way to get a working code, since the old one is
                 stored as a hash and cannot be read back. Offered only while the invite is live: a
                 resent expired invite would hand over a code that redeems into nothing. */}
-            {inviteIsLive(invite) && (
+            {inviteIsLive(invite, now) && (
               <button
                 className="key"
                 disabled={resend.isPending}
@@ -873,7 +874,7 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
             settled.map((invite) => (
               <div className="place" key={invite.id}>
                 <span>
-                  {invite.email} <span className="dim">{inviteState(invite)}</span>
+                  {invite.email} <span className="dim">{inviteWords(invite, now)}</span>
                 </span>
               </div>
             ))}
@@ -942,7 +943,7 @@ function Invited({ result }: { result: Extract<InviteResult, { status: 'invited'
       <p className="dim">
         This is the only time it is shown — it is not stored anywhere it can be read back. If it
         gets lost, <strong>Resend</strong> below makes a new one and retires this one. The invite
-        expires {expiry(result.invite.expiresAt)}.
+        expires {expiryInWords(result.invite.expiresAt)}.
       </p>
     </div>
   );
@@ -1095,27 +1096,20 @@ function ProjectRows({ projects, activeId }: { projects: ProjectSummary[]; activ
   );
 }
 
-/** What an invite is *now*, which is not always what its status column says.
- *
- *  Nothing ages a pending invite out: a row fourteen days past its `expires_at` still reads
- *  `pending` in the database. Showing that word would say the invite is waiting for someone when
- *  it confers nothing, so expiry is derived from the date here and at every other reading. */
-function inviteIsLive(invite: Invite, now = Date.now()): boolean {
-  return invite.status === 'pending' && !invite.expired && Date.parse(invite.expiresAt) > now;
-}
-
-function inviteState(invite: Invite): string {
-  if (invite.status === 'accepted') return 'joined';
-  if (invite.status === 'revoked') return 'revoked';
-  return inviteIsLive(invite) ? `invited, expires ${expiry(invite.expiresAt)}` : 'expired, never used';
-}
-
-/** "in 12 days" rather than a date, because a date makes the reader do the arithmetic that decides
- *  whether resending is worth it. */
-function expiry(iso: string): string {
-  const days = Math.round((Date.parse(iso) - Date.now()) / 86_400_000);
-  if (days <= 0) return 'today';
-  return days === 1 ? 'tomorrow' : `in ${days} days`;
+/** The state in this screen's own words. *Which* state an invite is in is decided once, in
+ *  `lib/invite.ts`, because the Admin screen renders the same fact and the two used to work it
+ *  out separately. */
+function inviteWords(invite: Invite, now = Date.now()): string {
+  switch (inviteState(invite, now)) {
+    case 'accepted':
+      return 'joined';
+    case 'revoked':
+      return 'revoked';
+    case 'expired':
+      return 'expired, never used';
+    case 'pending':
+      return `invited, expires ${expiryInWords(invite.expiresAt, now)}`;
+  }
 }
 
 /** What a sweep actually searches for, set by pasting a Rightmove search.
