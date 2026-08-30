@@ -288,9 +288,12 @@ async function checkList({ page }: Stage): Promise<void> {
   // nobody has looked at; and opening on one step, which hid every flat the moment somebody moved
   // it further along. `checkFunnel` holds the assertion for the second.
   const cards = await page.locator('[data-testid="flat-card"]').count();
+  // Read before `openLens`, because `openLens` clicks: afterwards the chip is pressed whatever the
+  // screen opened on, so the question has only one possible answer and the assertion cannot fail.
+  const openedOnLive = await page.locator('[data-testid="lens-live"]').getAttribute('aria-pressed');
   const inPlay = await openLens(page, 'live');
   console.log(`places: ${cards} card(s) by default, at "in play"`);
-  if ((await page.locator('[data-testid="lens-live"]').getAttribute('aria-pressed')) !== 'true') {
+  if (openedOnLive !== 'true') {
     note('Places did not open on what is in play');
   }
   if (cards !== inPlay) {
