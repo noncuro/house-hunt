@@ -30,15 +30,21 @@
  *  here. Only the hash is stored (see the migration), so the plaintext returned below is the one
  *  copy there will ever be: the inviter texts it, or resends to mint another.
  *
- *  Membership is still not created here. The invite is consumed on first successful sign-in, so a
- *  pending invite that is never used leaves nothing behind.
+ *  **An address that already has an account is not invited; it is added.** `create_invite` writes
+ *  the membership in the same transaction and answers `added`, and no code comes back, because
+ *  there is nobody to redeem one. It used to mint a code regardless and leave a pending row for
+ *  `consume_invites()` to pick up "on sign-in" — which, for somebody whose phone has been signed in
+ *  for months, is never. The owner saw a code they could not explain and the invitee saw nothing.
+ *
+ *  For a stranger's address, membership is still not created here. The invite is consumed on
+ *  first successful sign-in, so a pending invite that is never used leaves nothing behind.
  *
  *  Deploy:
  *    supabase functions deploy invite --project-ref <ref>
  */
 import { requireCaller, requireMembership, type Caller } from '../_shared/caller.ts';
 import { formatCode, generateCode, hashCode } from '../_shared/code.ts';
-import { body, eq, HttpError, requireEnv, rest, rpc, SERVICE_KEY, serve, SUPABASE_URL } from '../_shared/http.ts';
+import { body, HttpError, requireEnv, rpc, SERVICE_KEY, serve, SUPABASE_URL } from '../_shared/http.ts';
 
 interface Request_ {
   email?: string;
@@ -55,10 +61,10 @@ interface Invite {
   created_at: string;
 }
 
-/** What `create_invite` answers. The four statuses are the four sentences the interface has to be
- *  able to say, which is why they come back as data and not as four different exceptions. */
+/** What `create_invite` answers. The five statuses are the five sentences the interface has to be
+ *  able to say, which is why they come back as data and not as five different exceptions. */
 interface Created {
-  status: 'invited' | 'at-capacity' | 'already-a-member' | 'already-invited';
+  status: 'invited' | 'added' | 'at-capacity' | 'already-a-member' | 'already-invited';
   members: number | null;
   pending: number | null;
   max_members: number | null;
@@ -94,21 +100,16 @@ serve(async (request) => {
     maxMembers: created.max_members,
     invite: created.invite,
   };
+  if (created.status === 'added') {
+    console.log(`added ${email} to ${projectId ?? 'a hunt of their own'} by ${caller.email}`);
+    return outcome;
+  }
   if (created.status !== 'invited' || !created.invite) return outcome;
-
-  const userExisted = await hasAccount(email);
 
   // The address and the project, never the code. A function log is readable by anyone with
   // dashboard access, and a code in a log is a code somewhere it was not handed to.
-  console.log(
-    `invited ${email} to ${projectId ?? 'the platform'} by ${caller.email}` +
-      `${userExisted ? ' (account already existed)' : ''}`,
-  );
-  // `userExisted` decides which of two different things the inviter has to do next: send the code,
-  // or tell them to sign in with the password they already have. The code goes back either way,
-  // because an account can exist without its owner remembering how to get into it, and an unused
-  // code costs nothing.
-  return { ...outcome, userExisted, code: formatCode(code) };
+  console.log(`invited ${email} to ${projectId ?? 'the platform'} by ${caller.email}`);
+  return { ...outcome, code: formatCode(code) };
 });
 
 /** Which project this invite is for, and whether the caller has any standing to say so. */
@@ -145,18 +146,4 @@ function normalise(email: string | undefined): string {
     throw new HttpError(400, 'bad-request', 'a valid email address is required');
   }
   return trimmed;
-}
-
-/** Does this address already have an account?
- *
- *  Asked of `profile` rather than of the Admin API's user list: the `on auth.users insert` trigger
- *  writes a profile row for every account, so the two agree, and this is one indexed read against a
- *  table this function already talks to instead of a paged search over every user in the project.
- *
- *  Nothing branches on it except the sentence the inviter reads. An address that already has an
- *  account is the ordinary way somebody joins a second house hunt: they sign in with the password
- *  they have, and `consume_invites()` picks the new invite up. */
-async function hasAccount(email: string): Promise<boolean> {
-  const rows = await rest<Array<{ id: string }>>(`profile?email=eq.${eq(email)}&select=id&limit=1`);
-  return rows.length > 0;
 }

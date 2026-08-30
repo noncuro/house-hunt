@@ -761,7 +761,7 @@ function Invites({ project, notify }: { project: ProjectSummary; notify: Notify 
       setResult(outcome);
       // Only a real invite clears the field. Every other outcome is about the address that is
       // still in it, and clearing it would leave the sentence underneath pointing at nothing.
-      if (outcome.status === 'invited') setEmail('');
+      if (outcome.status === 'invited' || outcome.status === 'added') setEmail('');
       await refresh();
     },
     onError: (e: Error) => notify(`Not invited — ${e.message}`),
@@ -924,10 +924,8 @@ function Invited({ result }: { result: Extract<InviteResult, { status: 'invited'
   return (
     <div className="notice notice-good invite-code">
       <p>
-        Invited <strong>{result.invite.email}</strong>.{' '}
-        {result.userExisted
-          ? 'They already have an account, so they can just sign in with their own password — the code below is only needed if they have forgotten it and want to start again.'
-          : 'Send them this code. They enter it with their address and a password of their choosing.'}
+        Invited <strong>{result.invite.email}</strong>. Send them this code. They enter it with
+        their address and a password of their choosing.
       </p>
       <p className="invite-code-value">
         <code>{result.code}</code>
@@ -958,6 +956,16 @@ function Outcome({ result }: { result: InviteResult }) {
   switch (result.status) {
     case 'invited':
       return <Invited result={result} />;
+    case 'added':
+      // No code and nothing to send: they already had an account, so they are in. The hunt is on
+      // their screen the next time the app loads for them — it does not push to an open tab.
+      return (
+        <p className="notice notice-good">
+          Added <strong>{result.invite.email}</strong> — they already have an account, so they are
+          in this hunt now. It appears for them the next time they open the app; there is no code
+          to send.
+        </p>
+      );
     case 'at-capacity':
       return (
         <p className="error">

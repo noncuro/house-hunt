@@ -160,6 +160,12 @@ async function readMemberships(): Promise<ProjectSummary[]> {
  *  more than one, the picker asks. */
 export async function authState(): Promise<AuthState> {
   const session = await requireSession();
+  // Before the memberships are read, not only on sign-in. An invite that waits for the next
+  // sign-in waits for good on a phone that stays signed in for months — which is how somebody
+  // with an account was invited to a hunt and never saw it. An existing account is now added
+  // outright by `create_invite`, so this is one cheap no-op most of the time; it is still what
+  // lands a platform invite, and any pending row written before that change.
+  await consumeInvites();
   const profile = await readProfile(session.user.id, session.user.email ?? '');
   const projects = await readMemberships();
 
@@ -1737,12 +1743,13 @@ export async function createInvite(email: string, projectId: string | null): Pro
       return {
         status: 'invited',
         invite: toInvite(body.invite),
-        userExisted: Boolean(body.userExisted),
         // Read straight through and never stored. The function minted it, the database holds only
         // its hash, and this reply is the one place it exists in the clear — a copy kept here would
         // be a copy that outlives the screen it is shown on.
         code: String(body.code ?? ''),
       };
+    case 'added':
+      return { status: 'added', invite: toInvite(body.invite) };
     case 'at-capacity':
       return {
         status: 'at-capacity',
@@ -1774,11 +1781,12 @@ export async function revokeInvite(inviteId: string): Promise<void> {
 
 /** Turn every live invite for the signed-in address into membership.
  *
- *  Call this immediately after a successful sign-in and before reading the session, because until
- *  it runs a newly invited person is a real account in no project at all — which the picker can
- *  only render as "you are not a member of any project yet". It takes no arguments: the function
- *  reads the caller and their address from the JWT, so there is nothing to point at somebody
- *  else's invite. Safe to call on every sign-in; it is a no-op when there is nothing pending. */
+ *  `authState` calls this before it reads the memberships, so every surface that asks who is
+ *  signed in has already taken up whatever was waiting — until it runs a newly invited person is a
+ *  real account in no project at all, which the picker can only render as "you are not a member of
+ *  any project yet". It takes no arguments: the function reads the caller and their address from
+ *  the JWT, so there is nothing to point at somebody else's invite. A no-op when nothing is pending,
+ *  which since `create_invite` started adding existing accounts directly is nearly always. */
 export async function consumeInvites(): Promise<void> {
   const { error } = await db().rpc('consume_invites');
   fail('joining the house hunt you were invited to', error);
