@@ -93,19 +93,13 @@ export class NoActiveProject extends Error {
 
 /** How long the active project may be believed without asking again.
  *
- *  The cache used to have no bound at all — one read per worker lifetime — which made "which hunt am
- *  I in" a question answerable only by tearing the worker down. Switching hunts on another machine,
- *  or on the website beside this one, left the extension a hunt behind with nothing on screen saying
- *  so, and it righted itself at a moment nobody could predict (#86).
- *
- *  Storage events cannot close that half: this is not in storage. It is `profile.active_project_id`
- *  in the database, so a switch made anywhere else is invisible here by construction and the only
- *  available answer is a bound on staleness.
+ *  A storage watcher cannot help here: this is not in storage. It is `profile.active_project_id` in
+ *  the database, so a hunt switched on another machine is invisible by construction and a bound on
+ *  staleness is the only available answer — without one the cache lasted a whole worker lifetime,
+ *  and righted itself at a moment nobody could predict (#86).
  *
  *  A minute is chosen against what the cache is for, which is keeping a profile read off *every*
- *  query — a shortlist load asks for the active project a dozen times in a second, and all but the
- *  first are still free. What it costs is one profile read a minute per worker, against a switch
- *  that is now visible within a minute rather than within an unpredictable number of hours. */
+ *  query: a shortlist load asks a dozen times a second and all but the first are still free. */
 const PROJECT_CACHE_MS = 60_000;
 
 /** The active project, resolved at most once a minute.

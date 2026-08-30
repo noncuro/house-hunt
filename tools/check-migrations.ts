@@ -113,20 +113,22 @@ function git(...args: string[]): string | null {
 
 /** The migration versions on `origin/main`.
  *
- *  Only the tree is wanted, not the history, so a shallow fetch of that one ref is enough — which
- *  matters because CI checks out at `fetch-depth: 1` and has no `origin/main` to read. Fetching is
- *  what makes this run in the place it has to run: a check that quietly skips itself in CI is a
- *  check that is present and absent at the same time.
+ *  Fetched every run rather than only when there is no `origin/main` to read. A local ref that
+ *  exists is not a local ref that is current, and a stale one understates the newest version on
+ *  main — which is the one number this section compares against, so believing a week-old copy is
+ *  how a file that does sort behind main passes. Only the tree is wanted, not the history, so a
+ *  shallow fetch of that one ref is enough; CI checks out at `fetch-depth: 1` and has no
+ *  `origin/main` at all, and a check that quietly skips itself there is present and absent at once.
  *
- *  Null means git could not answer — no remote, or no network on a machine that has never fetched.
- *  That is reported as a note rather than a pass or a failure, because it is this check being unable
- *  to look, and both of the other answers would be a claim it has not earned. */
+ *  Null means git could not answer at all — no remote, or no network on a machine that has never
+ *  fetched. That is reported as a note rather than a pass or a failure, because it is this check
+ *  being unable to look, and both of the other answers would be a claim it has not earned. An
+ *  offline machine that has fetched before still gets its own last copy, which is worth more than
+ *  a note. */
 function versionsOnMain(): Set<string> | null {
-  if (git('rev-parse', '--verify', '--quiet', 'origin/main') === null) {
-    if (git('fetch', '--depth=1', '--quiet', 'origin', 'main') === null) return null;
-    if (git('rev-parse', '--verify', '--quiet', 'FETCH_HEAD') === null) return null;
-  }
-  const ref = git('rev-parse', '--verify', '--quiet', 'origin/main') === null ? 'FETCH_HEAD' : 'origin/main';
+  const fetched = git('fetch', '--depth=1', '--quiet', 'origin', 'main') !== null;
+  const ref = fetched ? 'FETCH_HEAD' : 'origin/main';
+  if (git('rev-parse', '--verify', '--quiet', ref) === null) return null;
   const listed = git('ls-tree', '--name-only', ref, `${DIR}/`);
   if (listed === null) return null;
   const versions = new Set<string>();

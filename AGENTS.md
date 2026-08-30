@@ -474,10 +474,7 @@ In addition to the usual:
   `not-found`, `unreadable`, a 400 that says which field. `packages/core/src/listing.ts`,
   `app/api/resolve-location` and `checkAsk` in `app/api/travel` are what that looks like.
 
-  This used to say "parsed with zod, not asserted". zod is not a dependency of this workspace and
-  never has been, so the rule named a library nobody could use and was declined every time a
-  reviewer applied it — four times before anybody noticed the rule itself was the problem (#119).
-  Adopting it was the other available answer and was not chosen: `listing.ts` decodes an
-  index-reference encoding *before* any schema could see an object, the hand-narrowing returns a
-  stated outcome where a schema would throw, and `packages/core` is bundled into an MV3 worker where
-  a parser is a real cost for restating what the code already does.
+  zod is deliberately not a dependency and never has been, so a review asking for it is asking for
+  a library this workspace does not have (#119). `listing.ts` decodes an index-reference encoding
+  *before* any schema could see an object, narrowing by hand returns a stated outcome where a schema
+  would throw, and `packages/core` is bundled into an MV3 worker.

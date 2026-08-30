@@ -29,13 +29,13 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
 
   async main(ctx) {
-    // Only one set of page listeners may be live at a time. `start` runs again on every session
-    // change (#86), and the set it would otherwise leave behind is holding the user it was started
-    // with — so after a sign-out and a second person signing in on the same browser, the older set
-    // renders the panel, and writes a verdict, as whoever was signed in before. The generation
-    // count is for the gap in `start` itself: it awaits the worker, and a session that changes
-    // twice inside that await would leave the first run's listeners with nothing referring to them.
+    // Only the current session's listeners may be live. The set `start` leaves behind holds the
+    // user it was started with, so a second person signing in on the same browser would have the
+    // older set render the panel — and write a verdict — as whoever was signed in before. The
+    // generation count covers the await inside `start`: a session that changes twice during it
+    // would otherwise leave the first run's listeners with nothing referring to them.
     let stopListening: (() => void) | null = null;
+    let stopWatching: (() => void) | null = null;
     let generation = 0;
     const restart = async (root: Root): Promise<void> => {
       stopListening?.();
@@ -56,10 +56,15 @@ export default defineContentScript({
         const root = withHost(createRoot(container));
         root.render(<Loading />);
         void restart(root);
-        onSessionChange(() => void restart(root));
+        stopWatching = onSessionChange(() => void restart(root));
         return root;
       },
       onRemove(root) {
+        // The watcher first: it would otherwise call `restart` on an unmounted root. Bumping the
+        // generation is what stops a `start` already awaiting the worker from attaching to it.
+        stopWatching?.();
+        stopWatching = null;
+        generation += 1;
         stopListening?.();
         stopListening = null;
         root?.unmount();
