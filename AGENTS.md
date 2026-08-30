@@ -63,7 +63,7 @@ and passwords are Supabase Edge Functions (`supabase/functions/`). Deploy: websi
   branch in flight*.** Supabase keys `supabase_migrations.schema_migrations` on that prefix, not on
   the file, so when two share one the first to run records the version and `supabase db push` reads
   the second as already applied and skips it. There is no error and no log line: the column,
-  function or policy is simply absent, in production only, because CI starts from an empty database
+  function or policy is absent, in production only, because CI starts from an empty database
   and applies both files happily. It nearly landed twice in one day, both times between two branches
   open at once — each author checked `origin/main`, correctly found the minute free, and could not
   see the other branch. `pnpm check:migrations` is what catches it, run against the merge result:
