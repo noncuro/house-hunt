@@ -119,14 +119,16 @@ export type InviteResult =
    *  project, no such project. Named rather than thrown, so the view prints the sentence. */
   | { status: 'refused'; reason: string };
 
-/** What can be changed about a place *after* it exists: whether the hunt sweeps around it, how
- *  far, and how often. The label and the postcode are what the place is, and changing either means
- *  resolving a coordinate again — that is `addPlace`'s job, not a patch's. */
+/** What can be changed about a place *after* it exists: whether journeys are timed to it, whether
+ *  the hunt sweeps around it, how far, and how often. The label and the postcode are what the place
+ *  is, and changing either means resolving a coordinate again — that is `addPlace`'s job, not a
+ *  patch's. */
 export interface PlacePatch {
   locationIdentifier?: string | null;
   displayLocationIdentifier?: string | null;
   sweepRadiusMiles?: number | null;
   maxDaysSinceAdded?: number | null;
+  travelTimed?: boolean;
 }
 
 /** One resolution of a place's name to the identifier Rightmove searches it by.

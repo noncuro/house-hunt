@@ -436,12 +436,12 @@ check(
 
 // A place can be deleted while a filter naming it is still stored, and a bar nobody can see is a
 // bar nobody can clear — so it goes, which shows more flats rather than fewer.
-const WORK = { id: 'work', postcode: 'EC1V 1JN', lat: 51.53, lon: -0.09 };
-const GYM = { id: 'gym', postcode: 'N1 7GU', lat: 51.54, lon: -0.1 };
+const WORK = { id: 'work', postcode: 'EC1V 1JN', lat: 51.53, lon: -0.09, travelTimed: true };
+const GYM = { id: 'gym', postcode: 'N1 7GU', lat: 51.54, lon: -0.1, travelTimed: true };
 /** A neighbourhood folded in from the old hub list: a point on the map, and nothing to ask TfL. */
-const ANGEL_PLACE = { id: 'angel', postcode: null, lat: ANGEL.lat, lon: ANGEL.lon };
+const ANGEL_PLACE = { id: 'angel', postcode: null, lat: ANGEL.lat, lon: ANGEL.lon, travelTimed: true };
 /** A place whose postcode never resolved to a point. The other half of the same coin. */
-const UNPLACED = { id: 'work', postcode: 'EC1V 1JN', lat: null, lon: null };
+const UNPLACED = { id: 'work', postcode: 'EC1V 1JN', lat: null, lon: null, travelTimed: true };
 
 check('a bar naming a deleted place is dropped', withKnownPlaces(toWork, [GYM]), NO_FILTER);
 check('and one naming a place that exists is kept', withKnownPlaces(toWork, [WORK]), toWork);
@@ -452,19 +452,19 @@ console.log('\nwhat a place can be asked');
 check('a place with both offers all four', barModesFor(WORK).length, 4);
 check('a point with no postcode offers only the straight line', barModesFor(ANGEL_PLACE).join(), CROW);
 check('a postcode that never resolved offers the three journeys', barModesFor(UNPLACED).join(), 'walking,cycling,transit');
-check('a place with neither offers nothing', barModesFor({ postcode: null, lat: null, lon: null }).length, 0);
-check('and gets no starting bar at all', startingBar({ postcode: null, lat: null, lon: null }), null);
+check('a place with neither offers nothing', barModesFor({ postcode: null, lat: null, lon: null, travelTimed: true }).length, 0);
+check('and gets no starting bar at all', startingBar({ postcode: null, lat: null, lon: null, travelTimed: true }), null);
 
 // The stored bar nobody was ever offered. A postcode removed from a place leaves its transit bars
 // reading `unknown` for every flat in the hunt — the pile unfiltered, the control saying otherwise.
 check(
   'a transit bar on a place that lost its postcode is dropped',
-  withKnownPlaces(toWork, [{ id: 'work', postcode: null, lat: 51.53, lon: -0.09 }]),
+  withKnownPlaces(toWork, [{ id: 'work', postcode: null, lat: 51.53, lon: -0.09, travelTimed: true }]),
   NO_FILTER,
 );
 check(
   'and a distance bar on a place that lost its coordinates goes too',
-  withKnownPlaces(withinMile, [{ id: 'angel', postcode: 'N1 1AA', lat: null, lon: null }]),
+  withKnownPlaces(withinMile, [{ id: 'angel', postcode: 'N1 1AA', lat: null, lon: null, travelTimed: true }]),
   NO_FILTER,
 );
 check(
@@ -472,6 +472,24 @@ check(
   withKnownPlaces(withinMile, [ANGEL_PLACE]),
   withinMile,
 );
+
+// A neighbourhood somebody has said not to time. It has a perfectly good postcode, so the reason
+// the journeys go is nothing to do with being unroutable — and the straight line stays, because
+// "within half a mile of Angel" is the filter a place you are searching around is best at.
+const ANGEL_UNTIMED = { ...ANGEL_PLACE, postcode: 'N1 8XD', travelTimed: false };
+check('an untimed place offers no journey', barModesFor(ANGEL_UNTIMED).join(), CROW);
+check('and starts on the straight line rather than a commute', startingBar(ANGEL_UNTIMED)?.mode, CROW);
+check('a place with a postcode but no point, untimed, can be asked nothing',
+  barModesFor({ ...UNPLACED, travelTimed: false }).length, 0);
+// The two reasons a journey is not offered are different facts and must not be conflated: this one
+// is switchable, and turning it back on brings the modes straight back.
+check('turning it back on restores the journeys', barModesFor({ ...ANGEL_UNTIMED, travelTimed: true }).length, 4);
+// Somebody's stored "20 minutes' transit to Angel" cannot survive Angel being untimed — a bar
+// reading `unknown` for every flat is a control that looks like a filter and does nothing.
+check('a stored journey bar on a place just untimed is dropped',
+  withKnownPlaces(toWork, [{ ...WORK, travelTimed: false }]), NO_FILTER);
+check('and a distance bar on the same place is kept',
+  withKnownPlaces(withinMile, [ANGEL_UNTIMED]), withinMile);
 
 // Thirty minutes and thirty miles are the same digits and nothing like the same filter, so the
 // number never crosses between units — see the note on `startingBar`.
@@ -544,14 +562,14 @@ check(
   false,
 );
 
-check('it offers the straight line and nothing else', barModesFor({ id: NEAREST_STATION, postcode: null, lat: null, lon: null }).join(), CROW);
+check('it offers the straight line and nothing else', barModesFor({ id: NEAREST_STATION, postcode: null, lat: null, lon: null, travelTimed: false }).join(), CROW);
 // It is not one of the project's places, so the pruning that drops a bar naming a deleted place
 // must not drop this one — there is nothing for it to have been deleted from.
 check('a station bar survives a project with no places at all', withKnownPlaces(halfMileOfATube, []), halfMileOfATube);
 check('and comes back out of storage intact', parseFilter(JSON.parse(JSON.stringify(halfMileOfATube))), halfMileOfATube);
 // Last in the picker, so the button that adds a bar still lands on a place somebody saved — the
 // commute is what they saved it for.
-const workPlace = { ...NEAREST_STATION_PLACE, id: 'work', label: 'Work', postcode: 'EC1V 1JN', lat: 51.53, lon: -0.09 };
+const workPlace = { ...NEAREST_STATION_PLACE, id: 'work', label: 'Work', postcode: 'EC1V 1JN', lat: 51.53, lon: -0.09, travelTimed: true };
 check('the picker offers it after the saved places', destinationsFor([workPlace]).map((p) => p.id), ['work', NEAREST_STATION]);
 check('and offers it on its own when nothing is saved', destinationsFor([]).map((p) => p.id), [NEAREST_STATION]);
 
