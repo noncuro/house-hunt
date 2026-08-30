@@ -49,19 +49,34 @@ interface ServiceConfig {
   key: string;
 }
 
-/** Named rather than inlined so the failure says which variable, on a platform where the answer is
- *  "somebody has not added it to the project yet" often enough to be worth a sentence. */
+/** Two spellings of the same authority, newest first.
+ *
+ *  This project is on Supabase's current API keys — its browser key is an `sb_publishable_…`, not the
+ *  legacy anon JWT — so the server half of that pair is an `sb_secret_…` and `SUPABASE_SECRET_KEY` is
+ *  what to set. `SUPABASE_SERVICE_ROLE_KEY` is the legacy name, kept as a fallback for exactly one
+ *  reason: it is the name the Supabase↔Vercel integration syncs, so a project that has that
+ *  integration connected already has a working key under a name nobody chose. Refusing it would mean
+ *  asking somebody to add by hand a credential the platform had already provided.
+ *
+ *  Both map to the `service_role` database role, which is the part that matters: `set_project_model`
+ *  and `clear_project_model` are granted to that role alone, deliberately, because `project_model` is
+ *  the row every surface trusts to score flats and its writer must not be something a browser can
+ *  impersonate. The reads here could run as the caller under RLS; the write is why there is a key.
+ *
+ *  Named rather than inlined so the failure says which variable, on a platform where the answer is
+ *  "nobody has added it to the project yet" often enough to be worth a sentence. */
 function serviceConfig(): ServiceConfig {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
   const missing = [
     url ? null : 'NEXT_PUBLIC_SUPABASE_URL',
-    key ? null : 'SUPABASE_SERVICE_ROLE_KEY',
+    key ? null : 'SUPABASE_SECRET_KEY (or the legacy SUPABASE_SERVICE_ROLE_KEY)',
   ].filter((name): name is string => name !== null);
   if (missing.length > 0) {
     throw new Error(
       `${missing.join(' and ')} ${missing.length === 1 ? 'is' : 'are'} not set on this deployment — ` +
-        'add it to the Vercel project environment (Settings → Environment Variables).',
+        'add it to the Vercel project environment (Settings → Environment Variables), or connect the ' +
+        'Supabase integration, which syncs the legacy name.',
     );
   }
   return { url: url!, key: key! };

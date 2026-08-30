@@ -285,11 +285,23 @@ proceeds.
 
 - `apps/web/src/server/supabase.ts` reads the URL from `NEXT_PUBLIC_SUPABASE_URL`, which the browser
   bundle already needs, so there is nothing new to set for it.
-- `SUPABASE_SERVICE_ROLE_KEY` must exist on the Vercel project under exactly that name. The
-  Supabase↔Vercel integration, if installed, syncs it under that name automatically, which is why
-  the helper reads that spelling rather than inventing one. It is read per-request through
-  `serviceConfig()` rather than at module scope, so a missing key fails that request with a sentence
-  naming the variable instead of failing the whole website's build.
+- **A privileged key must exist on the Vercel project**, and the name matters less than it looks.
+  This project is on Supabase's current API keys — the browser holds an `sb_publishable_…`, not the
+  legacy anon JWT — so the server half is an `sb_secret_…` and `SUPABASE_SECRET_KEY` is what to set
+  by hand. `serviceConfig()` also accepts the legacy `SUPABASE_SERVICE_ROLE_KEY`, for one reason:
+  that is the name the Supabase↔Vercel integration syncs, so a project with the integration
+  connected already has a working key under a name nobody chose, and refusing it would mean asking
+  somebody to add a credential the platform had already supplied.
+
+  Both map to the `service_role` database role, which is the part that matters. It is *not*
+  incidental privilege: `set_project_model` and `clear_project_model` are granted to that role alone,
+  because `project_model` is the row every surface trusts to score flats and its writer must not be
+  something a browser can impersonate. Every read a route here does could run as the caller under
+  RLS; the write is the reason there is a key at all. Weakening that grant to `authenticated` to
+  avoid the key would hand any browser the ability to post hand-crafted model weights.
+
+  It is read per-request through `serviceConfig()` rather than at module scope, so a missing key
+  fails that request with a sentence naming the variable instead of failing the website's build.
 - With `analyse`: `OPENAI_API_KEY` and `ANALYSIS_ESTIMATE_USD`.
 - With `travel`: `TFL_PRIMARY_KEY`, `TFL_SECONDARY_KEY`, `TFL_APP_KEY` (the function takes the first
   non-null, `index.ts:63-64`) and `TRAVEL_BACKFILL_TOKEN`.
@@ -301,8 +313,10 @@ passes only `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 and `next start`. `localCredentials()` already returns `serviceKey` and the harness discards it
 (`smoke-web.ts:73`). Nothing is broken today only because no `smoke:web` section exercises
 "Rerun ratings" — but `listing` and `invite` *are* exercised, so add
-`SUPABASE_SERVICE_ROLE_KEY: serviceKey` to that `env` before either lands. It is read at runtime,
-not baked into the bundle, so it costs no rebuild.
+`SUPABASE_SECRET_KEY: serviceKey` to that `env` before either lands. It is read at runtime,
+not baked into the bundle, so it costs no rebuild. (The local stack issues a legacy service-role
+JWT rather than an `sb_secret_…`; the routes accept either, and the variable name is what the route
+reads, not a claim about the key's format.)
 
 ## Region
 
