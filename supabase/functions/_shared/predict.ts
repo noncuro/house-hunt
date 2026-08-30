@@ -399,7 +399,15 @@ interface FitOptions {
   /** How far the prior means are pushed from zero. 0 is ordinary zero-mean L2. */
   priorScale?: number;
   learningRate?: number;
+  /** A ceiling on the descent, not a budget to be spent — see `MAX_ITERATIONS`. */
   iterations?: number;
+  /** Where to start the descent, in `columns` order.
+   *
+   *  The fit at a neighbouring λ on the same rows sits far nearer the answer than zero does, and
+   *  the problem is convex, so starting there reaches the same optimum in a fraction of the steps.
+   *  Only `selectHyperparams` passes this, and only along one fold's λ path, where the training
+   *  rows — and therefore the column set — are identical from one fit to the next. */
+  start?: { weights: number[]; bias: number };
 }
 
 /** Fit a logistic regression from raw feature rows and their 0/1 labels. Decides the column set
@@ -407,17 +415,26 @@ interface FitOptions {
  *  no signal and is dropped, which is what keeps a project like D&A (whose `in_unit_laundry` reads
  *  `in-unit` on every flat that has one at all) from feeding a dead column into the model. */
 export function fitModel(examples: Example[], options: FitOptions): Model {
-  // 800 iterations at this step size reaches the plateau on standardised features; more doesn't
-  // improve generalisation and risks acting as a second, unasked-for regulariser on top of λ (which
-  // is the knob cross-validation actually tunes). It also keeps a single fit sub-millisecond, so a
-  // full retrain and the nested-CV check both stay fast.
-  const { labelMode, lambda = 1, priorScale = 0, learningRate = 0.5, iterations = 800 } = options;
+  const {
+    labelMode,
+    lambda = 1,
+    priorScale = 0,
+    learningRate = 0.5,
+    iterations = MAX_ITERATIONS,
+    start,
+  } = options;
   const columns = chooseColumns(examples.map((e) => e.raw));
 
   const X = examples.map((e) => rowFor(e.raw, columns));
   const y = examples.map((e) => e.label);
   const priors = columns.map((c) => priorFor(c, priorScale));
-  const { weights, bias } = gradientDescent(X, y, lambda, priors, learningRate, iterations);
+  // A start whose width disagrees with the columns is a caller bug — it means the rows changed
+  // under the path — and quietly padding it with zeros would seed the descent with one column's
+  // weight sitting in another column's slot. That fits, converges, and is wrong.
+  if (start && start.weights.length !== columns.length) {
+    throw new Error(`warm start has ${start.weights.length} weights for ${columns.length} columns`);
+  }
+  const { weights, bias } = gradientDescent(X, y, lambda, priors, learningRate, iterations, start);
 
   return {
     version: MODEL_VERSION,
@@ -464,9 +481,41 @@ function stdDev(values: number[], mean: number): number {
   return Math.sqrt(variance);
 }
 
+/** How far the descent may go before it is made to stop.
+ *
+ *  It was the *number of steps every fit took*, and 800 at this step size reaches the plateau on
+ *  standardised features. It is a ceiling now: `CONVERGED` below ends the loop as soon as the
+ *  parameters stop moving, warm-started or not — the break is deliberately not gated on the warm
+ *  start, because a cold fit that has stopped moving has equally stopped.
+ *
+ *  Which of the two actually ends a given descent is a question about the data, and it is measured
+ *  rather than assumed. On the 379-row fixture the *ceiling* stops nearly every leg — 120 of 120
+ *  warm ones in `love-vs-no` — because the labels carry real signal, the optimum sits far from the
+ *  prior, and at this step size the last stretch of the path is still moving by more than a
+ *  millionth at step 800. The tolerance earns its place at the other end of the range: the sparser
+ *  the training set the earlier it fires, and at 23 examples, which `MIN_PER_CLASS` permits, a cold
+ *  fit at λ=10 has settled by step 195.
+ *
+ *  So this saves a new hunt's retrain and not an established one's, which is the reverse of how it
+ *  was first described here. Anything claiming a large speedup from the stopping rule was measured
+ *  on data whose labels are independent of its features; there the optimum is the prior, and every
+ *  fit converges almost at once. */
+const MAX_ITERATIONS = 800;
+
+/** When the parameters have stopped moving, measured as the largest change any single one of them
+ *  made on the last step.
+ *
+ *  Small enough that stopping here is indistinguishable from running on: at 800 iterations the old
+ *  fixed-budget fit already sat within 0.0002 of an 8000-iteration reference, so a step below a
+ *  millionth is well inside the noise of the thing being measured. Movement is read *after* the
+ *  sign projection rather than from the raw step, because a weight pinned at its constraint has
+ *  genuinely stopped even while the gradient goes on pushing at it. */
+const CONVERGED = 1e-6;
+
 /** Batch gradient descent on the log-loss, with the weights pulled toward `priors` rather than
- *  toward zero (the bias is never penalised). Deterministic: zero init, fixed step, fixed
- *  iterations — no randomness, so the fit is reproducible.
+ *  toward zero (the bias is never penalised). Deterministic: fixed step, fixed starting point, and
+ *  a convergence test on the parameters rather than on a random subsample — no randomness anywhere,
+ *  so the fit is reproducible.
  *
  *  A weight is also projected onto the sign its prior asserts after each step. That is the part
  *  that does the work when positives are scarce: with 23 loves a single odd flat is enough to fit a
@@ -480,6 +529,7 @@ function gradientDescent(
   priors: number[],
   lr: number,
   iterations: number,
+  start?: { weights: number[]; bias: number },
 ): { weights: number[]; bias: number } {
   const n = X.length;
   const d = X[0]?.length ?? 0;
@@ -499,8 +549,9 @@ function gradientDescent(
   for (let j = 0; j < d; j++) prior[j] = priors[j] ?? 0;
 
   const w = new Float64Array(d);
+  if (start) for (let j = 0; j < d; j++) w[j] = start.weights[j] ?? 0;
   const gradW = new Float64Array(d);
-  let bias = 0;
+  let bias = start?.bias ?? 0;
 
   for (let it = 0; it < iterations; it++) {
     gradW.fill(0);
@@ -513,12 +564,19 @@ function gradientDescent(
       for (let j = 0; j < d; j++) gradW[j] = gradW[j]! + err * flat[base + j]!;
       gradB += err;
     }
+    let moved = 0;
     for (let j = 0; j < d; j++) {
       const p = prior[j]!;
-      const stepped = w[j]! - lr * (gradW[j]! / n + (lambda * (w[j]! - p)) / n);
+      const was = w[j]!;
+      const stepped = was - lr * (gradW[j]! / n + (lambda * (was - p)) / n);
       w[j] = p > 0 ? Math.max(0, stepped) : p < 0 ? Math.min(0, stepped) : stepped;
+      const step = Math.abs(w[j]! - was);
+      if (step > moved) moved = step;
     }
-    bias -= lr * (gradB / n);
+    const biasStep = lr * (gradB / n);
+    bias -= biasStep;
+    if (Math.abs(biasStep) > moved) moved = Math.abs(biasStep);
+    if (moved < CONVERGED) break;
   }
   return { weights: [...w], bias };
 }
@@ -641,9 +699,22 @@ function clampFolds(examples: Example[], folds: number): number {
 }
 
 /** Choose λ and the prior scale together, by k-fold cross-validated log-loss over the grids. The
- *  cross-product is small (28 points × k fits, each sub-millisecond) and the two interact — a
- *  stronger prior wants more shrinkage toward it — so searching them jointly is both affordable
- *  and the only search that can find that. Ties go to the first pair in λ-major order. */
+ *  two interact — a stronger prior wants more shrinkage toward it — so searching them jointly is
+ *  the only search that can find that. Ties go to the first pair in λ-major order.
+ *
+ *  The loops run fold-major, and that is the whole of why this is affordable. The 28 grid points
+ *  times k folds are 140 fits, and fitting each from a standing start is 140 descents that have all
+ *  been told nothing by the 139 others. Within one fold the training rows never change, so the
+ *  solutions along the λ grid form a path: walk it from the strongest shrinkage down, hand each fit
+ *  the answer to the last one, and every step after the first begins beside where it is going. The
+ *  problem is convex and each fit still runs to `CONVERGED`, so this arrives at the same optimum as
+ *  the cold search — it just stops taking hundreds of steps to re-derive what it already knew.
+ *
+ *  The prior scale is *not* walked: a different prior is a different objective, so each scale
+ *  starts its own path from zero.
+ *
+ *  Scored into one bucket per pair and picked over afterwards, in the original λ-major order, so
+ *  the tie rule is the one it has always been rather than the order the fits happened to run in. */
 export function selectHyperparams(
   examples: Example[],
   base: FitOptions,
@@ -652,13 +723,37 @@ export function selectHyperparams(
   scales = PRIOR_SCALE_GRID,
 ): Hyperparams {
   const k = clampFolds(examples, folds);
+  const assignment = stratifiedFolds(examples, k);
+  const key = (lambda: number, priorScale: number) => `${lambda}:${priorScale}`;
+  const scored = new Map<string, Array<{ p: number; y: 0 | 1 }>>();
+  for (const lambda of grid) for (const priorScale of scales) scored.set(key(lambda, priorScale), []);
+
+  // Strongest shrinkage first. That solution sits nearest the prior and so is the cheapest of the
+  // grid to reach from zero, which makes it the right end to start the path from.
+  const path = [...grid].sort((a, b) => b - a);
+
+  for (let f = 0; f < k; f++) {
+    const train = examples.filter((_, i) => assignment[i] !== f);
+    const val = examples.filter((_, i) => assignment[i] === f);
+    if (train.length === 0 || val.length === 0) continue;
+    for (const priorScale of scales) {
+      let start: { weights: number[]; bias: number } | undefined;
+      for (const lambda of path) {
+        const model = fitModel(train, { ...base, lambda, priorScale, start });
+        start = { weights: model.weights, bias: model.bias };
+        const into = scored.get(key(lambda, priorScale))!;
+        for (const e of val) into.push({ p: scoreFeatures(model, e.raw), y: e.label });
+      }
+    }
+  }
+
   let best: Hyperparams | null = null;
   for (const lambda of grid) {
     for (const priorScale of scales) {
-      const scored = crossValScores(examples, lambda, priorScale, k, base);
-      const cvLogLoss = logLoss(scored);
+      const s = scored.get(key(lambda, priorScale))!;
+      const cvLogLoss = logLoss(s);
       if (!best || cvLogLoss < best.cvLogLoss) {
-        best = { lambda, priorScale, cvLogLoss, cvAuc: auc(scored) };
+        best = { lambda, priorScale, cvLogLoss, cvAuc: auc(s) };
       }
     }
   }
