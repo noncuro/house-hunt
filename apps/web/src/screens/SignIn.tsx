@@ -120,7 +120,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
   }
 
   return (
-    <div className="settings signin">
+    <div className="settings signin" data-testid="signed-out">
       <section className="setting">
         <h2>{mode === 'sign-in' ? 'Sign in' : 'Use your invite code'}</h2>
         <p className="dim">
