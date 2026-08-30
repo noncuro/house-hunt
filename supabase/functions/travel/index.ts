@@ -534,7 +534,20 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
   // the cache and owe postcodes.io nothing. A postcode that will not resolve leaves this null and
   // the walk is kept as it always was; the check needs a measurement and does not guess one.
   let originPoint: Promise<Point | null> | undefined;
-  const placeOrigin = () => (originPoint ??= lookupPostcode(postcode).then((r) => r.point));
+  const placeOrigin = () =>
+    (originPoint ??= lookupPostcode(postcode)
+      .then((r) => r.point)
+      // Rejecting here would throw from the `await` below, which runs *after* `walkTo` has spent a
+      // TfL call and produced a number — discarding a good measurement, leaving the walk uncached,
+      // and drawing the station with its line dots and no time. Null is what the comment above
+      // promises; this is what makes it true.
+      .catch((e: unknown) => {
+        console.warn(
+          `could not place ${postcode} for the walk detour check: ` +
+            `${e instanceof Error ? e.message : e} — the walk is kept unchecked`,
+        );
+        return null;
+      }));
 
   await Promise.all(
     ask.names.map(async (name) => {
