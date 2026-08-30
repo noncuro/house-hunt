@@ -30,12 +30,16 @@
 import { body, HttpError, requireEnv, rest, rpc, serve } from '../_shared/http.ts';
 import { requireCaller, type Caller } from '../_shared/caller.ts';
 import {
+  journeyCallsNeeded,
   journeyTime,
   resolveStation,
   staleTravel,
+  stationCallsNeeded,
   TflError,
   tooFarToWalk,
   TRAVEL_BASIS,
+  TRAVEL_CALLS_PER_MINUTE,
+  TRAVEL_RATE_WINDOW_SECONDS,
   walkTo,
   type StationInfo,
 } from '../_shared/tfl.ts';
@@ -160,68 +164,63 @@ interface JourneyAnswer {
 }
 
 // ------------------------------------------------------------------------------------------------
-// Rate limiting.
+// Rate limiting, as a reservation rather than a check.
 //
 // The key is ours now rather than the caller's, so a caller who opens two hundred listings is
-// spending our quota. `api_usage` already exists for the OpenAI spend cap and already has an index
-// on (user_id, occurred_at); counting rows in it is enough here, because unlike the analysis cap
-// this is about call volume rather than money — a journey costs nothing but TfL's goodwill.
+// spending our quota. This used to read the minute's usage, return, and write afterwards — which is
+// two holes rather than a limit. Concurrent requests all saw the pre-write count, and the check ran
+// once before the body was parsed while nothing downstream bounded how many legs the body asked for.
+//
+// So capacity is claimed before dispatch and given back afterwards. `claim_travel_calls` is where
+// the read and the write become one step; the argument for that shape is in the migration beside it,
+// and it is `claim_analysis`'s argument on a different resource. The two rules here are: claim the
+// whole independent batch in one go, and let a refusal propagate.
 // ------------------------------------------------------------------------------------------------
 
-/** Per minute rather than per hour, which is a change of shape and not only of number.
+/** Reserve `calls` of the caller's allowance, or refuse the request.
  *
- *  The old cap was 600 an hour, justified as "roughly forty listings an hour with five places and
- *  three modes each, which is more than anybody browsing does". That stopped being true when Places
- *  became one screen over the whole pile: opening the table asks for every flat at once, so fifty
- *  flats with five places and three modes is 750 legs in one legitimate page load. The person who
- *  did nothing wrong then spent the *rest of the hour* refused, which is the failure — an hour-long
- *  window turns one honest burst into an hour of a broken-looking app.
- *
- *  What the cap is actually protecting is TfL, and TfL's own limit is per minute (500 keyed, 50
- *  unkeyed — see `TFL_APP_KEY`), so a per-minute window is the one that measures the thing being
- *  protected. 300 sits under the keyed allowance with room for the backfill alongside, absorbs any
- *  single page load whole, and still stops a loop dead: a runaway caller is refused within seconds
- *  and recovers a minute later rather than an hour later.
- *
- *  `MAX_TFL_CONCURRENCY` is what keeps a burst from arriving all at once; this is what bounds the
- *  total. The two are not substitutes and neither implies the other. */
-const CALLS_PER_MINUTE = 300;
-
-const RATE_WINDOW_MS = 60 * 1000;
-
-async function checkRate(caller: Caller): Promise<void> {
-  const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
-  const used = await rpc<number>('travel_calls_since', { p_user_id: caller.userId, p_since: since });
-  if ((used ?? 0) >= CALLS_PER_MINUTE) {
-    // A stated state, not a 500: the interface says how many and over what, and — unlike the hourly
-    // version — waiting a moment is genuinely the fix, so saying so is not a brush-off.
+ *  A stated state, not a 500: the reply says how many and over what, and waiting a minute is the
+ *  fix. Refusing the whole ask rather than trimming it is deliberate — a half-answered grid with no
+ *  way to tell which half is missing is the failure the "fail loudly" rule is about. */
+async function claimCalls(caller: Caller, calls: number): Promise<number> {
+  const claim = await rpc<{ status: string; reservation?: number; used?: number; held?: number; limit?: number }>(
+    'claim_travel_calls',
+    {
+      p_user_id: caller.userId,
+      p_project_id: caller.activeProjectId,
+      p_calls: calls,
+      p_limit: TRAVEL_CALLS_PER_MINUTE,
+      p_window: `${TRAVEL_RATE_WINDOW_SECONDS} seconds`,
+    },
+  );
+  if (claim?.status === 'claimed' && typeof claim.reservation === 'number') return claim.reservation;
+  if (claim?.status === 'rate-limited') {
     throw new HttpError(
       429,
       'rate-limited',
-      `${used} travel lookups in the last minute, limit ${CALLS_PER_MINUTE} — try again in a minute`,
+      `this asks for ${calls} TfL lookups and ${(claim.used ?? 0) + (claim.held ?? 0)} of the ` +
+        `last minute's ${claim.limit ?? TRAVEL_CALLS_PER_MINUTE} are already spoken for — try again in a minute`,
     );
   }
+  throw new Error(`claim_travel_calls answered ${JSON.stringify(claim)}`);
 }
 
-/** One row per request that actually made TfL calls, carrying how many. Cache hits are not
- *  recorded — they cost nothing and would drown the thing this exists to measure.
+/** Give the reservations back and record what was spent.
  *
- *  `input_tokens` holds the count. There are no tokens here and the cost is zero; the column is
- *  reused so this needed no schema change, and the meaning is written down on
- *  `travel_calls_since` and in the migration beside it. Failing to record must not fail the
- *  request: the answer is already correct and the caller has already spent the call. */
-async function recordCalls(caller: Caller, made: number): Promise<void> {
-  if (made <= 0) return;
-  await rpc('record_api_usage', {
-    p_project_id: caller.activeProjectId,
-    p_user_id: caller.userId,
-    p_model: 'tfl',
-    p_input_tokens: made,
-    p_cached_input_tokens: 0,
-    p_output_tokens: 0,
-    p_rightmove_id: null,
-    p_kind: 'travel',
-  }).catch((e) => console.warn('could not record travel usage:', e instanceof Error ? e.message : e));
+ *  `made` is the calls that left for TfL; everything reserved and unspent is released, which is what
+ *  keeps a cache-heavy page load from being billed for the calls it saved. `api_usage` gets one row
+ *  per request that made calls — cache hits are not recorded, because they cost nothing and would
+ *  drown the thing this exists to measure — and `input_tokens` holds the count, which is written
+ *  down on `travel_calls_since` and in the migration beside it.
+ *
+ *  Failing to release must not fail the request: the answer is already correct and the caller has
+ *  already spent the calls. What an unreleased claim costs is that much of that person's next
+ *  minute, and it drains itself once stale. */
+async function releaseCalls(reservations: number[], made: number): Promise<void> {
+  if (reservations.length === 0) return;
+  await rpc('release_travel_calls', { p_reservations: reservations, p_made: made }).catch((e) =>
+    console.error('could not release the travel reservation:', e instanceof Error ? e.message : e),
+  );
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -389,6 +388,15 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
 
   const cache = ask.refresh ? new Map<string, TravelRow>() : await cachedJourneys(origin);
 
+  // Every leg the cache cannot answer, claimed in one go before any of them is dispatched. Legs
+  // that turn out not to need a call — a walk refused on distance — are released unspent below.
+  //
+  // A fully cached ask claims nothing and is answered whatever the caller has spent this minute.
+  // That is a change: the old check refused it. Refusing a request that makes no call spends
+  // nothing and protects nothing, and it is the shape of a grid revisiting flats it already has.
+  const needed = journeyCallsNeeded(ask.destinations, ask.modes, (postcode, mode) => answeredBy(cache, postcode, mode) !== null);
+  const reservations = needed > 0 ? [await claimCalls(caller, needed)] : [];
+
   // Where the flat is, for the walking refusal — which needs a point at each end, and gets the
   // origin as a postcode string, because a postcode is the right thing to route from and the wrong
   // thing to measure with. The backfill has the point handed to it by `travel_gaps`; here nobody
@@ -471,7 +479,7 @@ async function resolveJourneys(caller: Caller, ask: Extract<Ask, { kind: 'journe
     ),
   );
 
-  await recordCalls(caller, made);
+  await releaseCalls(reservations, made);
   // Transient leg errors — TfL or postcodes.io unreachable, a parse failure — come back to the
   // caller inside a 200 and are invisible in the log otherwise: "15 from TfL" reads the same whether
   // all fifteen answered or all fifteen threw. A settled no-route carries `transient: false` and is
@@ -516,6 +524,12 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
     `station_walk?postcode=eq.${encodeURIComponent(postcode)}&select=station_name,seconds`,
   );
   const knownWalks = new Map(walkRows.map((r) => [r.station_name, r.seconds]));
+
+  // The upper bound, claimed before any of it is dispatched: a placing call per name and a walk per
+  // name we have not measured. The point cache is read inside the loop rather than in bulk, so a
+  // station we have already placed is reserved for and released unspent — see `stationCallsNeeded`.
+  const needed = stationCallsNeeded(ask.names, new Set(knownWalks.keys()));
+  const reservations = needed > 0 ? [await claimCalls(caller, needed)] : [];
 
   const out: Record<string, { seconds?: number; lines: string[] }> = {};
   let made = 0;
@@ -565,7 +579,7 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
     }),
   );
 
-  await recordCalls(caller, made);
+  await releaseCalls(reservations, made);
   if (failures.length > 0) {
     console.error(`${failures.length} of ${ask.names.length} stations failed:\n  ${failures.join('\n  ')}`);
   }
@@ -577,11 +591,20 @@ async function resolveStations(caller: Caller, ask: Extract<Ask, { kind: 'statio
  *  Not cached in the database, unlike the travel times: postcodes.io is free, keyless and instant,
  *  and a round trip to the database to avoid one would cost more than it saves. It is here rather
  *  than in the client only because a browser page cannot reach postcodes.io either. */
-async function resolvePostcode(ask: Extract<Ask, { kind: 'postcode' }>) {
+async function resolvePostcode(caller: Caller, ask: Extract<Ask, { kind: 'postcode' }>) {
   const postcode = ask.postcode.trim();
   if (!postcode) throw new HttpError(400, 'bad-request', 'a lookup needs a postcode');
-  const { point } = await lookupPostcode(postcode);
-  return { point };
+  // One call's worth of capacity, released having spent nothing: postcodes.io is not TfL and does
+  // not belong in the ledger, but the old check stood in front of all three kinds of ask and a
+  // caller who has exhausted the minute should still be refused here. Reserving and releasing is
+  // how that survives the ledger becoming the record of TfL calls alone.
+  const reservation = await claimCalls(caller, 1);
+  try {
+    const { point } = await lookupPostcode(postcode);
+    return { point };
+  } finally {
+    await releaseCalls([reservation], 0);
+  }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -825,7 +848,8 @@ serve(async (request) => {
   }
 
   const caller = await requireCaller(request);
-  await checkRate(caller);
+  // No rate check here any more. What one ask costs is only knowable once its body has been read
+  // and the cache consulted, so each resolver below claims its own capacity — see `claimCalls`.
   const ask = await body<Ask>(request);
 
   switch (ask.kind) {
@@ -834,7 +858,7 @@ serve(async (request) => {
     case 'stations':
       return await resolveStations(caller, ask);
     case 'postcode':
-      return await resolvePostcode(ask);
+      return await resolvePostcode(caller, ask);
     default:
       throw new HttpError(400, 'bad-request', `unknown kind ${String((ask as { kind?: unknown }).kind)}`);
   }
