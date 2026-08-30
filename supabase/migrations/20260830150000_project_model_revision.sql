@@ -23,12 +23,26 @@
 -- asked for, not a stale one. Ordered so the hash is a function of the set and not of plan choice.
 create or replace function public.project_training_revision(p_project_id uuid)
 returns text
-language sql
+language plpgsql
 security definer
 stable
 set search_path = public, pg_temp
 as $$
-  select md5(
+begin
+  -- Guarded like its two callers, and for a reason that is not obvious: this takes *any* project id
+  -- and is SECURITY DEFINER, so without the guard a member of one hunt could hash another hunt's
+  -- verdicts — an oracle telling them when a hunt they cannot read has changed its mind, and
+  -- confirming a guessed set of ratings outright.
+  --
+  -- The revoke below is not enough on its own. Supabase's default privileges grant EXECUTE on new
+  -- functions in `public` to `authenticated`, and `revoke ... from public` does not remove a grant
+  -- made to a named role. `check:rls` caught exactly this: 199/200, on the one assertion that a
+  -- member is refused.
+  if not public.is_service_role() then
+    raise exception 'project_training_revision: the training revision is read by the predict route, not by clients';
+  end if;
+
+  return md5(
     coalesce((
       select string_agg(rightmove_id || ':' || rating || ':' || updated_at::text, ',' order by rightmove_id)
       from public.verdict where project_id = p_project_id
@@ -39,9 +53,10 @@ as $$
       from public.training_exclusion where project_id = p_project_id
     ), '')
   );
+end;
 $$;
 
-revoke execute on function public.project_training_revision(uuid) from public;
+revoke execute on function public.project_training_revision(uuid) from public, anon, authenticated;
 grant  execute on function public.project_training_revision(uuid) to service_role;
 
 -- Both writers gain a trailing `p_revision`. Dropped and recreated rather than replaced: a new
@@ -91,7 +106,7 @@ begin
 end;
 $$;
 
-revoke execute on function public.set_project_model(uuid, jsonb, int, text, int, uuid, text) from public;
+revoke execute on function public.set_project_model(uuid, jsonb, int, text, int, uuid, text) from public, anon, authenticated;
 grant  execute on function public.set_project_model(uuid, jsonb, int, text, int, uuid, text) to service_role;
 
 -- The same guard on the clear. A stale "insufficient" deleting a model that newer verdicts do
@@ -115,5 +130,5 @@ begin
 end;
 $$;
 
-revoke execute on function public.clear_project_model(uuid, text) from public;
+revoke execute on function public.clear_project_model(uuid, text) from public, anon, authenticated;
 grant  execute on function public.clear_project_model(uuid, text) to service_role;
