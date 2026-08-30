@@ -63,6 +63,19 @@ import { EXPECTED_EXTENSION_VERSION } from '../apps/web/src/lib/extension-versio
  *  assertion after it would be about a login screen. */
 const SESSION_KEY = 'house-hunt-session';
 
+/** Where the opener remembers the pace, and the floor a paced run must clear.
+ *
+ *  Up here with the other module constants rather than beside the section that reads them, and that
+ *  is not tidiness: the sections run as this file executes, which is before a `const` declared
+ *  further down has been initialised. Declared below, the first run of the fill-in section died on
+ *  `Cannot access 'PACE_KEY' before initialization` — a temporal dead zone that typechecks perfectly.
+ *
+ *  The floor is well under the 3s asked for: this asserts the tabs were spaced rather than that the
+ *  timer is accurate, and a loaded CI runner drifts. A burst — the failure worth catching — is
+ *  single-digit milliseconds apart, nowhere near this. */
+const PACE_KEY = 'house-hunt/open-interval-ms';
+const PACE_FLOOR_MS = 1_500;
+
 /** Not 3100. `pnpm dev:web` runs there, and a harness that quietly attached to the dev server
  *  somebody had open would be testing whatever code that server was pointed at — including the
  *  hosted database, which is a real house hunt with real verdicts in it. */
@@ -1167,13 +1180,6 @@ async function checkFillIn({ browser }: Stage): Promise<void> {
   }
 }
 
-/** Where the opener remembers the pace, and the floor a paced run must clear.
- *
- *  The floor is well under the 3s asked for: this asserts the tabs were spaced rather than that the
- *  timer is accurate, and a loaded CI runner drifts. A burst — the failure worth catching — is
- *  single-digit milliseconds apart, nowhere near this. */
-const PACE_KEY = 'house-hunt/open-interval-ms';
-const PACE_FLOOR_MS = 1_500;
 
 async function checkTabs({ page }: Stage): Promise<void> {
   for (const [view, landmarks] of [
