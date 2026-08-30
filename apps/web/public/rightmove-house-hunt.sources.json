@@ -1,7 +1,7 @@
 {
-  "version": "0.5.7",
+  "version": "0.5.8",
   "files": {
-    "apps/extension/package.json": "576c1a19a9506b49669ddc4af6702ce2d3c461b38c7a30a593d0eeea05888fc4",
+    "apps/extension/package.json": "0052d47b78dec1a88edf9a048b0ffbbb63b1938186d818346e8bc35e45e37e28",
     "apps/extension/public/icon/128.png": "4cc10de2d8a0d3434361911b368afed44613def5bfab2efaf7e3bb0ab05dca95",
     "apps/extension/public/icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "apps/extension/public/icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
@@ -37,7 +37,7 @@
     "packages/core/src/db/index.ts": "55d5ed78768a9383c292cdb23c47873ccaf359e7d3164be55b534d123f3d1495",
     "packages/core/src/db/session.ts": "6f9f09a19fcdf9576d37b173c767b6faeccfd8b5e7c69118ed77e7a7171bcc81",
     "packages/core/src/db/supabase.ts": "a8c2729eb3cbd5c5160a213187913317d3f4e7a2806d3f2f26e0c88115a32bdf",
-    "packages/core/src/db/travel.ts": "29ec06f4d86f0e16b89224d889ec3a37fea53bacd6ee6ded33a971374b55b43f",
+    "packages/core/src/db/travel.ts": "a02bd8ecbbdd93ea2fd1780953eb45c1483562b038d19c0bb1e0a43209fa1c17",
     "packages/core/src/facts.ts": "a558a38e641e12cec406dd3c15954bc226156f7c15b53ac04c3e6350dd488b5d",
     "packages/core/src/filter.ts": "a1d72aed7b77a45251765c37f87d0e69479a662cd5f837da79d6dfe0f7fc1b0e",
     "packages/core/src/hubs.ts": "357b3b9c3ceca578e8d3ac33a190af04a14972117eaba7e335f233b4a03b61c8",
@@ -52,7 +52,7 @@
     "packages/core/src/shortlist.ts": "745addf8b32294386d84d8f9eb0f0464db333c32a6d0e4f2a620571dc05e36c7",
     "packages/core/src/stage.ts": "f70e0c89f0798a8d46c0c6d9663c0a1a0a46e35c39703614da0df6d5ddcbb295",
     "packages/core/src/sweep.ts": "d688f1fe2265a4624e84988dd441e6acff9a26cf089ccbab25b1cfc3b0e31801",
-    "packages/core/src/tfl.ts": "28d65fb45f32a53b1e22e1312ae904abf39e441a6ac73675092bcc8874f1a71e",
+    "packages/core/src/tfl.ts": "eb769af17e1c773caa2c6a110bef77069197cc88601893cacf8a31b7256471a6",
     "packages/core/src/types.ts": "139a142b85d2dceafa45cfba6be2ea347b9d284e3560fe7f7b9a6913a933e251",
     "packages/ui/package.json": "8935cd5058b9ea552bf14985d2bb65c016ce417b99e0c49bfb6690969c42b351",
     "packages/ui/src/Amenity.tsx": "9c8e5e902b686c5603931c7b2be44d67fa524187dddcdbaf07efc9ec448b067f",
@@ -101,7 +101,7 @@
     "tsconfig.base.json": "9342b7b7cce5a4f7aeb9515d8d9ba33a9ce5efe8ce7b41545252cb4d852a223e"
   },
   "contents": {
-    "background.js": "9e6e6011036c380a4b0fa854b1c37c07f5317c0ae2019e742ceded3f45659f0d",
+    "background.js": "e1f432137603e47116bced9314670e0bba469c8d7bd2d40263ff2dc0b89262ad",
     "content-scripts/bridge.js": "6b4b9858ab0959c9ad6247b8ab9000402b13164a3ffa39b9fc6ce14293ed384f",
     "content-scripts/page-model.js": "0813950beccf9e276a2a321ab5695789c392dda44ca877f98f204e9eec0dfa08",
     "content-scripts/panel.css": "39fdc9b0bf691ffcc1c641cb8bb0bdff8656e430279ac1d8a65438310ffee4d0",
@@ -114,6 +114,6 @@
     "icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
     "icon/48.png": "024a0e6ecf9b4aa36acf9468b400d6eabf030e59d24c29c3a4594f0bfe213343",
-    "manifest.json": "3381aa5b8bbf53c39ae145ba9eec51d7314b70005a5f40bb9855682d8acd61ba"
+    "manifest.json": "19255f95f8719d83a0186e1722c3bb89f5595921d7d09901f0284e8476a99ec2"
   }
 }
