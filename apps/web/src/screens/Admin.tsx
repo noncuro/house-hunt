@@ -98,7 +98,7 @@ export function Admin() {
             ['projects', 'Projects', projects.data ? String(projects.data.length) : null],
             ['invites', 'Invites', invites.data ? String(invites.data.length) : null],
             ['charges', 'Charges', usage.data ? charge(spentThisMonth) : null],
-            ['changes', 'Changes', changes.data ? String(changes.data.length) : null],
+            ['changes', 'Changes', changes.data ? String(changes.data.total) : null],
           ] as const
         ).map(([key, label, count]) => (
           <button
@@ -780,16 +780,16 @@ function Changes({
   users,
   projects,
 }: {
-  query: Loadable<AdminAction[]>;
+  query: Loadable<{ actions: AdminAction[]; total: number }>;
   users: AdminUser[];
   projects: AdminProject[];
 }) {
-  const userName = new Map(users.map((u) => [u.id, u.displayName || u.email]));
-  const projectName = new Map(projects.map((p) => [p.id, p.name]));
+  const { userName, projectName } = nameMaps(users, projects);
 
   const waiting = loadState(query, 'changes');
   if (waiting) return waiting;
-  const rows = query.data ?? [];
+  const rows = query.data?.actions ?? [];
+  const total = query.data?.total ?? rows.length;
   if (rows.length === 0) return <p className="dim">No caps or limits have been changed.</p>;
 
   return (
@@ -797,6 +797,7 @@ function Changes({
       <p className="dim admin-lede">
         Every cap and member limit an admin has moved, newest first. A change made by the server
         rather than by a person — anything operational — has no admin against it.
+        {total > rows.length && ` Showing the most recent ${rows.length} of ${total}.`}
       </p>
       <div className="admin-scroll">
         <table className="admin-table">
@@ -813,7 +814,7 @@ function Changes({
           <tbody>
             {rows.map((row) => (
               <tr key={row.id}>
-                <td className="dim">
+                <td className="dim" title={new Date(row.occurredAt).toLocaleString()}>
                   {ago(row.occurredAt)} {clock(row.occurredAt)}
                 </td>
                 <td>
@@ -873,8 +874,7 @@ function Charges({
   const [kind, setKind] = useState<string | null>(null);
   const [limit, setLimit] = useState(PAGE);
 
-  const userName = new Map(users.map((u) => [u.id, u.displayName || u.email]));
-  const projectName = new Map(projects.map((p) => [p.id, p.name]));
+  const { userName, projectName } = nameMaps(users, projects);
 
   const waiting = loadState(query, 'charges');
   if (waiting) return waiting;
@@ -1039,6 +1039,16 @@ function clock(iso: string): string {
  *  is simply not in the list is something else — a list still loading, or a row RLS did not return
  *  — and calling that "deleted" would invent a fact. Both are absences and they are not the same
  *  absence. */
+/** The two lookups both tables need, built once from the same lists so a person is labelled the
+ *  same way in Charges and in Changes. `displayName || email` rather than one or the other: the
+ *  name is what somebody recognises and the address is what exists for every account. */
+function nameMaps(users: AdminUser[], projects: AdminProject[]) {
+  return {
+    userName: new Map(users.map((u) => [u.id, u.displayName || u.email])),
+    projectName: new Map(projects.map((p) => [p.id, p.name])),
+  };
+}
+
 function named(
   id: string | null,
   names: Map<string, string>,

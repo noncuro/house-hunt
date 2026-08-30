@@ -14,13 +14,17 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  NO_ROUTE_RETRY_DAYS,
-  TRAVEL_BASIS,
-  TRAVEL_CALLS_PER_MINUTE,
+  implausibleWalk,
   journeyCallsNeeded,
+  journeyTime,
+  MAX_WALK_DETOUR_RATIO,
+  NO_ROUTE_RETRY_DAYS,
   nextWeekdayMorning,
   staleTravel,
   stationCallsNeeded,
+  TflError,
+  TRAVEL_BASIS,
+  TRAVEL_CALLS_PER_MINUTE,
   stationCore,
   stationMatches,
   tooFarToWalk,
@@ -240,6 +244,34 @@ function modesInTravelGaps(sql: string): { modes: string[] } | { problem: string
   return { modes: [...literals[0]!.matchAll(/'([^']*)'/g)].map((m) => m[1]!).sort() };
 }
 
+/** Which columns of `place` the `travel_gaps` body tests, or a sentence saying why they could not
+ *  be read.
+ *
+ *  `travelDestinations` and this function are two implementations of one question — which places a
+ *  journey is asked about — and the SQL one is where the money goes and the one that gets
+ *  forgotten. It has no types to widen and no caller to break, so a clause dropped from it is a
+ *  scheduled job quietly fetching journeys nobody wants, at three legs per flat, with every screen
+ *  looking right.
+ *
+ *  Comments first, for the reason the mode parser gives: the sentence beside the clause names the
+ *  column, so a check that read the raw text would go on passing after the clause itself was
+ *  deleted. */
+function placeClausesInTravelGaps(sql: string): { columns: string[] } | { problem: string } {
+  const uncommented = sql.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, '');
+  const body = /create\s+(?:or\s+replace\s+)?function\s+public\.travel_gaps\b[\s\S]*?\$\$([\s\S]*?)\$\$/i
+    .exec(uncommented)?.[1];
+  if (body === undefined) return { problem: 'no `create function public.travel_gaps ... $$ ... $$` body — did it move or change quoting?' };
+
+  const where = /\bwhere\b([\s\S]*?)\border\s+by\b/i.exec(body)?.[1];
+  if (where === undefined) return { problem: 'the travel_gaps body has no `where ... order by` — where did the predicate go?' };
+
+  // `pl` is what the body calls `place`, asserted rather than assumed: an alias renamed in a
+  // rewrite would otherwise leave this reading an empty set and calling it a pass.
+  if (!/\bjoin\s+place\s+pl\b/i.test(body)) return { problem: 'the travel_gaps body no longer joins `place` as `pl` — this check is reading the wrong alias' };
+
+  return { columns: [...new Set([...where.matchAll(/\bpl\.([a-z_]+)/gi)].map((m) => m[1]!))].sort() };
+}
+
 /** `check` against whichever half of that union came back, so a parse problem reads as a failure
  *  rather than as a comparison nobody made. */
 function modes(name: string, sql: string, expected: string[] | string) {
@@ -247,25 +279,26 @@ function modes(name: string, sql: string, expected: string[] | string) {
   check(name, 'modes' in found ? found.modes : found.problem, expected);
 }
 
-/** The migration that *currently* defines `travel_gaps`, found rather than named.
+/** The migration that *currently* defines a function, found rather than named.
  *
  *  Migrations are applied in filename order and each `create function` supersedes the one before,
  *  so the definition that runs is the one in the last file to write it. Naming that file by hand
  *  is a check that goes stale silently: the next migration to redefine the function leaves this
  *  reading a definition the database no longer has, green, about SQL that no longer runs — which
  *  is precisely the failure the mode comparison exists to catch, one level up. */
-function latestTravelGapsMigration(): { path: string; sql: string } {
+function latestMigrationDefining(fn: string): { path: string; sql: string } {
   const dir = resolve(import.meta.dirname, '..', 'supabase/migrations');
+  const pattern = new RegExp(`create\\s+(?:or\\s+replace\\s+)?function\\s+public\\.${fn}\\b`, 'i');
   const defines = readdirSync(dir)
     .filter((f) => f.endsWith('.sql'))
     .sort()
-    .filter((f) => /create\s+(?:or\s+replace\s+)?function\s+public\.travel_gaps\b/i.test(readFileSync(resolve(dir, f), 'utf8')));
+    .filter((f) => pattern.test(readFileSync(resolve(dir, f), 'utf8')));
   const last = defines.at(-1);
-  if (last === undefined) throw new Error('no migration creates public.travel_gaps — did it move?');
+  if (last === undefined) throw new Error(`no migration creates public.${fn} — did it move?`);
   return { path: `supabase/migrations/${last}`, sql: readFileSync(resolve(dir, last), 'utf8') };
 }
 
-const { path: MIGRATION, sql: migration } = latestTravelGapsMigration();
+const { path: MIGRATION, sql: migration } = latestMigrationDefining('travel_gaps');
 console.log(`travel_gaps modes (${MIGRATION})`);
 modes('the migration routes exactly the modes TRAVEL_MODES names', migration, [...TRAVEL_MODES].sort());
 
@@ -313,6 +346,30 @@ modes(
   edited('create function public.travel_gaps', 'create function public.travel_backlog'),
   'no `create function public.travel_gaps ... $$ ... $$` body — did it move or change quoting?',
 );
+
+console.log(`travel_gaps places (${MIGRATION})`);
+{
+  const found = placeClausesInTravelGaps(migration);
+  check(
+    'the backlog is derived only for places with a postcode that are timed',
+    'columns' in found ? found.columns : found.problem,
+    ['postcode', 'travel_timed'],
+  );
+  // The clause is what stops the spend, so losing it has to read as a failure rather than as a
+  // shorter list nobody looks at.
+  const withoutTimed = placeClausesInTravelGaps(migration.replace('       and pl.travel_timed\n', ''));
+  check(
+    'and dropping the travel_timed clause is noticed',
+    'columns' in withoutTimed ? withoutTimed.columns : withoutTimed.problem,
+    ['postcode'],
+  );
+  const commentedOut = placeClausesInTravelGaps(migration.replace('       and pl.travel_timed\n', '       -- and pl.travel_timed\n'));
+  check(
+    'a clause left only in a comment does not count',
+    'columns' in commentedOut ? commentedOut.columns : commentedOut.problem,
+    ['postcode'],
+  );
+}
 
 /* Which station a name means. TfL's search is fuzzy and ranks by relevance, so the guard against
  * being handed a different station is name equality once both sides are reduced — and every case
@@ -392,6 +449,85 @@ check(
   true,
 );
 check('no names, nothing claimed', stationCallsNeeded([], new Set()), 0);
+
+/* What a 300 is. TfL's planner answers it when it wants disambiguation, and it used to be cached as
+ * "there is no route" — permanently, and for every leg from the flat, since the origin is shared.
+ * Production showed the same origin and destination routing fine by another mode in the same second
+ * the 300 landed (#47), so it is TfL being unable to answer for a moment, and a moment must not be
+ * remembered as a verdict. Run against a stubbed `fetch`: `tflFetch` returns a 300 and a 404 without
+ * a retry, so no delay is waited out here. */
+console.log('journeyTime classification');
+async function classified(status: number, body: unknown = null): Promise<{ transient: boolean } | { seconds: number }> {
+  const real = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(body === null ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  try {
+    const journey = await journeyTime('NW6 4AA', '51.5,-0.2', 'walking', undefined);
+    return { seconds: journey.seconds };
+  } catch (e) {
+    if (e instanceof TflError) return { transient: e.transient };
+    throw e;
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+check('a 300 is not a verdict on the journey', await classified(300), { transient: true });
+check('a 404 is TfL saying there is no journey, and stays settled', await classified(404), { transient: false });
+check('an empty journey list is settled too', await classified(200, { journeys: [] }), { transient: false });
+check('a journey is a journey', await classified(200, { journeys: [{ duration: 12, legs: [] }] }), { seconds: 720 });
+
+/* A walk TfL cannot have measured honestly. Its pedestrian graph has no crossing at some railway
+ * bridges, so two points 105 m apart on one street are routed 1,297 m round, and the 17-minute
+ * result is drawn as a measurement (#81). Every honest route in the survey stayed under 1.98 times
+ * the straight line; the broken ones were 2.14, 2.42 and 4.59. The cases below are those legs.
+ * `implausibleWalk` takes seconds, and the distances are read back at TfL's own pace. */
+console.log('implausibleWalk');
+const MILE = 1609.344;
+const minutes = (n: number) => n * 60;
+// Kilburn High Road, either side of the Brondesbury bridge: 105 m apart, routed as a 17-minute walk.
+refused('105 m across a railway bridge is not a 17-minute walk', implausibleWalk('walking', minutes(17), 105 / MILE));
+// The flat to Kilburn station — the case in the issue's title: 17 minutes for a 530 m straight line.
+refused('a 2.4× detour to the station is refused', implausibleWalk('walking', minutes(17), 530 / MILE));
+// Finchley Road & Frognal, 186 m away, cached as 22 minutes.
+refused('186 m is not 22 minutes on foot', implausibleWalk('walking', minutes(22), 186 / MILE));
+// The control: Brondesbury Park, 813 m routed for a ~540 m straight line, is an ordinary 1.5× walk.
+usable('an ordinary 1.5× detour is kept', implausibleWalk('walking', minutes(11), 540 / MILE));
+// The worst honest ratio in the survey, and the boundary itself — on it is kept, past it is not.
+usable('the worst honest route in the survey is kept', implausibleWalk('walking', 792, 500 / MILE));
+usable('a route exactly on the ratio is kept', implausibleWalk('walking', MAX_WALK_DETOUR_RATIO * 400, 500 / MILE));
+refused('and one past it is not', implausibleWalk('walking', MAX_WALK_DETOUR_RATIO * 400 + 1, 500 / MILE));
+// A refusal needs a measurement, and the cycling graph crosses the bridge, so neither is checked.
+usable('a walk with nothing to measure against is kept', implausibleWalk('walking', minutes(17), null));
+usable('a cycle is never checked', implausibleWalk('cycling', minutes(17), 105 / MILE));
+// Next door can honestly be a walk round the block.
+usable('a few metres apart is not compared', implausibleWalk('walking', minutes(3), 20 / MILE));
+check(
+  'the refusal says the ratio and the straight line',
+  implausibleWalk('walking', minutes(17), 105 / MILE)?.startsWith("TfL's 17-minute walk is 12.1× the 105 m straight line"),
+  true,
+);
+
+/* The journey lock (#76). Both writers to a journey key have to take it, or the race it closes is
+ * back with one of them holding a lock against nobody. Read out of the migrations rather than
+ * trusted, the same way the modes are. */
+console.log('journey lock');
+for (const fn of ['cache_travel', 'record_travel_failure']) {
+  const { path, sql } = latestMigrationDefining(fn);
+  const start = sql.search(new RegExp(`function\\s+public\\.${fn}\\b`));
+  // Up to the body's own terminator, so the next function's lock cannot answer for this one — and
+  // both ends asserted rather than assumed. `search` and `indexOf` answer -1 when they find
+  // nothing, and `slice(start, -1)` is a perfectly legal call returning everything to the last
+  // character: a renamed function or a change of dollar-quoting would hand this the rest of the
+  // file, where some *other* function's lock satisfies the test. The check would pass, in green,
+  // for a function that never took the lock — which is the failure it exists to catch.
+  const end = sql.indexOf('\n$$;', start);
+  if (start < 0 || end < 0) {
+    check(`${fn} has a body this check can read (${path})`, false, true);
+    continue;
+  }
+  const body = sql.slice(start, end);
+  check(`${fn} takes the journey lock (${path})`, /perform\s+public\.lock_travel_journey\(/.test(body), true);
+}
 
 if (failures > 0) {
   console.error(`\n${failures} failing`);

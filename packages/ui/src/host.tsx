@@ -17,7 +17,11 @@ import { createContext, useContext, type ReactNode } from 'react';
 export interface UiHost {
   /** Walking seconds and the lines carried, per station name. A station the host cannot answer for
    *  is simply absent from the record — the component renders the distance alone rather than a
-   *  spinner that never resolves. */
+   *  spinner that never resolves.
+   *
+   *  Rejects when the lookup itself fails, and must: an empty record is the ordinary "no walk known
+   *  for any of these", so a host that answered `{}` on failure made the two indistinguishable and
+   *  the component had nothing to report. `Stations` catches it and says so beside the distances. */
   stationWalks(
     postcode: string,
     stations: string[],

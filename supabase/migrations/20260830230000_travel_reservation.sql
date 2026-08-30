@@ -108,6 +108,16 @@ begin
   select coalesce(sum(c.calls), 0) into v_held
     from public.travel_claim c where c.user_id = p_user_id;
 
+  -- Bigger than the whole allowance, which is not a wait. An ask of 400 against a limit of 300
+  -- is refused at an empty minute exactly as it is at a full one, so answering 'rate-limited'
+  -- would put "try again in a minute" on a screen where a minute changes nothing. Said apart,
+  -- and checked before the usage test so the two cannot be confused by a busy minute.
+  if p_calls > p_limit then
+    return jsonb_build_object(
+      'status', 'too-large',
+      'asked', p_calls, 'limit', p_limit);
+  end if;
+
   if v_used + v_held + p_calls > p_limit then
     return jsonb_build_object(
       'status', 'rate-limited',
@@ -165,7 +175,11 @@ begin
     perform public.record_api_usage(p_project_id, p_user_id, 'tfl', p_made, 0, 0, null, 'travel');
   end if;
 
-  delete from public.travel_claim c where c.id = p_reservation;
+  -- Both, not the id alone. A claim belongs to a person, and this function is handed the two
+  -- separately — so a caller whose pair is out of step would otherwise release capacity that
+  -- was never theirs and be told it worked. `service_role` bounds who can make that mistake,
+  -- not what it costs when they do.
+  delete from public.travel_claim c where c.id = p_reservation and c.user_id = p_user_id;
   get diagnostics v_released = row_count;
   return v_released > 0;
 end;

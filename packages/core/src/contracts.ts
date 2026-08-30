@@ -111,7 +111,11 @@ export type InviteResult =
   /** `code` is the plaintext invite code, and this is the only time it exists anywhere outside the
    *  invitee's phone: the database holds a hash of it and there is no way to read one back. Show
    *  it, let it be copied, and say that resending is what replaces a lost one. */
-  | { status: 'invited'; invite: Invite; userExisted: boolean; code: string }
+  | { status: 'invited'; invite: Invite; code: string }
+  /** The address already had an account, so they were made a member on the spot — no code, because
+   *  there is nobody to redeem one. The hunt is on their screen the next time the app reads who is
+   *  signed in. */
+  | { status: 'added'; invite: Invite }
   | { status: 'at-capacity'; headcount: Headcount }
   | { status: 'already-a-member' }
   | { status: 'already-invited' }
@@ -119,14 +123,16 @@ export type InviteResult =
    *  project, no such project. Named rather than thrown, so the view prints the sentence. */
   | { status: 'refused'; reason: string };
 
-/** What can be changed about a place *after* it exists: whether the hunt sweeps around it, how
- *  far, and how often. The label and the postcode are what the place is, and changing either means
- *  resolving a coordinate again — that is `addPlace`'s job, not a patch's. */
+/** What can be changed about a place *after* it exists: whether journeys are timed to it, whether
+ *  the hunt sweeps around it, how far, and how often. The label and the postcode are what the place
+ *  is, and changing either means resolving a coordinate again — that is `addPlace`'s job, not a
+ *  patch's. */
 export interface PlacePatch {
   locationIdentifier?: string | null;
   displayLocationIdentifier?: string | null;
   sweepRadiusMiles?: number | null;
   maxDaysSinceAdded?: number | null;
+  travelTimed?: boolean;
 }
 
 /** One resolution of a place's name to the identifier Rightmove searches it by.
