@@ -74,18 +74,28 @@ export function locateProblem(error: { code?: number; message?: string }): strin
  *  both hand it to the Google Maps app where that is installed, and everywhere else, phone or
  *  desktop, it opens the web map. No user-agent is read, because there is nothing left to decide.
  *
- *  Coordinates before the postcode, because the coordinates *are* the postcode wherever we hold
- *  both, while a postcode handed to a search box is a text query that can land on the wrong side of
- *  it. Five decimals is about a metre and is what `CopyLocation` puts on the clipboard, so the link
- *  and the copied value cannot disagree about where this flat is.
+ *  Coordinates before the postcode, because where the pin is exact the coordinates *are* the
+ *  postcode, while a postcode handed to a search box is a text query that can land on the wrong side
+ *  of it. Five decimals is about a metre and is what `CopyLocation` puts on the clipboard, so the
+ *  link and the copied value cannot disagree about where this flat is.
+ *
+ *  **Except where the pin is approximate, and then it is the other way round.** Rightmove fuzzes the
+ *  pin on some listings while the blob still carries the full postcode — which is the fourth of the
+ *  four facts this whole design rests on, and the reason we route from the postcode rather than the
+ *  lat/lon everywhere else. Sending the fuzzed point to a maps app would walk somebody to a spot
+ *  chosen to not be the flat, confidently, with no way to tell from the screen. The postcode is the
+ *  better answer there even though it is coarser: coarse and honest beats precise and wrong.
  *
  *  Null when there is neither, so the caller can say so. A button that opened a map of nowhere
  *  would be the blank pretending to be an answer. */
 export function mapsUrl(
   point: { lat: number; lon: number } | null,
   postcode: string | null,
+  approximate = false,
 ): string | null {
-  const query = point ? `${point.lat.toFixed(5)},${point.lon.toFixed(5)}` : (postcode?.trim() ?? '');
+  const known = postcode?.trim() ?? '';
+  const usePoint = point !== null && !(approximate && known !== '');
+  const query = usePoint ? `${point.lat.toFixed(5)},${point.lon.toFixed(5)}` : known;
   if (!query) return null;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }

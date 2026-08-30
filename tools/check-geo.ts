@@ -75,5 +75,26 @@ ok('five decimals, rounded not truncated', mapsUrl({ lat: 51.5341299, lon: -0.1 
 ok('nothing to map', mapsUrl(null, null), null);
 ok('a blank postcode is nothing to map', mapsUrl(null, '  '), null);
 
+// And the one case where the order reverses. Rightmove fuzzes the pin on some listings while the
+// blob still carries the full postcode, so the coordinates there are chosen to *not* be the flat —
+// walking somebody to them would be precise and wrong. Coarse and honest wins.
+ok(
+  'an approximate pin defers to the postcode',
+  mapsUrl({ lat: 51.53412, lon: -0.10567 }, 'N1 9GU', true),
+  'https://www.google.com/maps/search/?api=1&query=N1%209GU',
+);
+// With no postcode to defer to, a fuzzed pin is still the only answer there is — better than
+// refusing to open a map at all for a flat somebody is looking at.
+ok(
+  'an approximate pin with no postcode is still used',
+  mapsUrl({ lat: 51.53412, lon: -0.10567 }, null, true),
+  'https://www.google.com/maps/search/?api=1&query=51.53412%2C-0.10567',
+);
+ok(
+  'a blank postcode does not count as one to defer to',
+  mapsUrl({ lat: 51.53412, lon: -0.10567 }, '  ', true),
+  'https://www.google.com/maps/search/?api=1&query=51.53412%2C-0.10567',
+);
+
 console.log(failed === 0 ? '\nall passed' : `\n${failed} failed`);
 if (failed > 0) process.exit(1);

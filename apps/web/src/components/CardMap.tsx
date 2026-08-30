@@ -131,7 +131,7 @@ export function CardMap({
     };
   }, [open, lat, lon, hubs, colour]);
 
-  const maps = mapsUrl(point, postcode);
+  const maps = mapsUrl(point, postcode, approximate);
 
   return (
     <div className="card-map-wrap">
