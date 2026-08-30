@@ -1,7 +1,7 @@
 {
-  "version": "0.5.3",
+  "version": "0.5.4",
   "files": {
-    "apps/extension/package.json": "e6ef37be2955a69b1e9926766c77bc9c5f1624e9a1b259ef4dd45d66402de84d",
+    "apps/extension/package.json": "fbeaa05bb49ebb666920c21840e19b9a29db381db03560aa1e68dc9308325ceb",
     "apps/extension/public/icon/128.png": "4cc10de2d8a0d3434361911b368afed44613def5bfab2efaf7e3bb0ab05dca95",
     "apps/extension/public/icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "apps/extension/public/icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
@@ -42,7 +42,7 @@
     "packages/core/src/filter.ts": "ad88fb404eddf1d4bd2d13b5cc0a910c0477dd7eef17a1d3bd6739a798575d5d",
     "packages/core/src/hubs.ts": "f3b14afb3d5e3dd16cb0d9e22455b84ee3af59f663c4dc776aa2feab0bf9d943",
     "packages/core/src/index.ts": "91783fd8f2f842d706c913781724fdabbded0c6ff5c4e0176b37c530d7410e9a",
-    "packages/core/src/listing.ts": "bf965aa828c1254df44646fbd108216b19f71e749ffc6fda65cf60bbffb517b9",
+    "packages/core/src/listing.ts": "9883cc2d05a72491ba2212c195dedf98457dff199c21fadd3a5b727c7fcc5b70",
     "packages/core/src/log.ts": "06ad7dc27687521632590229ea162b7f52694cec2b366c57c929feed2a04cff7",
     "packages/core/src/png.ts": "4fbbdce846a509c93268410b4675b74b10f3634ffffe9f24246e81cf57226ecd",
     "packages/core/src/postcode.ts": "7aceacddce5153eefd4bf3eac0c224ed2a9390ed33dd32e3931533d38ff9cb05",
@@ -103,7 +103,7 @@
   "contents": {
     "background.js": "e760b76c803f6acdbd8cb0d4d57276eb688b1e42edb959ebf758ba6f206caa35",
     "content-scripts/bridge.js": "6b4b9858ab0959c9ad6247b8ab9000402b13164a3ffa39b9fc6ce14293ed384f",
-    "content-scripts/page-model.js": "a96843e8d4a1428c0482fe0fe99f5904db47befb23789fad83bcad8163fda386",
+    "content-scripts/page-model.js": "0813950beccf9e276a2a321ab5695789c392dda44ca877f98f204e9eec0dfa08",
     "content-scripts/panel.css": "1548e94362c6f18fa9db34661ae320656a8af5a2701de4eb85cdff9ce65d4535",
     "content-scripts/panel.js": "c427a66de6c4567f730beaf09de92811eebe1e1dcb81ac37785e6079814dcaac",
     "content-scripts/search.css": "64cb74020ade89d5093313918deab97d70f75a33f5c70c0702e791162b105366",
@@ -114,6 +114,6 @@
     "icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
     "icon/48.png": "024a0e6ecf9b4aa36acf9468b400d6eabf030e59d24c29c3a4594f0bfe213343",
-    "manifest.json": "3d41ce1cb75a37ed10b4a38ce552b977c8c436eb3327e5d466342e270fe299c8"
+    "manifest.json": "f0381243f1a78eaa17071bfa6a24c9626abd963c1e4ba0250947744069b4cee3"
   }
 }
