@@ -405,7 +405,12 @@ instead (`.github/workflows/check.yml`: `check:all`, `check:rls`, `check:spend`,
 - "Shows nothing" is usually a session (`signed-out` / `no-project` testids) or the spend cap. Auth is read once per page — reload after signing in elsewhere.
 - **Can't sign in / forgot the password?** `python3 tools/set-password.py <email>` — its
   docstring explains why there is no reset email.
-- The first stop is Settings → Diagnostics → **Copy log**.
+- The extension writes every notable call to a ring buffer in `chrome.storage.local`, which is the
+  only record that survives Chrome tearing the worker down. **There is no longer a screen that shows
+  it (#141)** — this file said "Settings → Diagnostics → Copy log" long after that screen stopped
+  existing, which is a first debugging step that produces confusion instead of a log. Until it is
+  restored, read the buffer from the service worker's devtools console:
+  `await chrome.storage.local.get('log')`. `SMOKE_LOG=all pnpm smoke` dumps the same buffer.
 - The network lives in the background worker: `chrome://extensions` → Inspect service worker.
   The panel is in a Shadow DOM — go through `.shadowRoot`.
 - Read the database directly when a view disagrees with reality:

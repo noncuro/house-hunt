@@ -14,7 +14,3 @@ export type SetStage = (
    *  constraint enforces, so a caller that gets it wrong fails here rather than at the database. */
   archiveReason: ArchiveReason | null,
 ) => void;
-
-export type SetVerdict = (entry: ShortlistEntry, rating: Rating, note: string) => void;
-
-export type SetOffMarket = (entry: ShortlistEntry, off: boolean) => void;
