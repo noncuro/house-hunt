@@ -214,11 +214,38 @@ deployment. The token above is ours, means one thing, and is not tied to the pla
 at all. It travels in `X-Backfill-Token`, its own header, which is what the route compares — a habit
 worth keeping now that there is no gateway with an opinion about `Authorization`.
 
-**Upgrading an existing deployment:** repoint `travel_functions_url` at the site, put
-`TRAVEL_BACKFILL_TOKEN` on Vercel, confirm a run works, then drop what nothing reads any more —
-`delete from vault.secrets where name in ('travel_service_role_key', 'travel_publishable_key');`.
-Nothing removes them for you: a migration that deletes a secret it did not create destroys a working
-deployment if it is ever re-run mid-rollout.
+**Upgrading an existing deployment**, in this order, because two of the steps are not idempotent
+against each other:
+
+1. Put `TFL_PRIMARY_KEY` and `TRAVEL_BACKFILL_TOKEN` on Vercel.
+2. **Redeploy production.** This is the step that is easy to leave out and impossible to see: Vercel
+   binds a deployment's environment when the deployment is created, so a variable added afterwards
+   is not in the running one. The route goes on reading no token, `isBackfill` answers no — an unset
+   token is not a wildcard — and the call falls through to `requireCaller` and is refused as though
+   a stranger had made it. Confirmed by hand against the live site: with the token on Vercel but no
+   redeploy, `POST /api/travel` carrying the right `X-Backfill-Token` answers
+   `401 {"code":"unauthenticated","error":"no bearer token"}`.
+3. Repoint `travel_functions_url` at **the site origin plus `/api`, with no trailing slash** —
+   `run_travel_backfill` appends `/travel` to whatever it holds, so `https://<the site>/api` is
+   what makes the post land on `/api/travel`. The origin on its own resolves to `/travel`, which
+   does not exist and answers 404 through `pg_net`, where nothing raises.
+4. Confirm a run works (the queries below), then drop `travel_service_role_key`, which nothing
+   reads any more — `delete from vault.secrets where name = 'travel_service_role_key';`. Nothing
+   removes it for you: a migration that deletes a secret it did not create destroys a working
+   deployment if it is ever re-run mid-rollout.
+
+   **Leave `travel_publishable_key` where it is (#140).** This used to say to delete both in one
+   statement, and that breaks the schedule: `run_travel_backfill` still reads it and raises
+   `the vault has no travel_publishable_key` when it is gone. It is dead weight against a Vercel
+   route, which ignores the `Authorization` and `apikey` headers it is sent as — but it is the
+   function that has to stop reading it first, and until that migration has run the delete takes
+   the backfill down in the quietest way available: every run raises, and the screen shows a column
+   of dashes that looks like a slow backlog.
+
+Repointing before the redeploy is the ordering that costs something rather than failing: the
+schedule starts posting to a route that refuses it, every fifteen minutes, and the symptom is a
+column of dashes that looks exactly like a slow backlog — which is the same disguise the missing
+GitHub Actions secrets wore for 40 runs.
 
 To check it, on the database connection in AGENTS.md:
 
