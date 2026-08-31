@@ -266,18 +266,6 @@ export type Envelope<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; unauthenticated?: boolean; noProject?: boolean };
 
-/** True when the worker refused because nobody is signed in. The panel shows one line inviting
- *  sign-in, the shortlist shows the sign-in view, and the search surfaces show nothing at all —
- *  a dimmed card asserts a verdict, and a verdict implies a project. */
-export function isUnauthenticated<T>(reply: Envelope<T>): boolean {
-  return !reply.ok && reply.unauthenticated === true;
-}
-
-/** True when the user is signed in but has no active project — the project picker's cue. */
-export function isNoProject<T>(reply: Envelope<T>): boolean {
-  return !reply.ok && reply.noProject === true;
-}
-
 export async function send<K extends Request['type']>(
   request: Extract<Request, { type: K }>,
 ): Promise<Envelope<ResponseMap[K]>> {

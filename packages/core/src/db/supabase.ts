@@ -903,15 +903,6 @@ function toCachedTravel(r: any): CachedTravel {
   };
 }
 
-export async function getCachedTravel(postcode: string): Promise<CachedTravel[]> {
-  const { data, error } = await db()
-    .from('travel_time')
-    .select('dest_postcode, mode, seconds, changes, no_route, reason, journeys, basis, computed_at')
-    .eq('origin_postcode', postcode);
-  fail('reading travel cache', error);
-  return (data ?? []).map(toCachedTravel);
-}
-
 /** What each of these flats has cost, newest first, keyed by listing.
  *
  *  One query for the whole shortlist rather than one per card, for the same reason the travel cache
@@ -995,28 +986,6 @@ export async function getCachedTravelFor(
  *  Why the writes moved is on `apps/web/src/app/api/travel/route.ts`. Short version: the tables are
  *  global on purpose, and validation there could only ever check that a number was plausible, not
  *  that it was true. */
-
-export async function getStationWalks(postcode: string): Promise<Map<string, number>> {
-  const { data, error } = await db()
-    .from('station_walk')
-    .select('station_name, seconds')
-    .eq('postcode', postcode);
-  fail('reading station walks', error);
-  return new Map(((data ?? []) as any[]).map((r) => [r.station_name as string, r.seconds as number]));
-}
-
-export async function getStationPoint(name: string): Promise<StationInfo | null | undefined> {
-  const { data, error } = await db()
-    .from('station_point')
-    .select('lat, lon, lines')
-    .eq('name', name)
-    .maybeSingle();
-  fail('reading station point', error);
-  if (!data) return undefined; // never looked up
-  return data.lat === null || data.lon === null
-    ? null
-    : { lat: data.lat, lon: data.lon, lines: (data.lines ?? []) as string[] };
-}
 
 /** The columns of `property_analysis` that become facts — every one `toAnalysis` reads, and no
  *  other. Named rather than `*`, because the row also carries `captions` (one per photo) and `raw`

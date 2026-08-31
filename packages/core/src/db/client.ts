@@ -88,9 +88,3 @@ export function db(): SupabaseClient {
   }
   return client;
 }
-
-/** True once `configure()` has run. For code that must not construct a client but may reasonably
- *  ask whether one exists yet — a smoke harness, or a guard around start-up ordering. */
-export function isConfigured(): boolean {
-  return client !== null;
-}
