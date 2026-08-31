@@ -1,7 +1,7 @@
 {
-  "version": "0.5.16",
+  "version": "0.5.17",
   "files": {
-    "apps/extension/package.json": "035c01779b8855ebb524d9e51a9adfd5b660d2d9bb6c39102bad3619f5400e6f",
+    "apps/extension/package.json": "91c71b3da5942e4d0a2d856c3716c911aa6a875a6fcf2c945e80237b11792272",
     "apps/extension/public/icon/128.png": "4cc10de2d8a0d3434361911b368afed44613def5bfab2efaf7e3bb0ab05dca95",
     "apps/extension/public/icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "apps/extension/public/icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
@@ -22,7 +22,7 @@
     "apps/extension/src/lib/cards.ts": "2200a4f419454203edb00892d50627f02375d716868377c9e482f28e627ff624",
     "apps/extension/src/lib/extract.ts": "a41834cd1b9b2bcd937d3ab1c90cd0f5f3cabeddbfea9ca8f737618f2ef4846d",
     "apps/extension/src/lib/log.ts": "9c0e064f5e569aed778a4b923552a6db6d6b1cd9c71b54dabf383bb27ece15c1",
-    "apps/extension/src/lib/messages.ts": "b97359007a663a3d209df2a2cf97161d39ec3db4c57f26d9fa52120084bd6b3a",
+    "apps/extension/src/lib/messages.ts": "ef3ae56d5214ca3095ca37a706f878b76f51f4b95ed7854fef023289aa63ed02",
     "apps/extension/src/lib/score.ts": "2c7115ae3b344fb82d955c4ccfbbf047c7d4feaebf6dc018eac671587eae0107",
     "apps/extension/src/lib/search-page.ts": "e68c4568281f559e9fef634992dab1b68ea8a4ae52ee5a0d6971dad3f8a72065",
     "apps/extension/src/lib/ui-host.ts": "1aa010e1e4ec347205ea1d7d1ec3813ac0c18fb52e82f1ac5353fdd1dba0883e",
@@ -33,11 +33,11 @@
     "packages/core/src/analysis.ts": "1b586d2506e6fba66f9f8c09209e01980995c563de87d0f40179a1f6eaf916ee",
     "packages/core/src/bridge.ts": "4db8ecea8fa508cad61f21a1872d73ae042b9b760a6a401b4b42bc82a95e7a49",
     "packages/core/src/contracts.ts": "c33791af8ddc8deea99854a4fe82d7fbb4cb1e51b1c38c894f8b1f48a49981f7",
-    "packages/core/src/db/client.ts": "90077b113287541b963695d4e6f0d13690746cd55cc52f45a34cfa93b97a184e",
+    "packages/core/src/db/client.ts": "5c3dc1e11dd4801988c05bfe8dfaaa3a7b07d9d15641e11901ab47ff6cdaa050",
     "packages/core/src/db/index.ts": "14d12be2e8dbe10d7e706e2feb4ffc6fe4505a2c0844b8ddb5b7727642dbbc0b",
     "packages/core/src/db/route.ts": "313d18dda042ef9fce9d5138d513123bd90921b0843ae377fb9927939b3b60bd",
     "packages/core/src/db/session.ts": "6f9f09a19fcdf9576d37b173c767b6faeccfd8b5e7c69118ed77e7a7171bcc81",
-    "packages/core/src/db/supabase.ts": "a8632819178fe35f04282fefce0b38be4dfe3d3950af2d849c03b6a8676ce70a",
+    "packages/core/src/db/supabase.ts": "918d3e8322f910a7c91d3297b096c1e3b9ddeb08db02fe16eb49ae5071d45d6f",
     "packages/core/src/db/travel.ts": "377ed455d0bb099329a1a93c2c8c4c19c26b72a34eaee1f2ccec7fad8654354c",
     "packages/core/src/facts.ts": "a558a38e641e12cec406dd3c15954bc226156f7c15b53ac04c3e6350dd488b5d",
     "packages/core/src/filter.ts": "a1d72aed7b77a45251765c37f87d0e69479a662cd5f837da79d6dfe0f7fc1b0e",
@@ -116,6 +116,6 @@
     "icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
     "icon/48.png": "024a0e6ecf9b4aa36acf9468b400d6eabf030e59d24c29c3a4594f0bfe213343",
-    "manifest.json": "303a7f0c84225ecca3dbd0170920a6abfb218f6408afce613a8d877af4ea350d"
+    "manifest.json": "36f5ec4cf6996453c567bd6258be023bfc48396586369b5e65123f9565586bd7"
   }
 }
