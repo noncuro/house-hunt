@@ -120,12 +120,10 @@ const nextConfig = (phase: string): NextConfig => ({
     return [{ source: '/promo', destination: '/promo.html' }];
   },
   async headers() {
-    // The three that are true of everything served here, whatever policy goes with them.
+    // The two that are true of everything served here, whatever policy goes with them.
     const common = [
       { key: 'Referrer-Policy', value: 'same-origin' },
       { key: 'X-Content-Type-Options', value: 'nosniff' },
-      // A private house hunt has no business in a search index.
-      { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
     ];
 
     return [
@@ -140,6 +138,13 @@ const nextConfig = (phase: string): NextConfig => ({
       {
         source: '/:path((?!sw\\.js$).*)',
         headers: [{ key: 'Content-Security-Policy', value: cspFor(phase) }, ...common],
+      },
+      {
+        // A private house hunt has no business in a search index. The landing page is the one
+        // thing here meant to be found, so it and its images are left out; it says `index` in its
+        // own metadata too (D16).
+        source: '/:path((?!welcome(?:/|$)).*)',
+        headers: [{ key: 'X-Robots-Tag', value: 'noindex, nofollow' }],
       },
     ];
   },

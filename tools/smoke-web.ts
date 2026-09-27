@@ -1733,7 +1733,8 @@ async function signedOutPage(
   const page = await context.newPage();
   page.on('pageerror', (e) => note(`pageerror (signed out): ${e.message}`));
 
-  await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
+  // `?signin`, because the bare address sends a visitor with no session to the landing page (D16).
+  await page.goto(`${ORIGIN}/?signin`, { waitUntil: 'domcontentloaded' });
   await page.locator('.signin').waitFor({ timeout: 60_000 });
   return { page, offline, close: () => context.close() };
 }
