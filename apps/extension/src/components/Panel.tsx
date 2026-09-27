@@ -191,15 +191,17 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       }
 
       // Off the market according to Rightmove itself — let agreed, or taken down — and not yet
-      // marked here: mark it, whatever it is rated. This used to ask first for a love or maybe, and the re-check sweep reopens exactly
-      // those flats — liking one is what puts it in the funnel — in tabs nobody is watching, so the
-      // question sat unanswered and nothing was ever marked. Nothing is lost by not asking: the
-      // verdict and the stage are kept, the toast says it happened, and "Back on the market" undoes
-      // it.
-      if ((listing.archived === true || listing.letAgreed === true) && offState.ok && !offState.data) {
+      // marked here: mark it, whatever it is rated. This used to ask first for a love or maybe, and
+      // the re-check sweep reopens exactly those flats — liking one is what puts it in the funnel —
+      // in tabs nobody is watching, so the question sat unanswered and nothing was ever marked.
+      // Nothing is lost by not asking: the verdict and the stage are kept, the toast says it
+      // happened, and "Back on the market" undoes it. The toast and the reason name which signal it
+      // was, because a let-agreed listing is still up on Rightmove.
+      const gone = listing.letAgreed === true ? 'let agreed' : listing.archived === true ? 'taken down' : null;
+      if (gone && offState.ok && !offState.data) {
         void toggleOffMarket(true, {
-          announce: 'Marked off the market — it is no longer listed on Rightmove.',
-          reason: 'Off the market on Rightmove',
+          announce: `Marked off the market — ${gone} on Rightmove.`,
+          reason: `${gone === 'let agreed' ? 'Let agreed' : 'Taken down'} on Rightmove`,
         });
       }
 
