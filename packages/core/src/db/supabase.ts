@@ -438,9 +438,8 @@ export async function addListingByUrl(url: string): Promise<AddListingResult> {
   await requireSession();
   const projectId = await activeProjectId();
 
-  // Asked before the fetch, so a flat this hunt already has costs nobody a request to Rightmove —
-  // which is the no-crawl rule showing up as an optimisation, and the common case when somebody
-  // shares a link that has already been round the group.
+  // Asked before the fetch, so a flat this hunt already has costs nobody a request to Rightmove,
+  // which is the common case when somebody shares a link that has already been round the group.
   const { data: existing, error: lookupError } = await db()
     .from('project_property')
     .select('rightmove_id, property!inner(display_address)')
@@ -1216,7 +1215,12 @@ export interface SweepKnowledge {
  *  (`postcode_lat`) is deliberately *not* in this test: it is filled by a separate `locateProperties`
  *  backfill, and opening the tab again does nothing to produce it — so gating on it would leave every
  *  opened-but-not-yet-geocoded flat permanently in the opener's worklist, which re-opening can never
- *  clear. The map falls back to Rightmove's own pin until the backfill lands. */
+ *  clear. The map falls back to Rightmove's own pin until the backfill lands.
+ *
+ *  A listing with no photographs at all is complete for the same reason, and was the other way this
+ *  worklist grew a row nobody could ever clear. `analyseListing` throws "no images to analyse"
+ *  before it reaches OpenAI, the row lands on `failed`, and `claim_analysis` re-claims a failed row
+ *  — so every run reopened the listing to fail identically, and the view called it never opened. */
 export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<string, SweepKnowledge>> {
   const known = new Map<string, SweepKnowledge>();
   if (rightmoveIds.length === 0) return known;
@@ -1229,7 +1233,9 @@ export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<str
   for (const batch of chunk(rightmoveIds, KNOWLEDGE_BATCH)) {
     const { data, error } = await db()
       .from('property')
-      .select('rightmove_id, postcode, image_urls, property_analysis(status), project_property!inner(project_id)')
+      .select(
+        'rightmove_id, postcode, image_urls, floorplan_urls, property_analysis(status), project_property!inner(project_id)',
+      )
       .eq('project_property.project_id', projectId)
       .in('rightmove_id', batch);
     fail('checking which properties we already have', error);
@@ -1242,7 +1248,8 @@ export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<str
           : [];
       const missing = missingFor({
         postcode: row.postcode ?? null,
-        imageCount: Array.isArray(row.image_urls) ? row.image_urls.length : 0,
+        imageCount: length(row.image_urls),
+        floorplanCount: length(row.floorplan_urls),
         analysed: analyses.some((a: any) => a.status === 'done'),
       });
 
@@ -1268,6 +1275,12 @@ function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+/** How many URLs a jsonb array column holds. Null and a non-array both read as none: a column we
+ *  cannot count is not one to claim photographs for. */
+function length(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
 }
 
 /** One listing we have seen on a search page but do not properly have yet. */
@@ -1839,11 +1852,9 @@ export async function resendInvite(inviteId: string): Promise<InviteResult> {
 
 /** One neighbourhood name to the identifier Rightmove searches it by.
  *
- *  NO-CRAWL, restated at the call site because this is exactly the kind of thing that looks like
- *  precedent later: this is one request, made because one person is adding one hub, and it is the
- *  same single hand-run lookup `pnpm find:locations` performs today. Nothing here enumerates,
- *  nothing here runs in the background, and nothing here may be moved onto a loop. The standing
- *  rule in AGENTS.md is unchanged. */
+ *  One request, made because one person is adding one hub — the same lookup `pnpm find:locations`
+ *  performs from a terminal. The route it calls is rate-limited per user, so a caller that retries
+ *  in a loop is refused rather than served. */
 export async function resolveLocation(name: string): Promise<LocationResult> {
   await requireSession();
   let data: unknown;
