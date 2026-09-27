@@ -1175,6 +1175,8 @@ code {
   border-radius: var(--r-card);
   /* Leaflet paints tiles to the edge, so the radius has to clip them. */
   overflow: hidden;
+  /* Leaflet's panes stay under the sticky header — see `.mapview`. */
+  isolation: isolate;
   background: var(--line-3);
 }
 
@@ -1850,9 +1852,15 @@ code {
 /* --- Places: the map ----------------------------------------------------------------------- */
 
 /* The positioning context for everything that floats over the map, and the only thing that gives
-   Leaflet a height to render into — a `.map` sized by its contents renders a zero-pixel tile grid. */
+   Leaflet a height to render into — a `.map` sized by its contents renders a zero-pixel tile grid.
+
+   `isolation` keeps Leaflet's z-indexes in here. Its panes run 400 to 1000, and without a stacking
+   context of its own the map competed with the page's layers on those numbers and won: on a phone
+   the flat's panel (`.sheet`, 60) opened underneath the tiles and pins, and taps on it landed on
+   the map. */
 .mapview {
   position: relative;
+  isolation: isolate;
   height: calc(100vh - 200px);
   min-height: 420px;
   border: 1px solid var(--line);
