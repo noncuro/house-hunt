@@ -190,13 +190,13 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
         setNote(current?.note ?? '');
       }
 
-      // Off the market according to Rightmove itself, and not yet marked here: mark it, whatever it
-      // is rated. This used to ask first for a love or maybe, and the re-check sweep reopens exactly
+      // Off the market according to Rightmove itself — let agreed, or taken down — and not yet
+      // marked here: mark it, whatever it is rated. This used to ask first for a love or maybe, and the re-check sweep reopens exactly
       // those flats — liking one is what puts it in the funnel — in tabs nobody is watching, so the
       // question sat unanswered and nothing was ever marked. Nothing is lost by not asking: the
       // verdict and the stage are kept, the toast says it happened, and "Back on the market" undoes
       // it.
-      if (listing.archived === true && offState.ok && !offState.data) {
+      if ((listing.archived === true || listing.letAgreed === true) && offState.ok && !offState.data) {
         void toggleOffMarket(true, {
           announce: 'Marked off the market — it is no longer listed on Rightmove.',
           reason: 'Off the market on Rightmove',

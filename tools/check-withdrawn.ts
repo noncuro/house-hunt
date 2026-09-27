@@ -16,6 +16,9 @@
  *  own content and are not committed (docs/fixtures.md), so a check that needed one would only run
  *  where somebody had fetched a withdrawn listing that day. `pnpm check:extractor` against a saved
  *  page is still the check for the real thing.
+ *
+ *  The same hand-built objects also pin the two signals that a listing has left the market while
+ *  its page is still up, at the foot of the file.
  */
 import { ListingWithdrawn, toListing } from '../packages/core/src/listing';
 
@@ -81,6 +84,32 @@ check(
   () => toListing({ customer: {}, propertyUrls: {} }, URL),
   'unreadable',
 );
+
+// Off the market with the page still up. Shapes as decoded from live listings on 2026-09-27: let
+// agreed keeps `status` published and not archived, and says so only in `tags`. Reading `archived`
+// alone is what left let-agreed flats on the shortlist.
+console.log('\noff the market, page still up');
+function same(name: string, got: unknown, expected: unknown) {
+  if (JSON.stringify(got) === JSON.stringify(expected)) return console.log(`  ok   ${name}`);
+  failures++;
+  console.log(`  FAIL ${name}\n       expected ${JSON.stringify(expected)}\n       got      ${JSON.stringify(got)}`);
+}
+const signals = (property: Record<string, unknown>) => {
+  const { archived, letAgreed } = toListing(property, URL);
+  return { archived, letAgreed };
+};
+same('a live listing is neither', signals({ ...live, tags: [] }), { archived: false, letAgreed: false });
+same(
+  'let agreed is in tags, not status',
+  signals({ ...live, tags: ['LET_AGREED'] }),
+  { archived: false, letAgreed: true },
+);
+same(
+  'taken down is in status',
+  signals({ ...live, status: { published: false, archived: true }, tags: [] }),
+  { archived: true, letAgreed: false },
+);
+same('no tags array is unknown, not "still on"', signals(live), { archived: false, letAgreed: null });
 
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) failed.`);
 if (failures > 0) process.exit(1);

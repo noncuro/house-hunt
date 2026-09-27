@@ -48,11 +48,15 @@ export interface Listing {
   /** The agent's own prose. Photos cannot answer whether bills are included or whether this is a
    *  room in a house share; the description is the only place either is ever stated. */
   description: string | null;
-  /** Off the market according to the page itself: `propertyData.status.archived` is true (and
-   *  `published` false) once a listing is let-agreed or taken down. Null when the status object is
-   *  absent — unknown, not "still on" — so a missing field never auto-withholds a live flat. The
-   *  panel marks the flat off the market when this is true, so nobody has to notice. */
+  /** Taken down, according to the page itself: `propertyData.status.archived` is true (and
+   *  `published` false). Null when the status object is absent — unknown, not "still on" — so a
+   *  missing field never auto-withholds a live flat. Let agreed is *not* this — see `letAgreed`. */
   archived: boolean | null;
+  /** Let agreed: `propertyData.tags` holds "LET_AGREED". Such a listing stays up for a while with
+   *  `status: { published: true, archived: false }`, so `archived` alone never saw it (checked on
+   *  two live let-agreed listings, 2026-09-27). Null when there is no tags array. The panel marks
+   *  the flat off the market when either this or `archived` is true, so nobody has to notice. */
+  letAgreed: boolean | null;
   /** When this page was read, ISO. Stamped by the decoder rather than by whoever writes the row,
    *  because those are different moments and only the first one orders two readings: a tab open
    *  since yesterday posts yesterday's numbers *now*. `record_property` refuses a shared row that
