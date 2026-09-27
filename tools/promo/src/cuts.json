@@ -1,0 +1,32 @@
+{
+  "//": "Scene lengths in frames at 30 fps, per cut. The fades overlap their neighbours, so a cut runs for the sum of its scenes less one fade per join. Each scene is written at the 60-second cut's length; a shorter cut plays it faster rather than cutting it off. music/make_music.py reads this file too, so the score follows the picture. The montage runs at the same length in every cut, because its shots are cut on the beat.",
+  "60": {
+    "fade": 15,
+    "scenes": {
+      "Montage": 180,
+      "Title": 100,
+      "Sweeps": 230,
+      "Travel": 235,
+      "Photos": 235,
+      "Verdict": 235,
+      "Triage": 190,
+      "Shortlist": 220,
+      "Everywhere": 180,
+      "End": 140
+    }
+  },
+  "45": {
+    "fade": 10,
+    "scenes": {
+      "Montage": 180,
+      "Title": 85,
+      "Sweeps": 185,
+      "Travel": 195,
+      "Photos": 185,
+      "Verdict": 195,
+      "Triage": 155,
+      "Everywhere": 140,
+      "End": 110
+    }
+  }
+}

@@ -2,6 +2,8 @@
 
 A shared shortlist for finding somewhere to live in London, for the people looking together.
 
+[![House hunt in forty-five seconds. Click to play the video.](apps/web/public/promo-play.jpg)](https://househunt.london/promo)
+
 Renting a place with somebody else means the same three arguments on every listing: how long is it
 really to work, how big is it actually, and did we already say no to this one. This is a website that
 answers all three, for everybody in the hunt, off one list — plus a Chrome extension that fills that

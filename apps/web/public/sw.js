@@ -84,7 +84,9 @@ self.addEventListener('fetch', (event) => {
 
   if (RIGHTMOVE_MEDIA.test(request.url)) return event.respondWith(photo(request));
   if (url.pathname.startsWith('/_next/static/')) return event.respondWith(immutable(request));
-  if (request.mode === 'navigate') return event.respondWith(page(request));
+  // Only `/` is the app. Anything else navigated to on this origin — the promo video and its page —
+  // is a file, and saving that as the shell would make it what the app opens as underground.
+  if (request.mode === 'navigate' && url.pathname === '/') return event.respondWith(page(request));
 });
 
 /** Hashed build assets: cache-first, and never revalidated. */

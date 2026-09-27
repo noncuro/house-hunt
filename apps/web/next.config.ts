@@ -115,6 +115,10 @@ const nextConfig = (phase: string): NextConfig => ({
   // one — which made it treat every repo on the machine as this app's workspace.
   outputFileTracingRoot: fileURLToPath(new URL('../../', import.meta.url)),
   reactStrictMode: true,
+  // The promo video's page: a static file in `public/`, at a URL without the extension.
+  async rewrites() {
+    return [{ source: '/promo', destination: '/promo.html' }];
+  },
   async headers() {
     // The three that are true of everything served here, whatever policy goes with them.
     const common = [

@@ -1,0 +1,26 @@
+{
+  "name": "@house-hunt/promo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio",
+    "music": "uv run --with numpy --with scipy --with tqdm python music/make_music.py",
+    "render": "remotion render Promo45 ../../apps/web/public/promo.mp4 && pnpm poster",
+    "render:60": "remotion render Promo60 out/house-hunt-60.mp4",
+    "poster": "remotion still Poster ../../apps/web/public/promo.jpg --frame=40 --scale=0.6667 --image-format=jpeg && remotion still PosterPlay ../../apps/web/public/promo-play.jpg --frame=40 --scale=0.6667 --image-format=jpeg"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.529",
+    "@remotion/google-fonts": "^4.0.529",
+    "@remotion/transitions": "^4.0.529",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "^4.0.529"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^5.9.3",
+    "webpack": "5.105.0"
+  }
+}
