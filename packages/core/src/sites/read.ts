@@ -482,6 +482,9 @@ export function blankListing(site: SiteId, externalId: string, key: string, url:
     imageUrls: [],
     description: null,
     archived: null,
+    // Rightmove's own tag. An agent's site says "let" in its status, which its adapter folds into
+    // `archived`, so there is nothing separate to read here.
+    letAgreed: null,
     // Stamped here for the reason `toListing` states: this is when the page was read, and a tab
     // open since yesterday must carry yesterday or `record_property` cannot order two readings.
     observedAt: new Date().toISOString(),

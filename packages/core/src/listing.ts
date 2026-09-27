@@ -212,10 +212,13 @@ export function toListing(property: Record<string, unknown>, url: string): Listi
     floorplans: floorplans(property.floorplans),
     imageUrls: imageUrls(property.images),
     description: str(obj(property.text)?.description),
-    // `status: { published, archived }` — archived turns true when a listing is let-agreed or taken
-    // down. Read `archived` directly; a missing status object stays null (unknown) rather than
-    // false, so we never tell the panel a flat is definitely still on when we could not check.
+    // `status: { published, archived }` — archived turns true when a listing is taken down. Read
+    // it directly; a missing status object stays null (unknown) rather than false, so we never tell
+    // the panel a flat is definitely still on when we could not check.
     archived: bool(obj(property.status)?.archived),
+    // Let agreed leaves `status` alone and adds "LET_AGREED" to `tags`. Null without a tags array,
+    // for the same reason as above.
+    letAgreed: Array.isArray(property.tags) ? property.tags.includes('LET_AGREED') : null,
     // The one field here that is not read off the page, and the only place it can honestly be
     // taken: this runs where the page model is decoded — at document_end in the content script,
     // or inside the `listing` function's fetch — so a tab restored from yesterday stamps
