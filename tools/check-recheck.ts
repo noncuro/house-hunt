@@ -51,7 +51,10 @@ function flat(fields: {
   };
 }
 
-const ids = (entries: ShortlistEntry[]) => recheckTargets(entries, NOW).map((t) => t.rightmoveId);
+/** `off` is the set of ids marked off the market — the second argument, defaulted here because
+ *  every assertion but the two about it is on a hunt where nothing has been marked. */
+const ids = (entries: ShortlistEntry[], off: string[] = []) =>
+  recheckTargets(entries, new Set(off), NOW).map((t) => t.rightmoveId);
 
 // ------------------------------------------------------------------------------------------- //
 console.log('\nwhat gets reopened');
@@ -72,6 +75,22 @@ check(
   'archived is skipped however stale',
   ids([flat({ id: 'gone', seen: daysAgo(90), stage: 'archived' })]),
   [],
+);
+// Off the market is the answer this run goes looking for, so a flat already carrying it has
+// nothing left to tell us. It is also the case that could never end: nothing on the withdrawn path
+// stamps `last_seen_at`, so without this the flat stays due for ever and every run reopens it.
+check(
+  'a flat already marked off the market is skipped however stale',
+  ids([flat({ id: 'withdrawn', seen: daysAgo(90) })], ['withdrawn']),
+  [],
+);
+// And it is off the market that skips it, not the stage or the verdict — the mark does not write
+// either of those (AGENTS.md), so a flat you loved and lost is still loved and still shortlisted.
+// This pins that the exclusion reads the set and nothing else.
+check(
+  'a loved, shortlisted flat is re-checked until it is marked off',
+  ids([flat({ id: 'loved', seen: daysAgo(90), rating: 'love' })]),
+  ['loved'],
 );
 // ...but every other stage is still live, including one at the far end of the funnel: a flat you
 // have made an offer on is exactly the one where you want to know it has been withdrawn.

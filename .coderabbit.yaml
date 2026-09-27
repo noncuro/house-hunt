@@ -24,9 +24,10 @@ reviews:
     Two things are never acceptable in this repo:
       - PII. No real names, personal email addresses, or anything identifying
         the people using the app — in code, docs, examples, fixtures or tests.
-      - Re-hosted Rightmove listing photos or floorplans. Images are shown from
-        Rightmove's own CDN URLs; a diff that saves, commits or proxies one is
-        wrong even if it makes a check pass.
+      - Re-hosted listing photos or floorplans, from Rightmove or from any of
+        the eight agents' sites. Images are shown from whichever CDN the site
+        serves them off; a diff that saves, commits or proxies one is wrong
+        even if it makes a check pass.
 
   path_instructions:
     # ---- Cross-cutting code quality -------------------------------------
@@ -71,15 +72,18 @@ reviews:
         shared packages.
 
     # ---- The extension ---------------------------------------------------
-    - path: "apps/extension/**"
+    - path: "{apps/extension,packages/core/src,packages/ui/src}/**"
       instructions: |
-        Any change under apps/extension/ must bump `version` in
+        Anything here ends up inside the built extension, so any change to it
+        must bump `version` in
         apps/extension/package.json AND `EXPECTED_EXTENSION_VERSION` in
         apps/web/src/lib/extension-version.ts, to the same value. Nothing
         enforces this and the comparison over the bridge is the only thing
-        that can tell somebody their installed copy is stale — so if the diff
-        touches this directory and either number is unchanged, say so as a
-        blocking comment. Do not ask for the committed zip to be refreshed:
+        that can tell somebody their installed copy is stale — and a fix in a
+        shared package ships in somebody's browser exactly as an
+        apps/extension/ one does. So if the diff touches these directories and
+        either number is unchanged, say so as a blocking comment. Do not ask
+        for the committed zip to be refreshed:
         .github/workflows/package.yml rebuilds and commits it on main.
 
     - path: "apps/extension/src/entrypoints/**"
@@ -87,9 +91,12 @@ reviews:
         - Only background.ts may construct a Supabase client. A second client
           holder silently kills the MV3 session. Flag any `createClient` (or a
           helper that wraps one) outside background.ts.
-        - Content scripts must stay scoped to Rightmove pages, except
-          bridge.content.ts which runs on the website's origin only and must
-          check that origin before trusting a message.
+        - Content scripts must stay scoped to the hosts `allHosts()` returns —
+          which is generated from `SITES`, so a hand-written match pattern or a
+          hand-edited host_permissions entry is a second list to keep in step
+          and should be flagged. bridge.content.ts is the exception: it runs on
+          the website's origin only and must check that origin before trusting
+          a message.
         - Select on `data-testid`, never on CSS-module class names —
           Rightmove's hashed classes churn. Flag any selector matching a
           hashed or CSS-module class.
@@ -105,6 +112,43 @@ reviews:
         updated — there is none.
 
     # ---- Domain decisions an agent might otherwise "fix" -----------------
+    - path: "packages/core/src/sites/**"
+      instructions: |
+        The nine-site seam. Hold these; a diff that reverses one needs to say
+        why:
+        - `extract` takes an HTML string and never a `Document`. A `Document`
+          parameter makes the site extension-only, because `api/listing` reads
+          it server-side off `await response.text()` — which is what keeps a
+          flat addable from a phone. No adapter may add a DOM-parser
+          dependency.
+        - Keys are `<site>_<external id>` and Rightmove's stay bare, so a
+          Rightmove id may only ever be all digits — that is how a bare key is
+          told from a prefixed one. `propertyKey` throws rather than mint one
+          that would not read back. The separator is `_` and not `:`: a key
+          goes into a DOM id selected as `#card-<key>`, and `#card-a:b` parses
+          as a pseudo-class and matches nothing, silently.
+        - `listingUrl` rebuilds from the id and refuses anything that is not
+          the site's own shape. That refusal is what stops a stored value
+          pointing `api/listing`'s fetch at another page, so flag a relaxed
+          pattern or a caller that skips it.
+        - `ListingWithdrawn` is thrown only where the page *positively* says
+          the listing has gone. Four sites answer a removed listing with a
+          generic 404 or a redirect home, and reading an absence as "gone"
+          would tell somebody a live flat had been taken down. Let-agreed is
+          not withdrawn.
+        - The RSC flight framing: a `T<hex>,` row's length counts UTF-8 bytes,
+          not characters, and a framed row is not newline-terminated. Both
+          were got wrong independently; `flightRows` in read.ts is the one
+          copy. Flag a second decoder rather than a call into it.
+
+    - path: "packages/core/src/duplicates.ts"
+      instructions: |
+        The duplicate note advises and never merges. Two flats in one block
+        share a postcode, a bed count and often a rent, so a merge attaches
+        somebody's verdict to a flat they never saw. Flag anything that writes
+        based on `possibleDuplicates`, and anything that presents a match as a
+        confidence figure — it says what matched, and the reader opens both.
+
     - path: "packages/core/src/{stage,filter,sweep,tfl,hubs,shortlist}.ts"
       instructions: |
         Hold these decisions; a diff that reverses one needs to say why:
@@ -151,7 +195,9 @@ reviews:
           hardcoded expected value with the computation under test. Each check
           exists to pin reasoning that is invisible when wrong.
         - No harness may reach Rightmove; OFFLINE_ARGS kills DNS for the
-          domain. Flag a harness that drops it or fetches a live page.
+          domain. Flag a harness that drops it or fetches a live page. The
+          same holds for the eight agents' sites: `pnpm fixture:site` saves a
+          page, and the checks read what it saved.
         - A harness owns the servers it starts and refuses ones it did not.
           Servers are spawned in their own process group and stopped as a
           group; flag a spawn that signals only the wrapper, or a readiness
@@ -194,6 +240,7 @@ knowledge_base:
       - "product.md"
       - "design.md"
       - "docs/coverage.md"
+      - "docs/multi-site.md"
 
 chat:
   auto_reply: true

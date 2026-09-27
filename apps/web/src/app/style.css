@@ -1085,6 +1085,28 @@ code {
   color: var(--ink-soft);
 }
 
+/* "This may be the same flat as…" — a note, drawn as one. Quiet enough that it is not competing
+   with the rent, present enough to be read before somebody rates the second copy of a flat they
+   have already decided about. */
+.detail-duplicates {
+  margin: var(--s1) 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* A button that is a link. It has to be a button — it changes what the panel is pointed at rather
+   than navigating anywhere, so an <a href> would be a lie to a screen reader and to a middle
+   click. */
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .detail-rent {
   font-size: 17px;
   font-weight: 600;
@@ -3083,4 +3105,66 @@ input[type='checkbox'] {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Who is marketing the flat. Its own line under the facts row rather than a span inside it: the
+   other things there are numbers you weigh against each other, and this is a name and a number you
+   act on. */
+.detail-agent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s2);
+  margin: var(--s1) 0 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.detail-agent-phone {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The agent tally. Quiet by default — it is a question asked a few times in a hunt, not on every
+   visit — so it sits under the flats as one line until opened. */
+.agents {
+  margin: var(--s3) 0 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.agents > summary {
+  cursor: pointer;
+  padding: var(--s1) 0;
+}
+
+.agents-list {
+  list-style: none;
+  margin: var(--s1) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s1);
+}
+
+.agents-list li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.agents-count {
+  min-width: 2ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.agents-name {
+  flex: 1;
+}
+
+.agents-phone {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }

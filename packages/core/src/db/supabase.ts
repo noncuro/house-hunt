@@ -25,7 +25,7 @@ import { db, ensureSession } from './client';
 import { requireSession } from './session';
 import { callRoute } from './route';
 import { MIN_PASSWORD_LENGTH } from '../contracts';
-import { rightmoveListingId } from '../listing';
+import { isSiteId, siteForUrl, type SiteId } from '../sites';
 import { logWarn } from '../log';
 import type {
   AddListingResult,
@@ -379,6 +379,9 @@ export async function recordProperty(listing: Listing): Promise<boolean> {
     p_project_id: projectId,
     p_property: {
       rightmove_id: listing.rightmoveId,
+      // `site` and `external_id` are deliberately not sent: they are generated columns, read off
+      // the key by the database, and sending them would be a second copy of the same fact that a
+      // future edit could put out of step.
       url: listing.url,
       postcode: listing.postcode,
       display_address: listing.displayAddress,
@@ -395,6 +398,14 @@ export async function recordProperty(listing: Listing): Promise<boolean> {
       floorplan_url: listing.floorplans[0]?.url ?? null,
       furnish_type: listing.furnishType,
       listing_update: listing.listingUpdate,
+      let_available_date: listing.letAvailableDate,
+      deposit: listing.deposit,
+      let_type: listing.letType,
+      council_tax_band: listing.councilTaxBand,
+      agent_branch_id: listing.agentBranchId,
+      agent_branch: listing.agentBranch,
+      agent_company: listing.agentCompany,
+      agent_phone: listing.agentPhone,
       // Stored so the analyser can read it. Two of the five amenities are only ever stated here.
       // `last_seen_at` is not passed: `record_property` stamps it itself, in the same transaction
       // as the project link, so a client clock cannot disagree with the row it wrote.
@@ -426,21 +437,22 @@ export async function recordProperty(listing: Listing): Promise<boolean> {
  *  `record_property`.
  *
  *  The URL is checked here as well as on the server. Not belt-and-braces: a paste that is a search
- *  page, or a link to the agent's own site, is by far the commonest mistake, and answering it from
- *  the field the reader is looking at beats a round trip to be told the same thing. The server's
- *  check is the one that matters — this one is only allowed to be a *quicker* no, never a yes the
- *  server would refuse.
+ *  page, or a link to a site nobody has written an adapter for, is by far the commonest mistake, and
+ *  answering it from the field the reader is looking at beats a round trip to be told the same
+ *  thing. The server's check is the one that matters — this one is only allowed to be a *quicker*
+ *  no, never a yes the server would refuse, which is why both ends call `siteForUrl` rather than
+ *  each carrying their own idea of what a listing address looks like.
  */
 export async function addListingByUrl(url: string): Promise<AddListingResult> {
-  const id = rightmoveListingId(url);
-  if (!id) return { status: 'not-a-listing' };
+  const found = siteForUrl(url);
+  if (!found) return { status: 'not-a-listing' };
+  const id = found.key;
 
   await requireSession();
   const projectId = await activeProjectId();
 
-  // Asked before the fetch, so a flat this hunt already has costs nobody a request to Rightmove —
-  // which is the no-crawl rule showing up as an optimisation, and the common case when somebody
-  // shares a link that has already been round the group.
+  // Asked before the fetch, so a flat this hunt already has costs nobody a request to the site,
+  // which is the common case when somebody shares a link that has already been round the group.
   const { data: existing, error: lookupError } = await db()
     .from('project_property')
     .select('rightmove_id, property!inner(display_address)')
@@ -476,8 +488,8 @@ export async function addListingByUrl(url: string): Promise<AddListingResult> {
   if (reply?.status === 'withdrawn') return { status: 'withdrawn', rightmoveId: reply.rightmoveId ?? id };
   if (reply?.status !== 'read' || !reply.listing) {
     // Including `unreadable`, whose message names what failed to decode. Said rather than
-    // swallowed: this is the shape that means Rightmove has changed the page, and the panel on the
-    // laptop is about to stop working too.
+    // swallowed: this is the shape that means the site has changed the page, and on Rightmove it
+    // means the panel on the laptop is about to stop working too.
     return { status: 'failed', message: reply?.message ?? 'that listing could not be read' };
   }
 
@@ -1067,6 +1079,10 @@ export function toAnalysis(data: Record<string, any>): Analysis {
  *  back to Rightmove. Read by the shortlist page. */
 export interface ShortlistEntry {
   rightmoveId: string;
+  /** Which site the flat was read from. Carried so a view can say where a flat came from without
+   *  splitting the key, and so the duplicate note can compare a Rightmove flat against an agent's
+   *  own page for the same place. */
+  site: SiteId;
   url: string;
   displayAddress: string;
   postcode: string | null;
@@ -1081,6 +1097,17 @@ export interface ShortlistEntry {
   /** Rightmove's own URLs. We link and display; we never re-host (their ToS 13.4). */
   imageUrls: string[];
   furnishType: string | null;
+  /** The tenancy's own terms, as the listing states them. `letAvailableDate` is text because the
+   *  page says "Now" as often as a date — see the `Listing` field it comes from. */
+  letAvailableDate: string | null;
+  deposit: number | null;
+  letType: string | null;
+  councilTaxBand: string | null;
+  /** Who is marketing it. `agentBranchId` is the stable one, `agentCompany` the one to count by. */
+  agentBranchId: number | null;
+  agentBranch: string | null;
+  agentCompany: string | null;
+  agentPhone: string | null;
   listingUpdate: string | null;
   nearestStations: Station[];
   lastSeenAt: string;
@@ -1108,7 +1135,7 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
   const { data, error } = await db()
     .from('property')
     .select(
-      'rightmove_id, url, display_address, postcode, price, bedrooms, bathrooms, floor_area_sqft, floor_area_source, floorplan_url, image_urls, furnish_type, listing_update, nearest_stations, last_seen_at, latitude, longitude, postcode_lat, postcode_lon, verdict(*), property_stage(*), ' +
+      'rightmove_id, site, url, display_address, postcode, price, bedrooms, bathrooms, floor_area_sqft, floor_area_source, floorplan_url, image_urls, furnish_type, let_available_date, deposit, let_type, council_tax_band, agent_branch_id, agent_branch, agent_company, agent_phone, listing_update, nearest_stations, last_seen_at, latitude, longitude, postcode_lat, postcode_lon, verdict(*), property_stage(*), ' +
         // Named columns, not `*` — see `ANALYSIS_COLUMNS` for the two this leaves behind and why.
         `property_analysis(${ANALYSIS_COLUMNS}), project_property!inner(project_id, last_seen_at)`,
     )
@@ -1145,6 +1172,9 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
 
     return {
       rightmoveId: row.rightmove_id,
+      // Defaulted rather than trusted: a row written before the column existed has no site, and it
+      // is Rightmove's — every row predating multi-site is.
+      site: isSiteId(row.site) ? row.site : 'rightmove',
       url: row.url,
       displayAddress: row.display_address,
       postcode: row.postcode,
@@ -1156,6 +1186,14 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
       floorplanUrl: row.floorplan_url,
       imageUrls: (row.image_urls ?? []) as string[],
       furnishType: row.furnish_type ?? null,
+      letAvailableDate: row.let_available_date ?? null,
+      deposit: row.deposit ?? null,
+      letType: row.let_type ?? null,
+      councilTaxBand: row.council_tax_band ?? null,
+      agentBranchId: row.agent_branch_id ?? null,
+      agentBranch: row.agent_branch ?? null,
+      agentCompany: row.agent_company ?? null,
+      agentPhone: row.agent_phone ?? null,
       listingUpdate: row.listing_update ?? null,
       nearestStations: (row.nearest_stations ?? []) as Station[],
       // This project's last sighting, not the global one. `property.last_seen_at` is bumped by
@@ -1216,7 +1254,12 @@ export interface SweepKnowledge {
  *  (`postcode_lat`) is deliberately *not* in this test: it is filled by a separate `locateProperties`
  *  backfill, and opening the tab again does nothing to produce it — so gating on it would leave every
  *  opened-but-not-yet-geocoded flat permanently in the opener's worklist, which re-opening can never
- *  clear. The map falls back to Rightmove's own pin until the backfill lands. */
+ *  clear. The map falls back to Rightmove's own pin until the backfill lands.
+ *
+ *  A listing with no photographs at all is complete for the same reason, and was the other way this
+ *  worklist grew a row nobody could ever clear. `analyseListing` throws "no images to analyse"
+ *  before it reaches OpenAI, the row lands on `failed`, and `claim_analysis` re-claims a failed row
+ *  — so every run reopened the listing to fail identically, and the view called it never opened. */
 export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<string, SweepKnowledge>> {
   const known = new Map<string, SweepKnowledge>();
   if (rightmoveIds.length === 0) return known;
@@ -1229,7 +1272,9 @@ export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<str
   for (const batch of chunk(rightmoveIds, KNOWLEDGE_BATCH)) {
     const { data, error } = await db()
       .from('property')
-      .select('rightmove_id, postcode, image_urls, property_analysis(status), project_property!inner(project_id)')
+      .select(
+        'rightmove_id, postcode, image_urls, floorplan_urls, property_analysis(status), project_property!inner(project_id)',
+      )
       .eq('project_property.project_id', projectId)
       .in('rightmove_id', batch);
     fail('checking which properties we already have', error);
@@ -1242,7 +1287,8 @@ export async function getSweepKnowledge(rightmoveIds: string[]): Promise<Map<str
           : [];
       const missing = missingFor({
         postcode: row.postcode ?? null,
-        imageCount: Array.isArray(row.image_urls) ? row.image_urls.length : 0,
+        imageCount: length(row.image_urls),
+        floorplanCount: length(row.floorplan_urls),
         analysed: analyses.some((a: any) => a.status === 'done'),
       });
 
@@ -1268,6 +1314,12 @@ function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+/** How many URLs a jsonb array column holds. Null and a non-array both read as none: a column we
+ *  cannot count is not one to claim photographs for. */
+function length(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
 }
 
 /** One listing we have seen on a search page but do not properly have yet. */
@@ -1839,11 +1891,9 @@ export async function resendInvite(inviteId: string): Promise<InviteResult> {
 
 /** One neighbourhood name to the identifier Rightmove searches it by.
  *
- *  NO-CRAWL, restated at the call site because this is exactly the kind of thing that looks like
- *  precedent later: this is one request, made because one person is adding one hub, and it is the
- *  same single hand-run lookup `pnpm find:locations` performs today. Nothing here enumerates,
- *  nothing here runs in the background, and nothing here may be moved onto a loop. The standing
- *  rule in AGENTS.md is unchanged. */
+ *  One request, made because one person is adding one hub — the same lookup `pnpm find:locations`
+ *  performs from a terminal. The route it calls is rate-limited per user, so a caller that retries
+ *  in a loop is refused rather than served. */
 export async function resolveLocation(name: string): Promise<LocationResult> {
   await requireSession();
   let data: unknown;

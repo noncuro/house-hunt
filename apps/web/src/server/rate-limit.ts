@@ -7,10 +7,11 @@
  *  the argument for that shape is in the migration beside it.
  *
  *  This is not the spend cap and must not become it. `claim_analysis` guards money and hands back a
- *  reservation somebody has to release, because an overshoot there is a bill. These calls are free:
- *  what they protect is the standing no-crawl rule — one request, for one thing, initiated by a
- *  person — so a claim either takes a slot or does not, and a refusal is a stated outcome rather
- *  than a failure.
+ *  reservation somebody has to release, because an overshoot there is a bill. These calls are free,
+ *  and what they bound is how much outbound traffic one account can generate — a caller stuck in a
+ *  retry loop, or somebody who has an invite and wants to see what the deployment will do for them.
+ *  So a claim either takes a slot or does not, and a refusal is a stated outcome rather than a
+ *  failure.
  */
 import { rpc } from './supabase';
 

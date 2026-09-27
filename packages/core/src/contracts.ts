@@ -150,10 +150,8 @@ export interface PlacePatch {
 
 /** One resolution of a place's name to the identifier Rightmove searches it by.
  *
- *  This is the single hand-run lookup `pnpm find:locations` performs today, moved behind an Edge
- *  Function so adding a hub does not need a terminal. It stays inside the standing no-crawl rule
- *  for the same reasons that script does: one request, because one person is adding one hub, never
- *  in the background and never enumerating. */
+ *  This is the lookup `pnpm find:locations` performs, moved behind a route so that adding a hub
+ *  does not need a terminal: one request, because one person is adding one hub. */
 export type LocationResult =
   | {
       status: 'resolved';

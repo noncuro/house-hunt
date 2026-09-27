@@ -23,8 +23,7 @@ import type { HubSweep, SweepKnowledge, SweepState } from '@house-hunt/core/db';
  *  panel answers "what about this flat"; this one answers "have I finished looking at this
  *  neighbourhood, and what is left to do here" — a question about a page, not a property.
  *
- *  Everything it knows comes from `__NEXT_DATA__` on a page the human opened. It builds links;
- *  it never fetches a search. */
+ *  Everything it knows comes from `__NEXT_DATA__` on the page it is standing on. */
 
 /** The class that hides recorded cards. Set on <body> so one toggle moves the whole page, rather
  *  than touching two dozen elements every time the switch flips. */

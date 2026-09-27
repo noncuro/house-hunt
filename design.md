@@ -293,12 +293,10 @@ corollary: `SEED_HUBS` is for dev tools only, and a hub with no coordinates is s
 never defaulted (see also D15).
 
 Adding a hub resolves a name to a Rightmove location identifier through the
-`resolve-location` route, which stays inside the standing no-crawl rule: **one**
-request, initiated by a person adding **one** hub, never in the background, never
-enumerating, rate-limited per user — restated at the call site because it is the kind of
-thing that looks like precedent later.
+`resolve-location` route: one request, initiated by a person adding one hub,
+rate-limited per user so a caller stuck in a retry loop is refused rather than served.
 
-**Still true because** `apps/web/src/app/api/resolve-location/route.ts:16-40`,
+**Still true because** `apps/web/src/app/api/resolve-location/route.ts`,
 `packages/core/src/hubs.ts:9,97,182`.
 
 ### D13 — Signed-out and no-project are rendered states, resolved before anything else

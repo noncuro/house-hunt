@@ -9,7 +9,7 @@
  *
  *    pnpm check:sweep [path/to/saved-search.html]
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SEED_HUBS, toSweepHub } from '../packages/core/src/hubs';
 import type { Place } from '../packages/core/src/types';
@@ -314,8 +314,11 @@ if (!existsSync(fixture)) {
     // On this saved page one card was first visible 27 days before the search and came back
     // anyway, because its price had been cut 5 days earlier. Asserting against `firstVisibleAt`
     // here would fail, and asserting nothing would have let the misreading through.
+    // Ages are taken from when the page was saved, not from today: against `Date.now()` this went
+    // red fourteen days after any save, with nothing about the reader having changed.
+    const savedAt = statSync(fixture).mtimeMs;
     const oldestBy = (pick: (c: SearchPage['cards'][number]) => string | null) =>
-      page.cards.map((c) => (Date.now() - new Date(pick(c)!).getTime()) / 86_400_000).reduce((a, b) => Math.max(a, b), 0);
+      page.cards.map((c) => (savedAt - new Date(pick(c)!).getTime()) / 86_400_000).reduce((a, b) => Math.max(a, b), 0);
     check(
       `nothing has changed longer ago than the ${page.maxDaysSinceAdded}-day window`,
       oldestBy((c) => c.listingUpdateAt) <= page.maxDaysSinceAdded! + 1,
@@ -668,31 +671,39 @@ check(
 console.log('\nmissingFor');
 check(
   'a listing with photos and no analysis is still worth opening',
-  missingFor({ postcode: 'N1 7GU', imageCount: 12, analysed: false }),
+  missingFor({ postcode: 'N1 7GU', imageCount: 12, floorplanCount: 1, analysed: false }),
   ['photos not analysed yet'],
 );
 check(
   'and once analysed it is complete',
-  missingFor({ postcode: 'N1 7GU', imageCount: 12, analysed: true }),
+  missingFor({ postcode: 'N1 7GU', imageCount: 12, floorplanCount: 1, analysed: true }),
   [],
 );
 // The fix. A listing with no pictures cannot be analysed, so waiting for its analysis is waiting
 // for something no number of tabs will produce.
 check(
   'a listing with no photos at all is complete without an analysis',
-  missingFor({ postcode: 'W1H 1AA', imageCount: 0, analysed: false }),
+  missingFor({ postcode: 'W1H 1AA', imageCount: 0, floorplanCount: 0, analysed: false }),
   [],
 );
 // And not a general forgiveness of failure: photos that exist and have not been read are still a
 // reason to open it, which is what keeps a genuine timeout being retried.
+// A floorplan is an image too. Counting only `image_urls` reported a listing whose sole picture is
+// its floorplan as having nothing to analyse, so it was never offered and never read — and the
+// floorplan is the image the analyser most wants, since the room dimensions are only on it.
+check(
+  'a listing whose only image is a floorplan is worth opening',
+  missingFor({ postcode: 'N1 7GU', imageCount: 0, floorplanCount: 1, analysed: false }),
+  ['photos not analysed yet'],
+);
 check(
   'no postcode is always worth opening for',
-  missingFor({ postcode: null, imageCount: 0, analysed: false }),
+  missingFor({ postcode: null, imageCount: 0, floorplanCount: 0, analysed: false }),
   ['no postcode read from the listing'],
 );
 check(
   'and both can be missing at once',
-  missingFor({ postcode: null, imageCount: 3, analysed: false }),
+  missingFor({ postcode: null, imageCount: 3, floorplanCount: 0, analysed: false }),
   ['no postcode read from the listing', 'photos not analysed yet'],
 );
 

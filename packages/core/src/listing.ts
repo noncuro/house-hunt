@@ -170,12 +170,17 @@ export function toListing(property: Record<string, unknown>, url: string): Listi
   const address = obj(property.address);
   const location = obj(property.location);
   const prices = obj(property.prices);
+  const lettings = obj(property.lettings);
+  const customer = obj(property.customer);
+  const phones = obj(obj(property.contactInfo)?.telephoneNumbers);
 
   const outcode = str(address?.outcode);
   const incode = str(address?.incode);
 
   return {
     rightmoveId: String(id),
+    site: 'rightmove',
+    externalId: String(id),
     url,
     // Route from this, not the lat/lon — the map pin is deliberately fuzzed
     // (pinType: "APPROXIMATE_POINT") but the postcode is exact. See RESEARCH.md §2.
@@ -189,10 +194,21 @@ export function toListing(property: Record<string, unknown>, url: string): Listi
     longitude: num(location?.longitude),
     nearestStations: stations(property.nearestStations),
     floorArea: floorArea(property),
-    furnishType: str(obj(property.lettings)?.furnishType),
+    furnishType: str(lettings?.furnishType),
+    letAvailableDate: str(lettings?.letAvailableDate),
+    deposit: num(lettings?.deposit),
+    letType: str(lettings?.letType),
+    councilTaxBand: str(obj(property.livingCosts)?.councilTaxBand),
     // e.g. "Reduced today", "Added on 05/08/2026". How long something has sat, and whether the
     // price has been cut, is a strong signal on a rental.
     listingUpdate: str(obj(property.listingHistory)?.listingUpdateReason),
+    agentBranchId: num(customer?.branchId),
+    agentBranch: trimmed(customer?.branchDisplayName),
+    // The trading name, falling back to the registered one: "James Kei London" is what the flat is
+    // advertised under and what somebody would recognise, while companyName is "JP London Group
+    // LTD". Trimmed because Rightmove ships trailing spaces here ("Oyster Properties ").
+    agentCompany: trimmed(customer?.companyTradingName) ?? trimmed(customer?.companyName),
+    agentPhone: trimmed(phones?.localNumber),
     floorplans: floorplans(property.floorplans),
     imageUrls: imageUrls(property.images),
     description: str(obj(property.text)?.description),
@@ -405,8 +421,8 @@ function floorplans(v: unknown): Floorplan[] {
  *  sentences and different consequences: a page we cannot parse is our problem and sends you to
  *  `decode_page_model.py`, while a flat the agent has taken down is a fact about the flat. */
 export class ListingWithdrawn extends Error {
-  constructor() {
-    super('this listing has been removed from Rightmove');
+  constructor(siteName = 'Rightmove') {
+    super(`this listing has been removed from ${siteName}`);
   }
 }
 
@@ -430,6 +446,12 @@ function obj(v: unknown): Record<string, unknown> | null {
 
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+/** `str` with the edges taken off, and empty-after-trimming read as absent. Rightmove pads some
+ *  of these ("Oyster Properties "), and a trailing space turns one agent into two when counting. */
+function trimmed(v: unknown): string | null {
+  return typeof v === 'string' ? str(v.trim()) : null;
 }
 
 function num(v: unknown): number | null {

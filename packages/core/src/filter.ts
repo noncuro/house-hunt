@@ -21,7 +21,7 @@ import {
   type AmenityWant,
   type HuntPreferences,
 } from './facts';
-import { parseMonthlyPrice } from './predict';
+import { parseMonthlyPrice } from './facts';
 import type { ShortlistEntry } from './db/supabase';
 import { sizeOf } from './shortlist';
 import { TRAVEL_MODES, type Place, type TravelMode, type TravelTime } from './types';

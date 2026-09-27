@@ -66,9 +66,8 @@ file that fails two commands later. The search fixture takes a hub name (`Hampst
 `Primrose Hill`, `Belsize Park`, `Angel`, `Old Street`) and builds the URL with the same function
 the sweep panel's links use, so the page saved is the page the sweep opens.
 
-Both fetch one page, by hand, when you ask for them. That is the same act as opening the page and
-hitting save, and it is not a crawl — nothing in the extension fetches Rightmove, and the standing
-rule in `AGENTS.md` is what these tools are arranged around.
+Both fetch one page, by hand, when you ask for them — the same act as opening the page and hitting
+save.
 
 ## Why the pages are not committed
 

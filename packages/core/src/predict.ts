@@ -18,7 +18,7 @@
  *  weights are shrunk toward, instead of zero. `docs/verdict-model.md` is the study behind each of
  *  those, including the several things that sounded better and were not. */
 
-import { AMENITIES, resolveSize, type HuntPreferences } from './facts';
+import { AMENITIES, parseMonthlyPrice, resolveSize, type HuntPreferences } from './facts';
 import type { Analysis } from './types';
 
 /** The MODEL VERSION. Bump when the feature builder or column set changes in a way that makes an
@@ -111,24 +111,6 @@ const FEATURE_NAMES = [
  *  indicator on them let the model read our deployment history as taste, worth an illusory 0.02
  *  AUC. Indicators everywhere scored below indicators here; so did indicators nowhere. */
 const INDICATOR_COLUMNS = new Set(['best_sqft', 'ppsf_best', 'log1p_outdoor', 'biggest_room_sqft']);
-
-/** "£4,800 pcm" -> 4800; "£1,100 pw" -> 4766.67 (a week is 1/52 of a year, a month 1/12). Returns
- *  null when there is no number to read, so a blank price stays missing rather than becoming 0.
- *
- *  Only the FIRST amount, and only the unit that trails it. Rightmove routinely quotes both —
- *  "£4,800 pcm (£1,108 pw)" — and stripping every non-digit from that string concatenates the two
- *  into £48,001,108, which then dominates a standardised feature column on its own. Reading the
- *  unit from the text between the amount and the next digit is what stops the parenthesised "pw"
- *  re-pricing a monthly rent as a weekly one. */
-export function parseMonthlyPrice(price: string | null): number | null {
-  if (!price) return null;
-  const match = /\d[\d,]*(?:\.\d+)?/.exec(price);
-  if (!match) return null;
-  const value = Number(match[0].replace(/,/g, ''));
-  if (!Number.isFinite(value) || value <= 0) return null;
-  const unit = price.slice(match.index + match[0].length).split(/\d/)[0] ?? '';
-  return /\bpw\b|per week/i.test(unit) ? (value * 52) / 12 : value;
-}
 
 /** Great-circle distance in kilometres. The hubs and the property both carry lat/lon, so this is
  *  always available — unlike the transit cache, which is postcode-to-postcode and sparse. A flat's

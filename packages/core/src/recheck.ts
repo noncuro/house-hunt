@@ -5,14 +5,8 @@
  *  three weeks to be taken, to be reduced, or to be quietly withdrawn — and nothing in this app
  *  would notice, because every fact about a flat is written once, when somebody opens it, and never
  *  looked at again. The shortlist can therefore show a flat at a price that no longer exists, on a
- *  market it has already left, and give no sign of it.
- *
- *  There is no cheap way to ask. Nothing on the server may fetch Rightmove (see AGENTS.md), so a
- *  re-check is the same act as a first look: open the page, let the panel read it, write down what
- *  it says. That costs a browser tab and about six seconds each, which is what makes the choice of
- *  *which* flats below the whole of the design.
- */
-import { parseMonthlyPrice } from './predict';
+ *  market it has already left, and give no sign of it. */
+import { parseMonthlyPrice } from './facts';
 import type { ShortlistEntry } from './db/supabase';
 import type { Rating } from './types';
 
@@ -47,14 +41,22 @@ export interface RecheckTarget {
 
 /** Which flats are worth reopening, in the order to do it.
  *
- *  Re-checked: what is in the funnel, not archived, and not read recently enough to still be
- *  believed. Everything else is skipped, for two different reasons.
+ *  Re-checked: what is in the funnel, not archived, still on the market, and not read recently
+ *  enough to still be believed. Everything else is skipped, for three different reasons.
  *
  *  **Archived** is a decision that has already been made — a flat you lost, or walked away from —
  *  and spending a tab to discover that a place you are not pursuing has been taken is the definition
  *  of a wasted six seconds. Note that this is a *stage*, not a verdict: a flat rated "not our place"
  *  is still re-checked, last, because a rejection at £3,100 is worth revisiting at £2,700 and that
  *  is exactly the change this exists to find.
+ *
+ *  **Off the market** is a question we have already answered. It is the mark the panel writes when
+ *  Rightmove serves a withdrawn listing, and the one somebody sets by hand to mean the same thing,
+ *  so reopening it spends a tab to be told what made us write the mark. It was also the one class of
+ *  flat this could never finish with: nothing on the withdrawn path stamps `last_seen_at` — a page
+ *  that is gone has no price, no address and nothing to record — so a withdrawn flat in the funnel
+ *  stayed permanently due, reopened by every run, for ever. The flats a re-check exists to find were
+ *  exactly the ones it could never tick off.
  *
  *  **Not in the funnel at all** is the pile a sweep leaves behind, and it is most of the shortlist:
  *  four hundred flats nobody has liked, loved or staged. Liking or loving one enters it in the
@@ -65,13 +67,18 @@ export interface RecheckTarget {
  *  already implies is now the rule the filter applies: spend the tabs on what you are pursuing.
  *
  *  `now` is a parameter so this can be tested against a fixed clock rather than against today. */
-export function recheckTargets(entries: ShortlistEntry[], now: Date = new Date()): RecheckTarget[] {
+export function recheckTargets(
+  entries: ShortlistEntry[],
+  offMarket: ReadonlySet<string>,
+  now: Date = new Date(),
+): RecheckTarget[] {
   const cutoff = now.getTime() - RECHECK_AFTER_DAYS * DAY_MS;
 
   return entries
     .filter((entry) => {
       if (!entry.stage) return false;
       if (entry.stage.stage === 'archived') return false;
+      if (offMarket.has(entry.rightmoveId)) return false;
       const seen = Date.parse(entry.lastSeenAt);
       // A timestamp we cannot read is not a recent one. Treating an unparseable date as fresh would
       // silently exclude the flat for good, and it is the rows with something odd about them that

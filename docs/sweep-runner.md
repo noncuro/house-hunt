@@ -102,8 +102,9 @@ sweep off a round number, which is a courtesy to the site being read.
 | `SWEEP_SIGN_IN_MINUTES` | `15` | How long `--sign-in` waits for a person. |
 
 The pace between tabs is **not** set here. It is the opener's own setting, on the Triage tab, and it
-is the same number whether a person or a timer pressed the button. That is deliberate: a runner with
-its own faster pace would be a crawler wearing the button's clothes.
+is the same number whether a person or a timer pressed the button. That is deliberate: the pace is
+there to keep a run gentle on Rightmove, and a runner with its own faster one would quietly undo the
+number a person chose.
 
 ## When it goes wrong
 
@@ -121,8 +122,8 @@ small print says which: no Rightmove filters saved, or no place ticked "search a
 **"Still running after N minutes"** — usually timer throttling. The runner passes
 `--disable-background-timer-throttling`, `--disable-backgrounding-occluded-windows` and
 `--disable-renderer-backgrounding` for exactly this, because a throttled sweep does not fail, it
-crawls — one tick a minute — and reads from the log like a slow night on Rightmove. If those flags
-are in place and it still hangs, find out why before raising the budget.
+inches along — one tick a minute — and reads from the log like a slow night on Rightmove. If those
+flags are in place and it still hangs, find out why before raising the budget.
 
 Nothing is lost by a run that stops early, however it stops. Every page already opened was recorded,
 and the rest is waiting for the next run — the same promise the button makes to a person who closes

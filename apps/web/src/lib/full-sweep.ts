@@ -21,8 +21,8 @@ import type { HubSweep, PendingSighting, ShortlistEntry } from '@house-hunt/core
  *  It does nothing the three halves do not already do, by the same mechanism. Every page is a
  *  real navigation in a real background tab, opened through the extension (`open-tab`); the panel
  *  on that tab records what it finds, exactly as it would had you opened it yourself. Nothing here
- *  fetches Rightmove and nothing here parses it — see the standing rule in AGENTS.md. What this
- *  adds is only the *sequencing*: which page next, and when it is safe to open it.
+ *  fetches Rightmove and nothing here parses it. What this adds is only the *sequencing*: which
+ *  page next, and when it is safe to open it.
  *
  *  "Safe" is the part that needs care and it is the reason the scan waits on the database rather
  *  than on a timer alone. A search page is recorded by the panel in the tab, asynchronously, and
@@ -72,6 +72,10 @@ export interface FullSweepDeps {
   resetSweep(placeId: string): Promise<void>;
   pending(): Promise<PendingSighting[]>;
   shortlist(): Promise<ShortlistEntry[]>;
+  /** Which flats are already known to be gone. A dependency rather than a read inside `recheck`
+   *  so the unattended run and the Sweep screen apply the same rule: off the market does not write
+   *  the stage, so a withdrawn flat's shortlist row looks exactly like a live one's. */
+  offMarket(): Promise<ReadonlySet<string>>;
   /** Resolves after `ms`, or rejects the moment `signal` aborts — so Stop takes effect at once
    *  rather than after whatever wait was in flight. */
   sleep(ms: number, signal: AbortSignal): Promise<void>;
@@ -288,9 +292,11 @@ async function recheck(
   // Read now rather than at the start, so the list reflects the scan — and minus what the fill-in
   // opened a moment ago, because the tab that rewrites a flat's `lastSeenAt` has not necessarily
   // finished, and a list that still saw the old date would open the same flat twice in a minute.
-  const targets = recheckTargets(await deps.shortlist(), deps.now()).filter(
-    (row) => !filled.has(row.rightmoveId),
-  );
+  const targets = recheckTargets(
+    await deps.shortlist(),
+    await deps.offMarket(),
+    deps.now(),
+  ).filter((row) => !filled.has(row.rightmoveId));
   for (const [i, row] of targets.entries()) {
     onProgress({ phase: 'recheck', label: row.displayAddress || row.rightmoveId, done: i, total: targets.length });
     await open(listingUrl(row.rightmoveId));

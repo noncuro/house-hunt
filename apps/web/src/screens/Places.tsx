@@ -16,6 +16,7 @@ import {
   type TravelTime,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
+import { Agents } from '../components/Agents';
 import { FlatCard } from '@/components/FlatCard';
 import { Pager, usePaging } from '@/components/Pager';
 import { Board } from '@/screens/Board';
@@ -249,6 +250,10 @@ export function Places({
           onOpen={onOpen}
         />
       )}
+
+      {/* Counts what the lens above left on screen, not everything the hunt has opened — see the
+          note on the component. Below the flats because it is a question about them. */}
+      {entries.length > 0 && <Agents entries={entries} />}
     </section>
   );
 }

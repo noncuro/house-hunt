@@ -44,11 +44,13 @@ function fakeWorld({
   landAfter = 1,
   pending = [],
   shortlist = [],
+  offMarket = new Set<string>(),
 }: {
   pagesPerHub: Record<string, number>;
   landAfter?: number;
   pending?: PendingSighting[];
   shortlist?: ShortlistEntry[];
+  offMarket?: ReadonlySet<string>;
 }) {
   const opened: string[] = [];
   const sweeps = new Map<string, HubSweep>();
@@ -106,6 +108,7 @@ function fakeWorld({
       for (const d of due.filter((d) => d.at <= tick)) d.apply();
     },
     now: () => new Date(clock),
+    offMarket: async () => offMarket,
   };
   return { deps, opened, sweeps, pagesPerHub, seed: (s: HubSweep) => sweeps.set(s.placeId!, s) };
 }

@@ -39,6 +39,7 @@ import {
   FIXTURE_EMAIL,
   FIXTURE_NAME,
   fixtureId,
+  FOXTONS_FIXTURE,
   OTHER_NAME,
   REDEEM_EMAIL,
   REDEEM_PASSWORD,
@@ -125,6 +126,8 @@ const SECTIONS = [
   { name: 'headers', run: checkHeaders },
   { name: 'session', run: checkSession },
   { name: 'list', run: checkList },
+  { name: 'agents', run: checkAgents },
+  { name: 'sites', run: checkSites },
   { name: 'rating', run: checkRating },
   { name: 'funnel', run: checkFunnel },
   { name: 'offmarket', run: checkOffMarket },
@@ -202,6 +205,12 @@ try {
     else if (m.type() === 'error') note(`console: ${m.text()}`);
   });
   page.on('pageerror', (e) => note(`pageerror: ${e.message}`));
+  // The browser's own console says only "the server responded with a status of 500" and never which
+  // server or which request, which is a problem you cannot start on. The response carries the URL,
+  // so report from here and let the console line be the duplicate it is.
+  page.on('response', (r) => {
+    if (r.status() >= 500) note(`${r.status()} from ${r.request().method()} ${r.url()}`);
+  });
 
   await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' });
   await waitForApp(page);
@@ -998,6 +1007,190 @@ async function panelAddress(page: Page): Promise<string> {
  *  the off-the-market toggle all live in the panel now, which is the point of it — one renderer for
  *  the flat, reached identically from a card, a row, a pin or a link. Returns null and says so
  *  rather than throwing, so one missing flat does not take the rest of a section with it. */
+/** Who is marketing the flats, on the list and on one flat.
+ *
+ *  Asserted across both lenses, because the tally deliberately counts what is on screen rather than
+ *  the whole hunt — there is no "everything" chip, and a tally that ignored the filter above it
+ *  would answer a question nobody asked. The two lenses also split the two ways grouping goes
+ *  wrong: what is in play is two flats from one branch of one company, so a tally that failed to
+ *  collapse the repeat would say two agents; what is outside the funnel is one company across two
+ *  branches, so one that grouped on the branch would say three.
+ *
+ *  Then the flat itself, because the tally reading correctly off a shortlist row proves nothing
+ *  about the detail view, which reads different fields off the same row. */
+/** A flat read from an agent's own website, and the note that says it may already be here.
+ *
+ *  The seam's whole point is that a flat can arrive from wherever it was found, and the cost of
+ *  that is arriving twice. Both halves are asserted here because both are quiet when broken: a key
+ *  that stopped resolving draws a card with a dead link out, and a duplicate note that stopped
+ *  firing leaves two cards nobody connects — and a verdict written on one of them does not show on
+ *  the other, which is the thing this app exists to get right.
+ *
+ *  The pair sits on either side of the funnel on purpose. Fixture 1 is loved and so in play, the
+ *  Foxtons copy of it has no verdict and so is not, and there is no chip that shows both — which is
+ *  the arrangement worth checking, because `useDuplicates` reads the whole shortlist rather than
+ *  the filtered one and a note that only found its pair within the current lens would look right on
+ *  every screen anybody built it on.
+ */
+async function checkSites({ page }: Stage): Promise<void> {
+  // The agent-site flat is on the list at all. Its key is `foxtons_chpk0000001`, so everything
+  // between the database and the DOM id has had to stop assuming a listing id is a number.
+  await openLens(page, 'none');
+  const theirs = await openFlat(page, FOXTONS_FIXTURE);
+  if (!theirs) {
+    note(`the flat keyed ${FOXTONS_FIXTURE} does not open — a non-numeric key is being dropped somewhere`);
+    await openLens(page, 'live');
+    return;
+  }
+  if (!(await theirs.innerText()).includes('Foxtons')) {
+    note(`the ${FOXTONS_FIXTURE} detail view does not name the agent`);
+  }
+
+  // It points at Foxtons, and at a reference Foxtons would recognise. `listingUrlForKey` asks the
+  // site that owns the key to rebuild it; a builder that had stayed Rightmove-shaped would give a
+  // link that opens and lands on nothing, which reads as a withdrawn flat rather than as a bug.
+  const href = await theirs.locator('a[href*="foxtons.co.uk"]').first().getAttribute('href');
+  if (href === null) note(`nothing in the ${FOXTONS_FIXTURE} detail view links to foxtons.co.uk`);
+  else if (!href.includes('chpk0000001')) note(`the link out goes to foxtons.co.uk but not to this flat: ${href}`);
+
+  // The note itself, from the agent's side: same postcode and — once £600 pw is read as a month —
+  // the same rent as fixture 1, which is on Rightmove and in the funnel and so not on this screen.
+  const said = await duplicateNote(theirs);
+  if (said === null) {
+    note(`${FOXTONS_FIXTURE} and ${fixtureId(1)} are the same flat and the panel does not say so`);
+  } else {
+    console.log(`across sites: ${said}`);
+    if (!said.includes('same postcode')) note(`the duplicate note gives no reason: "${said}"`);
+    if (!said.includes('same rent')) {
+      note(`£600 pw and £2,600 pcm are the same rent and the note does not agree: "${said}"`);
+    }
+    // From this side it is a different site, which is the "one flat, two listings" case — and must
+    // not be described as a re-listing, which is a different story about the same two cards.
+    if (said.includes('re-listing')) note(`a cross-site duplicate was called a re-listing: "${said}"`);
+  }
+
+  // The other shape, on Rightmove alone: fixtures 2 and 3 are one flat listed twice, which is also
+  // what a retitled listing on a slug-keyed site looks like, and is worded differently on purpose.
+  const relisted = await openFlat(page, fixtureId(3));
+  if (relisted) {
+    const twice = await duplicateNote(relisted);
+    if (twice === null) note(`${fixtureId(2)} and ${fixtureId(3)} are one flat and the panel does not say so`);
+    else if (!twice.includes('re-listing')) note(`the same site twice is not read as a re-listing: "${twice}"`);
+    else console.log(`same site twice: ${twice}`);
+  }
+
+  // Symmetric, and from the other side of the funnel: whichever card you are looking at carries the
+  // note, or half of them do not.
+  await openLens(page, 'live');
+  const ours = await openFlat(page, fixtureId(1));
+  if (!ours) return;
+  const back = await duplicateNote(ours);
+  if (back === null) {
+    note(`${fixtureId(1)} does not mention ${FOXTONS_FIXTURE} — the note is drawn from one side only`);
+    await closeFlat(page);
+    return;
+  }
+  if (!back.includes('on Foxtons')) {
+    note(`the note on ${fixtureId(1)} does not say which site the other one is on: "${back}"`);
+  }
+
+  // Following it re-points the panel rather than opening a second one, and does it across the
+  // filter: the flat it lands on is not on this screen, so the panel has to resolve the id against
+  // the whole shortlist. Resolving it against the filtered list would leave the click doing
+  // nothing at all, which looks like a dead button rather than a missing flat.
+  await ours.locator('[data-testid="possible-duplicates"] button').first().click();
+  await settle(page);
+  const landed = page.locator('[data-testid="flat-panel"]');
+  if ((await landed.count()) === 0) {
+    note('following the duplicate note out of the current filter closed the panel');
+  } else if (!(await landed.innerText()).includes('Foxtons')) {
+    note('following the duplicate note did not point the panel at the other listing');
+  }
+  await closeFlat(page);
+}
+
+/** The duplicate line on an open panel, as one line, or null where there is none. */
+async function duplicateNote(panel: Locator): Promise<string | null> {
+  const line = panel.locator('[data-testid="possible-duplicates"]');
+  if ((await line.count()) === 0) return null;
+  return (await line.innerText()).replace(/\s+/g, ' ').trim();
+}
+
+async function checkAgents({ page }: Stage): Promise<void> {
+  const read = async (lens: string): Promise<{ text: string; rows: string[] }> => {
+    await openLens(page, lens);
+    const tally = page.locator('[data-testid="agent-tally"]');
+    if ((await tally.count()) === 0) {
+      note(`the agent tally is not on the places screen at "${lens}"`);
+      return { text: '', rows: [] };
+    }
+    // A `<details>` renders its summary and nothing else until opened, so the rows have to be asked
+    // for — reading `innerText` closed would assert against an empty string and pass. Set rather
+    // than clicked: `open` is DOM state that React carries across a re-render, so the second lens
+    // arrives with it already true and a click would shut it.
+    await tally.evaluate((el: HTMLDetailsElement) => { el.open = true; });
+    const text = await tally.innerText();
+    console.log(`agents at "${lens}": ${text.replace(/\s+/g, ' ').trim()}`);
+    return { text, rows: await tally.locator('.agents-list li').allInnerTexts() };
+  };
+
+  // In play: fixtures 1 and 4, both Heathside Lettings, Hampstead. One agent, one branch.
+  const live = await read('live');
+  if (live.text && !live.text.includes('1 agent')) {
+    note('the two in-play flats share an agent, and the tally does not say so');
+  }
+  if (live.rows[0] && !live.rows[0].trim().startsWith('2')) {
+    note(`Heathside Lettings markets both in-play flats, and the tally says "${live.rows[0]}"`);
+  }
+  // The same branch twice is one branch. A repeat left uncollapsed would read "2 branches".
+  if (live.rows[0]?.includes('branches')) note('the tally counted one branch twice');
+
+  // The first fixture flat states every term, so all four have to be on screen; "Available now" is
+  // the one that would betray a formatter treating "Now" as a date.
+  const panel = await openFlat(page, fixtureId(1));
+  if (panel) {
+    const detail = await panel.innerText();
+    for (const expected of [
+      'Heathside Lettings, Hampstead',
+      '020 7000 0001',
+      'Available now',
+      '£3,000 deposit',
+      'Council tax D',
+    ]) {
+      if (!detail.includes(expected)) note(`the detail view for ${fixtureId(1)} is missing "${expected}"`);
+    }
+    // "Long term" is on five of the six and is deliberately not printed. Seeing it means
+    // `letLength` stopped suppressing the ordinary case and every flat now carries a dead word.
+    if (detail.includes('Long term')) note('the detail view is printing the ordinary tenancy length');
+    await closeFlat(page);
+  }
+
+  // Outside the funnel: Angel Property across two branches, Heathside Lettings once, the flat read
+  // off Foxtons' own website, and one flat whose agent was never read — which is stated rather than
+  // drawn as an agent with a blank name.
+  const outside = await read('none');
+  for (const expected of ['3 agents', 'Angel Property', 'Heathside Lettings', 'Foxtons', '1 not read yet']) {
+    if (outside.text && !outside.text.includes(expected)) {
+      note(`the agent tally outside the funnel is missing "${expected}"`);
+    }
+  }
+  const angel = outside.rows.find((r) => r.includes('Angel Property'));
+  if (angel && !angel.includes('2 branches')) {
+    note('Angel Property markets two of these from two offices, and the tally does not say so');
+  }
+  if (outside.rows[0] && !outside.rows[0].includes('Angel Property')) {
+    note('the tally is not commonest-first');
+  }
+
+  // The short let is the case the suppression exists to let through.
+  const short = await openFlat(page, fixtureId(6));
+  if (short && !(await short.innerText()).includes('Short term')) {
+    note(`${fixtureId(6)} is a short let and the detail view does not say so`);
+  }
+  await closeFlat(page);
+  await openLens(page, 'live');
+}
+
 async function openFlat(page: Page, id: string): Promise<Locator | null> {
   if ((await page.locator('[data-testid="flat-panel"]').count()) > 0) await closeFlat(page);
   const card = page.locator(`#card-${id}`);
@@ -1109,6 +1302,12 @@ async function checkFillIn({ browser }: Stage): Promise<void> {
     else if (m.type() === 'error') note(`console: ${m.text()}`);
   });
   page.on('pageerror', (e) => note(`pageerror: ${e.message}`));
+  // The browser's own console says only "the server responded with a status of 500" and never which
+  // server or which request, which is a problem you cannot start on. The response carries the URL,
+  // so report from here and let the console line be the duplicate it is.
+  page.on('response', (r) => {
+    if (r.status() >= 500) note(`${r.status()} from ${r.request().method()} ${r.url()}`);
+  });
 
   try {
     await openView(page, 'sweep');
@@ -1589,6 +1788,11 @@ async function openView(page: Page, view: string): Promise<void> {
  *  the pair that can disagree: a chip counting the whole hunt over a view that has hidden some of
  *  it reads as flats that failed to render. */
 async function openLens(page: Page, name: string): Promise<number> {
+  // A panel is a modal, and its backdrop takes every click aimed at the chips behind it — so a
+  // caller that still has a flat open is not choosing between closing it and not: it is choosing
+  // between closing it and a thirty-second timeout on an element Playwright can see and cannot
+  // reach. Closed here rather than at each call site, where forgetting it reads as a flaky chip.
+  await closeFlat(page);
   const chip = page.locator(`[data-testid="lens-${name}"]`);
   if ((await chip.count()) === 0) {
     note(`Places has no "${name}" chip`);

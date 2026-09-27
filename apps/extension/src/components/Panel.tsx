@@ -20,7 +20,7 @@ import {
 import { Flags } from '@house-hunt/ui';
 import { webAppUrl } from '@/lib/web-app';
 import { HubFact } from '@house-hunt/ui';
-import { galleryFor, hubsFromProject, type Hub } from '@house-hunt/core';
+import { galleryFor, hubsFromProject, siteById, type Hub } from '@house-hunt/core';
 import { Icon, MapsButton, TransitBasis, TravelGrid, type IconName } from '@house-hunt/ui';
 import { Stations, STATIONS_SHOWN } from '@house-hunt/ui';
 import { Gallery } from '@house-hunt/ui';
@@ -87,6 +87,10 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
   const plan = listing.floorplans[0]?.url;
   const gallery = galleryFor({ floorplanUrl: plan ?? null, imageUrls: listing.imageUrls });
   const [error, setError] = useState<string | null>(null);
+  /** Why this listing was not written down, or null if it was. Kept apart from `error` above,
+   *  which collects failed *reads*: a read that failed leaves the panel showing less than it
+   *  could, and this leaves it showing a listing the house hunt has no record of. */
+  const [notRecorded, setNotRecorded] = useState<string | null>(null);
   /** The rating we've shown but haven't confirmed. Null means everything on screen is saved. */
   const [pending, setPending] = useState<Rating | null>(null);
   /** Where this place has got to for the project, and the step clicked but not yet acknowledged.
@@ -141,6 +145,8 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
     // Left standing, a failed off-market read would keep the previous flat's status on screen.
     setOffMarket(false);
     setOffMarketBusy(false);
+    // Cleared with the rest: the previous flat's failed write says nothing about this one.
+    setNotRecorded(null);
 
     // A new listing starts outside the funnel until its own read lands, for the same reason the
     // analysis is cleared above: the previous flat's viewing is not this one's.
@@ -195,13 +201,22 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       // the re-check sweep reopens exactly those flats — liking one is what puts it in the funnel —
       // in tabs nobody is watching, so the question sat unanswered and nothing was ever marked.
       // Nothing is lost by not asking: the verdict and the stage are kept, the toast says it
-      // happened, and "Back on the market" undoes it. The toast and the reason name which signal it
-      // was, because a let-agreed listing is still up on Rightmove.
-      const gone = listing.letAgreed === true ? 'let agreed' : listing.archived === true ? 'taken down' : null;
+      // happened, and "Back on the market" undoes it. The toast and the reason say what the page
+      // said and whose page it was: a let-agreed listing is still up, and on an agent's own site
+      // `archived` means let as much as taken down.
+      const gone =
+        listing.letAgreed === true
+          ? 'let agreed'
+          : listing.archived !== true
+            ? null
+            : listing.site === 'rightmove'
+              ? 'taken down'
+              : 'let or taken down';
       if (gone && offState.ok && !offState.data) {
+        const where = siteById(listing.site)?.name ?? 'the listing site';
         void toggleOffMarket(true, {
-          announce: `Marked off the market — ${gone} on Rightmove.`,
-          reason: `${gone === 'let agreed' ? 'Let agreed' : 'Taken down'} on Rightmove`,
+          announce: `Marked off the market — ${gone} on ${where}.`,
+          reason: `${gone[0]!.toUpperCase()}${gone.slice(1)} on ${where}`,
         });
       }
 
@@ -215,7 +230,23 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       // the request that follows is what tells us whether the budget allowed it — `listing:seen`
       // fires its own request and throws the answer away, which is fine: a second ask for a
       // claimed listing reads the claim, and a capped one is capped either way.
-      await send({ type: 'listing:seen', listing });
+      //
+      // The envelope of the write itself is read rather than discarded. This is the write every
+      // other surface is keyed on — the fill-in and re-check worklists both clear a listing by the
+      // `last_seen_at` it stamps — and a refused one used to look exactly like one that worked,
+      // since the panel paints from what the page said either way. So a listing opened five times
+      // went on reading "not opened yet", with nothing on screen, in the console or in the log.
+      const recorded = await send({ type: 'listing:seen', listing });
+      if (!live) return;
+      if (!recorded.ok) {
+        setNotRecorded(recorded.error);
+        // And no analysis. It reads its image URLs from the row that was not written, so asking
+        // anyway earns a refusal phrased as a budget or a claim — which is a wrong answer to a
+        // question about a missing row. Stated as a failed request so the section says so rather
+        // than sitting on "reading photos…" until the poll gives up.
+        setRequest({ status: 'failed', message: 'this listing was not recorded, so there is nothing to analyse' });
+        return;
+      }
       const asked = await send({ type: 'analysis:request', rightmoveId: listing.rightmoveId });
       if (!live) return;
       setRequest(asked.ok ? asked.data : { status: 'failed', message: asked.error });
@@ -512,6 +543,18 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
         </button>
       </header>
 
+      {/* Above everything, because it is the one failure the rest of the panel hides: every fact
+          below is read off the page and paints the same whether or not any of it was written down.
+          The foot of the panel is where a failed *read* goes, and it is the wrong place for this —
+          by the time you scrolled to it you would have rated a flat that cannot hold a rating. */}
+      {notRecorded && (
+        <div className="rm-error">
+          <strong>Not recorded.</strong> Nothing this page said has been written down, so this
+          listing will not reach your shortlist and a fill-in run will keep coming back to it.
+          Reload to try again — {notRecorded}
+        </div>
+      )}
+
       {/* Directly under the address, because it is the answer to the same question the address
           is asking and mostly failing to answer. */}
       <div className="rm-row rm-row-hub">
@@ -731,7 +774,7 @@ function AnalysisState({
   if (request?.status === 'failed') {
     return (
       <span className="rm-claim">
-        <Hint className="rm-bad" text={`The analyse function refused: ${request.message}`}>
+        <Hint className="rm-bad" text={`No photo analysis — ${request.message}`}>
           <Icon name="warning" size={12} /> photos not analysed
         </Hint>
         <button className="rm-retry" onClick={retry}>

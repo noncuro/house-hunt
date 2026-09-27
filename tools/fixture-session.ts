@@ -29,6 +29,8 @@ import { createClient, type Session, type SupabaseClient } from '@supabase/supab
 import type { Page, Worker } from 'playwright';
 import { SESSION_STORAGE_KEY } from '../packages/core/src/contracts';
 import { SEED_HUBS } from '../packages/core/src/hubs';
+import { listingUrlForKey, propertyKey } from '../packages/core/src/sites';
+import { HARNESS_CRITERIA } from './harness-criteria';
 import { localCredentials } from './supabase-local';
 
 export const FIXTURE_PROJECT = '00000000-0000-4000-b000-0000000000f1';
@@ -63,6 +65,19 @@ const PREFIX = '000';
 export function fixtureId(n: number): string {
   return `${PREFIX}${n}`;
 }
+
+/** The first flat again, as a listing on the agent's own website rather than on the portal.
+ *
+ *  Not `fixtureId`'s scheme with a prefix bolted on, because a site's ids are the site's shape:
+ *  Foxtons' references are `[a-z][a-z0-9]{3}\d{7}` and `listingUrl` refuses anything else, so a
+ *  key of `foxtons_0001` seeds a flat whose panel can draw no link back out to the site it came
+ *  from — which is one of the things `smoke:web` is here to assert. The leading zeros still make it
+ *  a reference Foxtons would not mint.
+ *
+ *  Built with `propertyKey` so the row is shaped exactly like one the app would write: `site` and
+ *  `external_id` are generated off this string, and a fixture that made its own keys would be
+ *  asserting against a shape nothing in production produces. */
+export const FOXTONS_FIXTURE = propertyKey('foxtons', 'chpk0000001');
 
 const { url, anonKey, serviceKey } = localCredentials();
 
@@ -139,6 +154,12 @@ interface FixtureProperty {
   floorAreaSource: 'sizings' | 'description' | null;
   furnishType: string;
   listingUpdate: string;
+  /** The tenancy's terms and who is marketing it. Shaped to put every case the tally and the term
+   *  formatters have to handle on one screen: two companies with two branches each, one branch
+   *  repeated, one flat whose agent was never read, a stated and an unstated deposit, "Now" beside
+   *  a date, and a short let among long ones. */
+  agent: null | { company: string; branch: string; phone: string };
+  terms: { available: string | null; deposit: number | null; band: string | null; letType: string };
   /** Null for the one flat nobody has analysed — the state the flags and the compare table have
    *  to render as "not known" rather than as "no bathtub". */
   analysis: null | {
@@ -166,6 +187,8 @@ const PROPERTIES: FixtureProperty[] = [
     price: '£2,600 pcm', bedrooms: 2, bathrooms: 1, lat: 51.55597, lon: -0.17705,
     floorAreaSqft: 780, floorAreaSource: 'sizings', furnishType: 'Furnished',
     listingUpdate: 'Added on 05/08/2026',
+    agent: { company: 'Heathside Lettings', branch: 'Heathside Lettings, Hampstead', phone: '020 7000 0001' },
+    terms: { available: 'Now', deposit: 3000, band: 'D', letType: 'Long term' },
     analysis: { hasBathtub: true, hasOutdoorSpace: true, outdoorKind: 'garden', biggestRoomSqft: 210, floorplanSqft: 775, summary: 'Bright two bed with a small garden.' },
     verdict: { rating: 'love', note: 'The garden is the whole thing.', by: 'one' },
   },
@@ -174,6 +197,8 @@ const PROPERTIES: FixtureProperty[] = [
     price: '£2,400 pcm', bedrooms: 2, bathrooms: 1, lat: 51.53601, lon: -0.10131,
     floorAreaSqft: 690, floorAreaSource: 'description', furnishType: 'Unfurnished',
     listingUpdate: 'Reduced on 07/08/2026',
+    agent: { company: 'Angel Property', branch: 'Angel Property, Islington', phone: '020 7000 0002' },
+    terms: { available: '10/09/2026', deposit: 2769, band: 'C', letType: 'Long term' },
     analysis: { hasBathtub: false, hasOutdoorSpace: false, outdoorKind: null, biggestRoomSqft: 145, floorplanSqft: 688, summary: 'No bath and nowhere to sit outside.' },
     verdict: { rating: 'no', note: 'No bath.', by: 'two' },
   },
@@ -184,7 +209,23 @@ const PROPERTIES: FixtureProperty[] = [
     price: '£2,400 pcm', bedrooms: 2, bathrooms: 1, lat: 51.53601, lon: -0.10131,
     floorAreaSqft: 705, floorAreaSource: 'description', furnishType: 'Unfurnished',
     listingUpdate: 'Added on 01/08/2026',
+    agent: { company: 'Heathside Lettings', branch: 'Heathside Lettings, Islington', phone: '020 7000 0003' },
+    terms: { available: 'Now', deposit: null, band: 'C', letType: 'Long term' },
     analysis: { hasBathtub: false, hasOutdoorSpace: true, outdoorKind: 'balcony', biggestRoomSqft: 150, floorplanSqft: null, summary: 'Relisting of the Danbury Street flat.' },
+    verdict: null,
+  },
+  {
+    // The same flat as the first one, on the agent's own website: same postcode, same rent, a
+    // different id space. This is the case the site seam exists for and the only one that makes
+    // the duplicate note say "on Foxtons" rather than "the same site twice" — and its key is
+    // `foxtons_0001`, so the `site` and `external_id` columns are exercised as generated too.
+    id: FOXTONS_FIXTURE, address: 'Flask Walk, Hampstead', postcode: 'NW3 1HE',
+    price: '£600 pw', bedrooms: 2, bathrooms: 1, lat: 51.55597, lon: -0.17705,
+    floorAreaSqft: 775, floorAreaSource: 'sizings', furnishType: 'Furnished',
+    listingUpdate: 'Added on 06/08/2026',
+    agent: { company: 'Foxtons', branch: 'Foxtons Hampstead', phone: '020 7000 0005' },
+    terms: { available: 'Now', deposit: 3000, band: 'D', letType: 'Long term' },
+    analysis: null,
     verdict: null,
   },
   {
@@ -192,6 +233,8 @@ const PROPERTIES: FixtureProperty[] = [
     price: '£3,100 pcm', bedrooms: 3, bathrooms: 2, lat: 51.54101, lon: -0.15736,
     floorAreaSqft: 1020, floorAreaSource: 'sizings', furnishType: 'Part furnished',
     listingUpdate: 'Added on 08/08/2026',
+    agent: { company: 'Heathside Lettings', branch: 'Heathside Lettings, Hampstead', phone: '020 7000 0001' },
+    terms: { available: '01/10/2026', deposit: null, band: 'E', letType: 'Long term' },
     analysis: { hasBathtub: true, hasOutdoorSpace: false, outdoorKind: null, biggestRoomSqft: 260, floorplanSqft: 1015, summary: 'Large three bed, no outdoor space.' },
     verdict: { rating: 'maybe', note: 'Dear, but big.', by: 'one' },
   },
@@ -202,6 +245,8 @@ const PROPERTIES: FixtureProperty[] = [
     price: '£2,150 pcm', bedrooms: 1, bathrooms: 1, lat: 51.52489, lon: -0.09705,
     floorAreaSqft: null, floorAreaSource: null, furnishType: 'Furnished',
     listingUpdate: 'Added on 09/08/2026',
+    agent: null,
+    terms: { available: null, deposit: null, band: null, letType: 'Long term' },
     analysis: null,
     verdict: null,
   },
@@ -210,6 +255,8 @@ const PROPERTIES: FixtureProperty[] = [
     price: '£2,750 pcm', bedrooms: 2, bathrooms: 2, lat: 51.54339, lon: -0.13749,
     floorAreaSqft: 830, floorAreaSource: 'sizings', furnishType: 'Unfurnished',
     listingUpdate: 'Added on 06/08/2026',
+    agent: { company: 'Angel Property', branch: 'Angel Property, Camden', phone: '020 7000 0004' },
+    terms: { available: 'Now', deposit: 3200, band: 'B', letType: 'Short term' },
     analysis: { hasBathtub: true, hasOutdoorSpace: true, outdoorKind: 'terrace', biggestRoomSqft: 190, floorplanSqft: 825, summary: 'Terrace off the kitchen.' },
     verdict: null,
   },
@@ -261,6 +308,15 @@ async function tearDown(alsoCache: ExtraCache[] = []): Promise<void> {
   await db.from('project').delete().eq('id', FIXTURE_PROJECT);
   await db.from('property_analysis').delete().like('rightmove_id', `${PREFIX}%`);
   await db.from('property').delete().like('rightmove_id', `${PREFIX}%`);
+  // And the same flats keyed to somebody's own website, which the prefix match above cannot reach:
+  // those ids are the site's own shape and share nothing with `000n`. Deleted by the exact keys
+  // this fixture mints — a pattern loose enough to catch a site reference would be loose enough to
+  // take out a real listing somebody's project had opened.
+  const siteKeys = PROPERTIES.map((p) => p.id).filter((id) => !id.startsWith(PREFIX));
+  if (siteKeys.length > 0) {
+    await db.from('property_analysis').delete().in('rightmove_id', siteKeys);
+    await db.from('property').delete().in('rightmove_id', siteKeys);
+  }
   // The listing the smoke harness opens is a real one, so no leading zeros and no prefix match. Left
   // behind, the second run finds the row already there and `record_property` takes its
   // on-conflict-update path — so the assertion that opening a new listing creates the row would
@@ -345,6 +401,14 @@ async function seed(alsoCache: ExtraCache[]): Promise<FixtureData> {
   must('setting the active project', (await db.from('profile')
     .update({ active_project_id: FIXTURE_PROJECT }).in('id', [userId, otherUserId])).error);
 
+  // What this hunt is looking for. Without it the sweep panel's hub list is the sentence "this
+  // house hunt has not said what it is looking for yet" instead of the five neighbourhoods —
+  // correct, and not what `smoke:search` is there to read. The same filters `pnpm fixture:search`
+  // builds its saved page from, so the page and the project agree on the search they are about.
+  must('setting what the hunt is looking for', (await db.from('project_setting').insert({
+    project_id: FIXTURE_PROJECT, preferences: { search: HARNESS_CRITERIA }, updated_by: userId,
+  })).error);
+
   // Places, in one insert, because they are one table: the destinations this hunt commutes to and
   // the neighbourhoods it searches around. The searched ones come from `SEED_HUBS` — the same five
   // the migration seeds for a new project and the same list `check:sweep` pins the search URLs
@@ -370,7 +434,9 @@ async function seed(alsoCache: ExtraCache[]): Promise<FixtureData> {
   must('seeding the properties', (await db.from('property').insert(
     PROPERTIES.map((p, i) => ({
       rightmove_id: p.id,
-      url: `https://www.rightmove.co.uk/properties/${p.id}`,
+      // Built by the site that owns the key, so the agent-site flat's stored link goes to that
+      // agent rather than to a Rightmove page that does not exist.
+      url: listingUrlForKey(p.id) ?? `https://www.rightmove.co.uk/properties/${p.id}`,
       display_address: p.address,
       postcode: p.postcode,
       price: p.price,
@@ -388,6 +454,14 @@ async function seed(alsoCache: ExtraCache[]): Promise<FixtureData> {
       image_urls: imageUrls(p.id),
       furnish_type: p.furnishType,
       listing_update: p.listingUpdate,
+      let_available_date: p.terms.available,
+      deposit: p.terms.deposit,
+      let_type: p.terms.letType,
+      council_tax_band: p.terms.band,
+      agent_branch_id: p.agent ? 10_000 + i : null,
+      agent_branch: p.agent?.branch ?? null,
+      agent_company: p.agent?.company ?? null,
+      agent_phone: p.agent?.phone ?? null,
       nearest_stations: STATIONS,
       last_seen_at: new Date(now - i * 3_600_000).toISOString(),
       written_by_project: FIXTURE_PROJECT,

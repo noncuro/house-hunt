@@ -1,4 +1,4 @@
-# house-hunt — shared house-hunting for Rightmove: a website plus a thin extension
+# house-hunt — shared house-hunting for Rightmove and eight agents' own sites: a website plus a thin extension
 
 A shared shortlist for people hunting a flat together: travel times to saved places,
 one shared verdict per flat per project, a funnel from shortlisted to archived, and a vision pass
@@ -8,7 +8,8 @@ people). In use on real listings.
 Two apps in one pnpm workspace: `apps/web` (Next.js — shortlist, compare, map, settings, sign-in,
 project/admin, and **the whole product**: it is installable, works offline, and adds flats from a
 pasted or shared address) and `apps/extension` (thin Chrome MV3 — the listing panel, search badges,
-sweep panel, all only on Rightmove pages, and **one of two ways in** rather than the way in: no
+sweep panel, on Rightmove and on the eight agents' sites `packages/core/src/sites/` reads, and
+**one of two ways in** rather than the way in: no
 browser on a phone loads it, so nothing may be reachable only through it). Shared logic in `packages/core` and `packages/ui`. Config is
 the workspace-root `.env` (see `.env.example`). This file is *how it's built and how to check you
 haven't broken it*; `product.md` is *how we decide what to build*.
@@ -58,6 +59,12 @@ hand-written gate, the region and the environment. Second machine: `SETUP.md`.
 - **Distribution is private until the Chrome Web Store listing is approved** — load-unpacked
   only for now. Access is an invite, not a download.
 - **Select on `data-testid`, never CSS-module class names** — Rightmove's hashed classes churn.
+  This is about the extension's content scripts, which read a live DOM. A site adapter reads an
+  HTML *string* and selects nothing: it decodes the payload the page was built from.
+- **A site is added in one place.** `SITES` in `packages/core/src/sites/index.ts` is what the
+  manifest's match patterns, `host_permissions`, the panel's mount check, `api/listing`'s dispatch
+  and every key lookup are generated from. A site added anywhere else is a site whose panel never
+  loads, and that reads as a mounting bug rather than as a missing line.
 - **Fail loudly.** If extraction breaks, the panel must say so; blanks look like real data.
 - **One fact, one renderer.** Anything both apps show lives in `packages/ui/src/` or
   `packages/core/src/facts.ts`. Never re-implement a fact in a view.
@@ -101,33 +108,26 @@ hand-written gate, the region and the environment. Second machine: `SETUP.md`.
   nothing a repackage fixes. Why the stale half is a note in CI is on the code (`tools/check-zip.ts`).
 - **Rightmove's own mark may be used on the buttons that go to Rightmove**, and nowhere else. It
   labels an outbound link with the thing it opens, which is what a trademark is for, and it is the
-  owner's decision on the owner's product. What stays forbidden is unchanged and is a different
-  question: **listing photos and floorplans are never re-hosted.** Those are shown from Rightmove's
-  own CDN URLs, which is why `.fixtures/` is gitignored and why every harness answers image
-  requests from memory rather than saving them.
+  owner's decision on the owner's product. What stays forbidden is a different question, and it is
+  one of copyright: **listing photos and floorplans are never re-hosted.** The photographs belong to
+  whoever took them, so a copy sitting on our origin is us republishing somebody else's work where a
+  link to theirs is not. They are shown from Rightmove's own CDN URLs, which is why `.fixtures/` is
+  gitignored and why every harness answers image requests from memory rather than saving them.
 
   The service worker's photo cache is not an exception to that and must not become one. It is the
   reader's own browser holding a copy of a file it already fetched, on the reader's own device,
   which is what an HTTP cache is — nothing is copied to our origin and nothing is served to anybody
   else. The line is *whose server the bytes come off*, and it has not moved.
 
-## Rightmove's terms, in four lines
-
-Their [Terms of Use](https://www.rightmove.co.uk/c/terms-of-use/) forbid automated access (5.2,
-5.5), and forbid embedding their images in an extension (13.4). There is no carve-out for a content
-script in your own browser. So:
-
-- **Never fetch a search or listing page in the background.** Only read pages somebody opened. This
-  is the line between a notes app and a crawler.
-- **Never re-host their images or floorplans.** Store the URL or nothing.
-- **Store only what the hunt needs, and do not redistribute it.**
+- **Store only what the hunt needs, and do not redistribute it.** The database holds a group's notes
+  on the flats they are looking at, and there is no reason for it to hold or hand on more.
 
 ## Architecture map
 
 | Piece | Job |
 |---|---|
 | ext `entrypoints/page-model.content.ts` (MAIN world) | Decodes `window.__PAGE_MODEL`, posts the listing out |
-| ext `entrypoints/{panel,search,sweep}.content/` | Listing panel (Shadow DOM), search-card badges, sweep panel |
+| ext `entrypoints/{panel,search,sweep}.content/` | Listing panel (Shadow DOM), search-card badges, sweep panel. The panel matches whole hosts and declines to mount where `siteForUrl` says the page is not a listing — per-site path patterns in the manifest would be a ninth place to keep in step |
 | ext `entrypoints/bridge.content.ts` | On the website's origin only; relays four messages so the two sessions stay in step, and carries the version `hello` compares |
 | ext `entrypoints/background.ts` | All network + the only Supabase client in the extension |
 | web `components/Shell.tsx` | The one header row, the hunt switcher, the account menu, the phone's tab bar |
@@ -135,10 +135,12 @@ script in your own browser. So:
 | web `screens/*.tsx` | Triage, HeadToHead, FirstRun, Settings, Sweep, SignIn, Project, Install, Admin, AddFlat |
 | web `screens/AddFlat.tsx` | A flat from a pasted or shared address — the phone's only way in, and the extension's counterpart |
 | web `components/Flat*.tsx` | One flat: the card in a grid, the whole of it (`FlatDetail`), and the panel it opens in over any screen |
+| web `components/Duplicates.tsx` | "This may be the same flat as…" — advisory, never a merge (`packages/core/src/duplicates.ts`) |
 | web `lib/platform.ts` | Whether an extension can exist here at all, and whether this is an installed app. Hooks, not calls, in a render — see the note in the file |
 | web `lib/persist.ts` + `public/sw.js` | The offline half: the hunt in IndexedDB, the shell/build/photographs in the Cache API |
 | web `public/manifest.webmanifest` | What makes it installable, and the share target Rightmove shares into. Icons are drawn by `pnpm icons` |
 | `packages/core/` | Facts, hubs, listing extraction, stage (the funnel), sweep, travel, analysis, db, bridge contract |
+| `packages/core/src/sites/` | The nine sites, one file each: `types.ts` is the contract, `read.ts` the shared decoders, `index.ts` the registry every match pattern and key lookup is generated from |
 | web `app/api/` | Everything that runs server-side, and the only thing holding the service role: `predict` (fit the verdict-score model), `listing` (one listing page, read server-side), `analyse` (vision, holds the OpenAI key), `travel` (TfL + postcodes, sole writer of the travel cache, and the scheduled `backfill` that drains the gap set), `invite`, `resolve-location`, `password`. Every one is `authedRoute` or a stated `publicRoute`, and `pnpm check:routes` is what holds that — its `PUBLIC_ROUTES` is the whole record of what this deployment answers without a session. `server/cors.ts` is what lets the extension and a Rightmove content script call the ones they need |
 
 ## Decisions an agent might otherwise "fix"
@@ -203,16 +205,44 @@ script in your own browser. So:
   that follows is the one to keep: a new capability that only the panel can reach has cut the phone
   out of the product, and adding a flat was exactly that until the `listing` route existed.
 
-- **Adding a flat by address is a server-side read of one page, and the no-crawl rule is not
-  relaxed for it.** `app/api/listing` fetches a single listing, for the person who has just pasted
-  or shared that exact address, rate-limited per user, and rebuilds the URL from an id so nothing a
-  caller sends can steer it elsewhere. It decodes with `packages/core/src/listing.ts` — the same
-  module the content script uses, which is why that module moved out of the extension: one page
-  shape read two ways is a fork, and the day Rightmove renames a field the copy that did not learn
-  about it returns a flat with no postcode rather than an error. Read the block at the top of
-  `app/api/resolve-location/route.ts`; the argument there is the whole permission this has. What is
-  forbidden, still, is turning a *list* into fetches — a sweep's sightings are opened in front of
-  the reader by the paced opener, and must never be handed to this.
+- **Adding a flat by address is a server-side read of one page.** `app/api/listing` fetches a
+  single listing, for the person who has just pasted or shared that exact address, rate-limited per
+  user, and rebuilds the URL from the id the site itself gave, so nothing a caller sends can point
+  the fetch at another page. It decodes with the same adapter the content script uses, which is why
+  `packages/core/src/listing.ts` and then `sites/` moved out of the extension: one page shape read
+  two ways is a fork, and the day a site renames a field the copy that did not learn about it
+  returns a flat with no postcode rather than an error.
+
+- **A site adapter's `extract` takes an HTML string, never a `Document`.** That one constraint is
+  what keeps a site addable from a phone: the route calls it on `await response.text()`
+  server-side, and a `Document` parameter would quietly make that site extension-only — the panel
+  would work and `AddFlat` would not, which is the phone cut out of the product again. It is why no
+  adapter uses a DOM parser and why none was added as a dependency. `docs/multi-site.md` is the
+  whole seam, including what was measured before it was built.
+
+- **A key is `<site>_<external id>`, and Rightmove's stay bare.** `property.rightmove_id` is
+  referenced by ten tables, eight SQL functions and some five hundred call sites, so it was not
+  renamed: the column still says Rightmove and holds every site's key. Leaving Rightmove's ids as
+  bare digits is what let every row already written, every `#card-12345` link somebody bookmarked
+  and the `/^\d+$/` gates on `predict` and `analyse` keep working untouched — and the price of it
+  is that **a Rightmove id may only ever be all digits**, because that is how `parseKey` tells a
+  bare key from a prefixed one. `propertyKey` throws rather than mint one that would not read back.
+  The separator is `_` and not `:` because a key goes into a DOM id selected as `#card-<key>`, and
+  `#card-foxtons:chpk123` parses as a CSS pseudo-class and matches nothing, with no error.
+
+  `site` and `external_id` are **generated stored columns** derived from the key
+  (`20260905000000_multi_site_and_letting_terms.sql`), so nothing writes them and nothing can get
+  them wrong. That is the second design: they were ordinary columns with a check constraint, and
+  the harnesses that insert into `property` with the service role — past `record_property`, which
+  is the point of those harnesses — failed on a not-null they had no business supplying. Do not
+  name them in an `insert`; Postgres errors on it.
+
+- **The duplicate note advises and never merges.** Two flats in one block share a postcode, a bed
+  count and often a rent, so a wrong merge attaches somebody's verdict to a flat they never saw —
+  and a verdict is the one thing this app exists to get right. `possibleDuplicates` says what
+  matched and leaves the judgement with the person who can open both. It is also the mitigation for
+  the two sites keyed on a URL slug (Austin Homes, TK International): a retitled listing arrives as
+  a same-site pair with the same postcode and the same rent, which is worded differently on purpose.
 
 - **The offline copy is restored stale, and says so.** `lib/persist.ts` puts the last snapshot back
   before any query mounts (React Query takes starting data on the first render and never again), and
@@ -294,7 +324,11 @@ Issues, comments, commit messages, docs, code comments. Plain language, facts an
 - **Never present an estimate as a measurement.** Say which it is.
 - **No throat-clearing, and no metaphor that isn't carrying a mechanism.**
 
-## The four facts the design rests on (verified against live pages)
+## The four facts Rightmove's half rests on (verified against live pages)
+
+The other eight sites are each their own shape — a flight payload, `__NEXT_DATA__`, a Rails inline
+object, JSON-LD — and what each one carries is documented on the adapter that reads it, with the
+platform table in `docs/multi-site.md`.
 
 1. Search pages carry `__NEXT_DATA__` (plain DOM JSON, every card) — but it doesn't follow the
    client-side pager; `staleAgainst` notices.
@@ -321,20 +355,39 @@ and what one ask may cost before it is dispatched),
 session, and the ones that do not are on a list with a reason),
 `one-client`, `migrations` (no two migrations claim the same version string),
 `bridge`, `withdrawn`, `recheck`, `full-sweep` (the unattended sweep's sequencing,
-against a fake extension and clock). Each pins reasoning invisible when wrong — a bad bearing still
-looks like a bearing.
+against a fake extension and clock),
+`sites` (the key scheme round-trips, no two sites claim a host, `listingUrl` refuses a doctored id,
+and every adapter still decodes its saved pages),
+`duplicates` (what is offered as possibly the same flat, and — mostly — what is not).
+Each pins reasoning invisible when wrong — a bad bearing still looks like a bearing.
 
 Needing a local Supabase (`supabase start`, ports 5434x; not in `check:all`): `pnpm check:rls`
 (the security boundary asserted by real JWTs) and `pnpm check:spend` (concurrent cap claims for
 *different* listings — the case that defeated the earlier design). Known trap: local PostgREST
 12.0.1 intermittently dies mid-request; the `rpc()` helper retries.
 
-Fixtures (real page shapes — run after a Rightmove deploy):
+**`check:spend`'s seeding calls are not behind that retry, so one red run proves nothing — re-run
+before believing it.** The seeds are plain `.upsert()`s, and when PostgREST dies on one Kong answers
+`502` and supabase-js surfaces it as `An invalid response was received from the upstream server`:
+a message with no `code` and no `details`, which reads exactly like a schema problem in the change
+you just made. It fails at the same place every time — `seeding an analysis for spendcheck-3` — not
+because that row is special but because the request sequence before it is fixed, so a resource that
+runs out runs out there. Measured on an unmodified tree it passed 3 runs in 4. A bisect that trusts
+a single run will confirm whatever it was pointed at; the way to tell is to run the case with the
+change *reverted* several times, not once.
+
+Fixtures (real page shapes — run after a site deploys):
 
 ```bash
 pnpm fixture <id>              && pnpm check:extractor .fixtures/<id>.html
 pnpm fixture:search <hub>      && pnpm check:sweep .fixtures/search-<hub>.html
+pnpm fixture:site <url>        && pnpm check:sites
 ```
+
+`check:sites` decodes every saved agent page it finds and prints a per-site coverage line, so the
+way to add a site's page to the set is to save it and re-run — there is no list to update. Two of
+the eight serve nothing useful without their saved page: Foxtons' HTML is 2,540 characters of nav
+and footer, and the flat is written by the client.
 
 Browser smoke (Playwright; screenshots in `.fixtures/shots/`). All three sign a fixture user in
 against the local stack — `tools/fixture-session.ts` is the seed and says why a signed-in harness
@@ -352,7 +405,8 @@ problem is collected and reported together.
 
 `smoke:web` takes names too, one level down: `pnpm smoke:web list rating` runs those sections and
 `pnpm smoke:web joining` runs that one, in the order the file declares them (`session`, `list`,
-`rating`, `funnel`, `offmarket`, `table`, `map`, `triage`, `sweep`, `tabs`, `refusals`, `joining`). The setup is not optional — the
+`agents`, `sites`, `rating`, `funnel`, `offmarket`, `table`, `map`, `triage`, `sweep`, `tabs`,
+`refusals`, `joining`). The setup is not optional — the
 fixture and a production build of the website happen either way — so a subset
 saves the browser work and a few seconds of a forty-second run, which is the difference worth having
 while you iterate on one assertion. A name that matches no section stops the run and prints the
@@ -420,7 +474,9 @@ instead (`.github/workflows/check.yml`: `check:all`, `check:rls`, `check:spend`,
 - Admin identity and the first project's name are deployment data, not schema: copy
   `supabase/seed.example.sql` to the untracked `supabase/seed.sql`.
 - Extraction broke after a Rightmove deploy? `pnpm check:extractor`, then
-  `tools/decode_page_model.py`.
+  `tools/decode_page_model.py`. After somebody else's deploy: `pnpm fixture:site <a listing URL>`
+  and `pnpm check:sites`, which names the site and the field it could not read. A saved page from
+  before the deploy will still pass, which is the reason to re-save rather than to re-run.
 - Config problems look like data problems: only prefixed vars are bundled. Verify:
   `grep -c "$(grep WXT_SUPABASE_URL .env | cut -d/ -f3)" apps/extension/.output/chrome-mv3/background.js` → 1.
 - A stale copy in Chrome is the most common "bug": reload the extension *and* the tab, and check
