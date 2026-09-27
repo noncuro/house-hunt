@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Icon, useOverlayKeys } from '@house-hunt/ui';
-import { rightmoveListingId, type AddListingResult } from '@house-hunt/core';
+import { SITES, siteForUrl, type AddListingResult } from '@house-hunt/core';
 import { addListingByUrl } from '@house-hunt/core/db';
 import { keys } from '@/lib/queries';
 import { useCanHoldExtension } from '@/lib/platform';
@@ -65,7 +65,7 @@ export function AddFlat({
   });
 
   // Read here as well as on the server, and only ever to say no sooner — see `addListingByUrl`.
-  const id = rightmoveListingId(url);
+  const id = siteForUrl(url)?.key ?? null;
   const typed = url.trim().length > 0;
 
   return (
@@ -81,8 +81,9 @@ export function AddFlat({
 
         <div className="panel-body addflat">
           <p className="dim">
-            Paste a Rightmove listing address. We read that one page, the same as the panel does on a
-            laptop — the photographs, the floorplan and the postcode all come from it.
+            Paste a listing address from {SITES.map((s) => s.name).join(', ')}. We read that one
+            page, the same as the panel does on a laptop — the photographs, the floorplan and the
+            postcode all come from it.
           </p>
 
           <div className="fields">
@@ -94,6 +95,7 @@ export function AddFlat({
               autoCorrect="off"
               spellCheck={false}
               placeholder="https://www.rightmove.co.uk/properties/…"
+              title={`Any listing page on ${SITES.map((x) => x.name).join(", ")}`}
               value={url}
               data-testid="add-flat-url"
               onChange={(e) => {
@@ -118,9 +120,13 @@ export function AddFlat({
           {/* Said before the button is pressed, not after. */}
           {typed && !id && (
             <p className="error" data-testid="add-flat-not-a-listing">
-              That is not a Rightmove listing address. One looks like{' '}
-              <code>rightmove.co.uk/properties/88023648</code> — a search page or an agent&apos;s own
-              site will not do, because the flat&apos;s details are on the listing page itself.
+              That is not a listing address we read. A Rightmove one looks like{' '}
+              <code>rightmove.co.uk/properties/88023648</code>; the others are{' '}
+              {SITES.filter((x) => x.id !== 'rightmove')
+                .map((x) => x.hosts[0])
+                .join(', ')}
+              . A search page will not do, because the flat&apos;s details are on the listing page
+              itself.
             </p>
           )}
           {id && !add.isPending && !result && <p className="dim">Listing {id}.</p>}

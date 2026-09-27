@@ -15,9 +15,6 @@ export type { SearchCard };
  *  MAIN-world script is needed — the reason `page-model.content.ts` exists is that
  *  `window.__PAGE_MODEL` is a JavaScript variable, and this is not. And it is server-rendered
  *  once, so it does **not** follow a soft SPA navigation; `staleness` below is how we notice.
- *
- *  Reading it is reading a page the user opened, which is the line AGENTS.md draws. Nothing here
- *  fetches anything.
  */
 
 

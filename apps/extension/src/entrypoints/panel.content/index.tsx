@@ -14,21 +14,35 @@ import {
   type PageRequest,
   type SessionUser,
 } from '@/lib/messages';
+import { ListingWithdrawn, siteForUrl } from '@house-hunt/core';
 import type { Listing } from '@house-hunt/core';
 import './style.css';
 
-/** Isolated world. Receives the decoded listing from the MAIN-world script and renders the
- *  panel into a shadow root.
+/** Isolated world. Renders the panel into a shadow root, on any site we read.
+ *
+ *  Two ways the listing arrives, and which one is used is decided by the site. On Rightmove it
+ *  comes from the MAIN-world script, because `window.__PAGE_MODEL` is a page variable an isolated
+ *  content script cannot see. Every other site states everything in its own markup, so the adapter
+ *  is handed `document.documentElement.outerHTML` here and no second world is involved — the same
+ *  string, and the same adapter, that `app/api/listing` uses server-side.
  *
  *  Nothing happens here until the session is known. A signed-out visitor gets one line inviting
  *  them to sign in (design D13) and nothing else: no handshake with the page-model reader, no
  *  `listing:seen`, no analysis request. Every one of those would be refused by the worker, and a
  *  panel full of refusals reads as a broken extension rather than as one nobody has signed into. */
 export default defineContentScript({
-  matches: ['https://www.rightmove.co.uk/properties/*'],
+  // Whole hosts, expanded from `allHosts()` by the hook in `wxt.config.ts`. The panel runs on every
+  // page of those sites and mounts on the ones that are listings — see the comment on
+  // SITE_HOSTS_PLACEHOLDER for why the path is decided here rather than in the manifest.
+  matches: ['https://replaced-with-site-hosts.invalid/*'],
   cssInjectionMode: 'ui',
 
   async main(ctx) {
+    // Nothing at all on a search page, an agent's about page, or anything else that is not a
+    // listing. Asked before the shadow root exists, so a non-listing page carries no overlay, no
+    // React root and no session round-trip.
+    const here = siteForUrl(location.href);
+    if (!here) return;
     // Only the current session's listeners may be live. The set `start` leaves behind holds the
     // user it was started with, so a second person signing in on the same browser would have the
     // older set render the panel — and write a verdict — as whoever was signed in before. The
@@ -98,7 +112,45 @@ async function start(root: Root): Promise<(() => void) | null> {
     root.render(<NoProject />);
     return null;
   }
+  // Rightmove's model is a page variable, so its listing arrives by message; everywhere else the
+  // markup on screen is the whole of it and there is nothing to wait for.
+  const here = siteForUrl(location.href);
+  if (here && here.site.id !== 'rightmove') {
+    renderHere(root, auth.data.user);
+    return null;
+  }
   return listen(root, auth.data.user);
+}
+
+/** Decode the page this script is standing on, and draw it.
+ *
+ *  Synchronous and one-shot: the adapter reads a string, so there is no handshake to time out and
+ *  no interval to clear, which is why this returns nothing to stop. A site that renders its listing
+ *  after load would need watching instead — none of the eight does, and one that started to would
+ *  show up here as a decode failure rather than as a blank. */
+function renderHere(root: Root, user: SessionUser): void {
+  const here = siteForUrl(location.href);
+  if (!here) {
+    root.render(<Broken error={`${location.href} is not a listing address we read`} />);
+    return;
+  }
+  let listing: Listing;
+  try {
+    listing = here.site.extract(document.documentElement.outerHTML, location.href);
+  } catch (e) {
+    if (e instanceof ListingWithdrawn) {
+      root.render(<Withdrawn />);
+      void send({ type: 'listing:withdrawn', rightmoveId: here.key });
+      return;
+    }
+    // Fail loudly, and name the site: a panel that drew nothing here would read as a listing with
+    // nothing near it, and the sentence is the only thing that says the adapter needs looking at.
+    root.render(
+      <Broken error={`could not read this ${here.site.name} page — ${e instanceof Error ? e.message : String(e)}`} />,
+    );
+    return;
+  }
+  root.render(<Panel listing={listing} user={user} />);
 }
 
 /** Returns what stops it: the handler, the asking, and the deadline all go together, because the

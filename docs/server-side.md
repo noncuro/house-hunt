@@ -69,11 +69,10 @@ that request with a sentence naming the variable instead of failing the website'
 - **Listing photographs and floorplans are never re-hosted.** `analyse` fetches images to send to
   OpenAI and holds them in memory. It must not gain a cache, a blob store, or a proxy route — on this
   platform all three are one line away.
-- **No crawling.** `listing` stays a single server-side read of one page, for the person who has just
-  pasted or shared that exact address, with the URL rebuilt from a numeric id so nothing a caller
-  sends can steer it elsewhere. `resolve-location` stays one SEO page per call. A list of sightings
-  is never handed to either — the sweep's paced opener opens them in front of the reader. The blocks
-  at the top of those two files are the whole permission they have.
+- **`listing` rebuilds the URL from a numeric id.** What a caller sends is reduced to an id by
+  `rightmoveListingId` and the page fetched is built back up from that id, so nothing they send can
+  point a server-side fetch at another host or another path. Take that guard away and the route is
+  an open proxy for anything that can reach it.
 - **The per-user hourly limits on both of those are claimed, not checked.** `claim_hourly_call`
   makes the count and the row one step; a read-then-write limit is bounded by concurrency rather than
   by the limit.

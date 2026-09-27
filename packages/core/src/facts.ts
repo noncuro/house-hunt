@@ -372,6 +372,85 @@ export function addressBesidePostcode(displayAddress: string, postcode: string |
   return kept || displayAddress;
 }
 
+/** "Now" or a date, as the listing worded it, turned into a phrase that reads either way.
+ *
+ *  The field is text rather than a date precisely because Rightmove answers both — see the
+ *  `letAvailableDate` note on `Listing`. Anything that is not recognisably a date is passed through
+ *  rather than reformatted: an agent who wrote "Late September" has said something, and replacing
+ *  it with a blank or a guessed date would lose it. */
+export function availableFrom(value: string | null): string | null {
+  const text = value?.trim();
+  if (!text) return null;
+  if (/^now$/i.test(text)) return 'Available now';
+  return `Available ${text}`;
+}
+
+/** The same value as something a column can sort on: milliseconds, with "Now" as zero.
+ *
+ *  Zero rather than today's date because "now" is a claim about availability and not about the
+ *  clock — two flats both available now should tie, and dating them from when the table happened to
+ *  be drawn would order them by nothing. Anything neither "now" nor a `dd/mm/yyyy` returns null and
+ *  sorts as unknown, which is the rule every other unmeasured figure here follows: a flat whose
+ *  agent wrote "Late September" is not a flat available late, it is one we cannot order. */
+export function availableOn(value: string | null): number | null {
+  const text = value?.trim();
+  if (!text) return null;
+  if (/^now$/i.test(text)) return 0;
+  const uk = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text);
+  if (!uk) return null;
+  const [, day, month, year] = uk;
+  const at = Date.UTC(Number(year), Number(month) - 1, Number(day));
+  // Date.UTC rolls 31/02 forward to 03/03 rather than refusing it, so a date that does not survive
+  // the round trip is a date we misread and is better returned as unknown than as the wrong day.
+  const back = new Date(at);
+  if (back.getUTCDate() !== Number(day) || back.getUTCMonth() !== Number(month) - 1) return null;
+  return at;
+}
+
+/** "£4,800 pcm" -> 4800; "£1,100 pw" -> 4766.67 (a week is 1/52 of a year, a month 1/12). Returns
+ *  null when there is no number to read, so a blank price stays missing rather than becoming 0.
+ *
+ *  Only the FIRST amount, and only the unit that trails it. Rightmove routinely quotes both —
+ *  "£4,800 pcm (£1,108 pw)" — and stripping every non-digit from that string concatenates the two
+ *  into £48,001,108, which then dominates a standardised feature column on its own. Reading the
+ *  unit from the text between the amount and the next digit is what stops the parenthesised "pw"
+ *  re-pricing a monthly rent as a weekly one. */
+export function parseMonthlyPrice(price: string | null): number | null {
+  if (!price) return null;
+  const match = /\d[\d,]*(?:\.\d+)?/.exec(price);
+  if (!match) return null;
+  const value = Number(match[0].replace(/,/g, ''));
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const unit = price.slice(match.index + match[0].length).split(/\d/)[0] ?? '';
+  return /\bpw\b|per week/i.test(unit) ? (value * 52) / 12 : value;
+}
+
+/** A deposit in whole pounds. Null means the agent did not state one, which is roughly half of
+ *  listings — never "no deposit", so a caller must not render absence as zero. */
+export function depositAmount(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value) || value <= 0) return null;
+  return `£${Math.round(value).toLocaleString()} deposit`;
+}
+
+/** The council tax band, labelled, because a bare "C" beside a rent reads as nothing at all. */
+export function councilTax(band: string | null): string | null {
+  const text = band?.trim().toUpperCase();
+  return text ? `Council tax ${text}` : null;
+}
+
+/** The tenancy length, shown only when it is not the ordinary one.
+ *
+ *  "Long term" is what 4 of 4 fixtures say and what a lettings search returns by default, so
+ *  printing it on every flat is a word that never varies taking up room beside ones that do. A
+ *  short let is the opposite — it changes what the flat is — so that is the case worth the space.
+ *  If Rightmove ever rewords the common value this starts showing on every flat, which is a fact
+ *  appearing rather than one going missing, and that is the safe direction for a guess like this. */
+export function letLength(value: string | null): string | null {
+  const text = value?.trim();
+  if (!text || /^long[\s-]?term$/i.test(text)) return null;
+  return text;
+}
+
 /** A station distance in the unit Rightmove actually supplied.
  *
  *  Every view printed "mi" regardless. `unit` is extracted and stored, so a listing served in

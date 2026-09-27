@@ -27,6 +27,7 @@
  *  `ANALYSIS_ESTIMATE_USD`. Both are read per request rather than at module scope, so a missing key
  *  fails the request that needed it instead of the build of the whole website.
  */
+import { isPropertyKey } from '@house-hunt/core';
 import { analyseListing, type ParsedAnalysis } from '@house-hunt/core/analysis';
 
 import { requireActiveProject } from '@/server/caller';
@@ -86,10 +87,12 @@ export const POST = authedRoute(async (request, caller) => {
   const projectId = await requireActiveProject(caller);
 
   const { rightmoveId } = await jsonBody<{ rightmoveId?: string }>(request);
-  // Rightmove ids are numeric. Checking that here keeps the id out of a PostgREST filter it could
-  // otherwise alter, since these are interpolated into the query string below.
-  if (!rightmoveId || !/^\d+$/.test(rightmoveId)) {
-    throw new HttpError(400, 'bad-request', 'a numeric rightmoveId is required');
+  // A property key is `[A-Za-z0-9_-]+` and nothing else — `isPropertyKey` is where that is stated.
+  // Checking it here keeps the id out of a PostgREST filter it could otherwise alter, since these
+  // are interpolated into the query string below. It was `/^\d+$/` while every flat was
+  // Rightmove's, which would now refuse every agent-site flat.
+  if (!rightmoveId || !isPropertyKey(rightmoveId)) {
+    throw new HttpError(400, 'bad-request', 'a rightmoveId is required, and must be a property key');
   }
 
   // Gate 3. The link is the project's own record of having opened this listing. Without it the

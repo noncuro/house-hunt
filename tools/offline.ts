@@ -1,11 +1,10 @@
 /** Nothing a harness does may reach Rightmove.
  *
- *  The standing rule in AGENTS.md — read pages the user opened, never crawl — is about the
- *  extension, and it applies at least as hard to a test that can be run in a loop. Two harnesses
- *  were quietly breaking it. The shortlist renders every saved property's photo thumbnails, which
- *  is a few hundred requests to Rightmove's CDN per run. And `smoke:sweep` drives the paced
- *  opener, which opens real listing pages in real tabs — a page load each, plus its scripts,
- *  fonts and images.
+ *  A harness that reaches the live network is not reproducible: it passes or fails on what
+ *  Rightmove served that minute, and it can be run in a loop. Two harnesses were quietly doing it.
+ *  The shortlist renders every saved property's photo thumbnails, which is a few hundred requests
+ *  to Rightmove's CDN per run. And `smoke:sweep` drives the paced opener, which opens real listing
+ *  pages in real tabs — a page load each, plus its scripts, fonts and images.
  *
  *  Two layers, because one was not enough:
  *

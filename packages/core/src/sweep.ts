@@ -392,12 +392,18 @@ export function missingFor(known: {
    *  `not null default '[]'`, so an empty list means the page had none rather than that nobody
    *  has looked. */
   imageCount: number;
+  /** How many floorplans. Counted with the photographs rather than beside them: a floorplan is an
+   *  image the analyser can read, and it is the one it wants most. Summed here rather than by the
+   *  caller so a second caller cannot forget it and report a floorplan-only listing as having
+   *  nothing to analyse. */
+  floorplanCount: number;
   /** Whether any analysis of it finished. */
   analysed: boolean;
 }): string[] {
   const missing: string[] = [];
   if (!known.postcode) missing.push('no postcode read from the listing');
-  if (known.imageCount > 0 && !known.analysed) missing.push('photos not analysed yet');
+  const images = known.imageCount + known.floorplanCount;
+  if (images > 0 && !known.analysed) missing.push('photos not analysed yet');
   return missing;
 }
 
@@ -427,9 +433,7 @@ export interface SweepSearch {
 
 /** The Rightmove search URL for one hub, one time window, one page.
  *
- *  This builds a link a human clicks. Nothing fetches it — see the standing rule in AGENTS.md
- *  about reading pages you opened and never calling their search endpoint. The distinction is
- *  the whole design: a URL in an anchor is a bookmark, and the same URL in a `fetch` is a crawler.
+ *  This builds a link a human clicks; nothing here fetches it.
  *
  *  Returns null for a hub whose identifier we could not verify, because a search URL with a
  *  wrong `locationIdentifier` still returns a page full of plausible flats somewhere else. */

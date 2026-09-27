@@ -3,8 +3,8 @@
  *
  *  The listing is served from a saved HTML file that Playwright fulfils under the real Rightmove
  *  URL. That keeps the manifest's match patterns satisfied so the content scripts inject exactly
- *  as they do in life, while no request ever leaves this machine — which is also what keeps this
- *  a reader and not a crawler (AGENTS.md).
+ *  as they do in life, while no request ever leaves this machine — which is what makes the result
+ *  reproducible rather than a report on what Rightmove served that minute.
  *
  *    pnpm fixture 88023648        # save a listing page once
  *    pnpm smoke .fixtures/88023648.html
@@ -181,7 +181,12 @@ try {
       await page.waitForTimeout(300);
       const over = await page.evaluate(`(() => {
         const shadow = document.querySelector('rightmove-house-hunt').shadowRoot;
-        const img = shadow.querySelector('.lightbox-image');
+        // The middle slide, explicitly. The track is three slides wide with the neighbours hanging
+        // a full viewport off each side, and the previous one is written first — so a plain
+        // \`querySelector('.lightbox-image')\` finds a photo centred at about -640px, off the
+        // screen, where \`elementFromPoint\` returns null and this reports the gallery as blocked
+        // "by nothing" on every listing with more than one photograph.
+        const img = shadow.querySelector('.lightbox-slide:nth-child(2) .lightbox-image');
         if (!img) return { ok: false, why: 'no image in the lightbox' };
         const box = img.getBoundingClientRect();
         if (box.width === 0) return { ok: false, why: 'the image has no size' };

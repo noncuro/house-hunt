@@ -1,4 +1,4 @@
-/** One Rightmove listing URL -> the listing, read server-side.
+/** One listing URL, on any site we read -> the listing, read server-side.
  *
  *  This exists so a phone can add a flat. Everywhere else the listing arrives from a content script
  *  standing on the page the reader opened, and there is no content script on a phone — Chrome for
@@ -9,37 +9,24 @@
  *  with `record_property`, exactly as the extension does — this route holds no project, writes no
  *  property, and is not a way to reach one. It reads a page and decodes it.
  *
- *  ---------------------------------------------------------------------------------------------
- *  THE SECOND PLACE IN THIS SYSTEM THAT FETCHES RIGHTMOVE, AND THE NO-CRAWL RULE IS NOT RELAXED
- *  FOR IT EITHER.
+ *  **The URL the caller sends is never the URL this fetches.** It is offered to every site in
+ *  `SITES`, reduced to that site's own id, and the page is rebuilt by that site's `listingUrl` — so
+ *  the host and the path come from the adapter and the only thing a caller controls is an id
+ *  matching `[A-Za-z0-9-]+`. Take that away and this route is an open proxy: anything that can
+ *  reach it can aim a server-side request wherever it likes, including at addresses only this
+ *  deployment can see. Adding a site does not widen that: a new adapter adds one more host this can
+ *  reach, chosen by us, and `listingUrl` throws on an id it did not shape itself. It is rate-limited
+ *  per person below for the same family of reasons — a bug or a retry loop in a caller cannot turn
+ *  one action into an unbounded number of outbound requests.
  *
- *  `AGENTS.md`: *read pages the user opened; never crawl*. Read the block at the top of
- *  `app/api/resolve-location/route.ts` — the argument is the same one and it is the
- *  reason both of these are allowed to exist. The shape of the request is what keeps it inside the
- *  rule:
- *
- *    - **one** request, for **one** listing, per invocation. Never a list, never a loop.
- *    - **initiated by a person** who has just pasted or shared that exact URL, in the moment they
- *      did it. Never on a schedule, never in the background, never as a warm-up, and never
- *      speculatively over a sweep's sightings — a sighting is a card somebody's own search returned,
- *      and turning that list into fetches here is precisely the crawl this rule forbids. The paced
- *      opener in the extension exists because opening those pages *in front of the reader* is the
- *      only way we do that.
- *    - **the listing page itself**, the same document their browser would get, not an API.
- *    - **rate-limited per person** below, so a bug in a caller cannot turn a hand action into a
- *      loop.
- *
- *  Two things follow from that and are enforced rather than intended: the URL is reduced to an id
- *  by `rightmoveListingId` and the page is rebuilt from the id, so nothing a caller sends can steer
- *  this at another host or another path; and no image is fetched, saved or re-hosted here — the
- *  URLs go back as URLs, because Rightmove's photographs are shown from Rightmove's CDN and never
- *  from us.
- *  ---------------------------------------------------------------------------------------------
+ *  No image is fetched, saved or re-hosted here either: the URLs go back as URLs, because the
+ *  photographs belong to whoever took them and are shown from the site's own CDN rather than copied
+ *  onto ours.
  *
  *  Moved off the Supabase Edge runtime; `docs/server-side.md` is what
  *  this file was ported against.
  */
-import { listingFromHtml, ListingWithdrawn, listingUrl, rightmoveListingId } from '@house-hunt/core';
+import { ListingWithdrawn, siteForUrl, SITES, type Site } from '@house-hunt/core';
 import { requireActiveProject } from '@/server/caller';
 import { authedRoute, jsonBody } from '@/server/handler';
 import { claimHourlyCall, type RateLimited } from '@/server/rate-limit';
@@ -73,7 +60,7 @@ export const dynamic = 'force-dynamic';
 const LIMIT_PER_HOUR = 60;
 const KIND = 'fetch_listing';
 
-/** How long to wait for Rightmove before giving up.
+/** How long to wait for the site before giving up.
  *
  *  A `fetch` with no signal waits as long as the other end keeps the socket open, and the only thing
  *  that ends it is the platform killing the whole invocation — at which point the caller gets a
@@ -86,9 +73,10 @@ type Result =
   /** The agent has taken it down. A fact about the flat rather than a failure of ours, so it comes
    *  back 200 with a name the interface can explain — the reply convention in `@/server/handler`. */
   | { status: 'withdrawn'; rightmoveId: string }
-  /** Rightmove served a page with no model in it. Distinct from `withdrawn`, which is a page shape
-   *  we understand: this is the one that means Rightmove has changed something and the extension is
-   *  about to break too, so it must not be dressed up as "that flat is gone". */
+  /** The site served a page the adapter could not read. Distinct from `withdrawn`, which is a page
+   *  shape we understand: this is the one that means the site has changed something, and on
+   *  Rightmove it means the extension is about to break too — so it must not be dressed up as
+   *  "that flat is gone". */
   | { status: 'unreadable'; rightmoveId: string; message: string }
   | RateLimited;
 
@@ -99,12 +87,12 @@ export const POST = authedRoute(async (request, caller): Promise<Result> => {
   const projectId = await requireActiveProject(caller);
 
   const { url } = await jsonBody<{ url?: string }>(request);
-  const id = rightmoveListingId(url ?? '');
-  if (!id) {
+  const found = siteForUrl(url ?? '');
+  if (!found) {
     throw new HttpError(
       400,
       'not-a-listing',
-      'that is not a Rightmove listing address — it should look like https://www.rightmove.co.uk/properties/88023648',
+      `that is not a listing address on a site we read (${SITES.map((s) => s.name).join(', ')}) — a Rightmove one looks like https://www.rightmove.co.uk/properties/88023648`,
     );
   }
 
@@ -113,16 +101,16 @@ export const POST = authedRoute(async (request, caller): Promise<Result> => {
     projectId,
     kind: KIND,
     limit: LIMIT_PER_HOUR,
-    rightmoveId: id,
+    rightmoveId: found.key,
   });
   if (refused) return refused;
-  console.log(`reading listing ${id} for ${caller.userId}`);
+  console.log(`reading listing ${found.key} for ${caller.userId}`);
 
-  return await read(id);
+  return await read(found.site, found.externalId, found.key);
 });
 
-async function read(id: string): Promise<Result> {
-  const url = listingUrl(id);
+async function read(site: Site, externalId: string, key: string): Promise<Result> {
+  const url = site.listingUrl(externalId);
   // The single request. Read the block at the top of this file before adding a second one.
   //
   // The fetch and the body read are inside one deadline because `AbortSignal.timeout` *is* one: it
@@ -141,39 +129,39 @@ async function read(id: string): Promise<Result> {
       // that has since been withdrawn.
       cache: 'no-store',
     });
-    // A withdrawn listing answers 404 with a full page that still carries a (hollowed-out) model,
-    // so the status alone is not the answer — `listingFromHtml` below is what tells the two apart,
-    // from the page's own shape. Anything other than 200 or 404 is Rightmove having a problem, and
-    // is thrown rather than returned: it is not a state the interface has a sentence for.
+    // A withdrawn Rightmove listing answers 404 with a full page that still carries a (hollowed-out)
+    // model, so the status alone is not the answer — `extract` below is what tells the two apart,
+    // from the page's own shape. Anything other than 200 or 404 is the site having a problem, and is
+    // thrown rather than returned: it is not a state the interface has a sentence for.
     if (!response.ok && response.status !== 404) {
-      throw new Error(`rightmove returned ${response.status} for ${url}`);
+      throw new Error(`${site.name} returned ${response.status} for ${url}`);
     }
     html = await response.text();
   } catch (e) {
     // A timeout, and only a timeout. `AbortSignal.timeout` rejects with a `TimeoutError`, and
     // catching anything wider would file a DNS failure, a TLS error, a dropped connection or the
-    // status thrown just above under a deadline that was never reached — a sentence about Rightmove
+    // status thrown just above under a deadline that was never reached — a sentence about the site
     // being slow when it was never spoken to. Everything else goes up as the 500 it is.
     if (e instanceof Error && e.name === 'TimeoutError') {
       return {
         status: 'unreadable',
-        rightmoveId: id,
-        message: `rightmove did not answer within ${FETCH_MS / 1000} seconds`,
+        rightmoveId: key,
+        message: `${site.name} did not answer within ${FETCH_MS / 1000} seconds`,
       };
     }
     throw e;
   }
 
   try {
-    return { status: 'read', listing: listingFromHtml(html, url) };
+    return { status: 'read', listing: site.extract(html, url) };
   } catch (e) {
-    if (e instanceof ListingWithdrawn) return { status: 'withdrawn', rightmoveId: id };
-    // A 404 with nothing to decode is a listing that is gone — the page Rightmove serves for an id
+    if (e instanceof ListingWithdrawn) return { status: 'withdrawn', rightmoveId: key };
+    // A 404 with nothing to decode is a listing that is gone — the page a site serves for an id
     // that never existed, or one old enough to have been cleared out.
-    if (response.status === 404) return { status: 'withdrawn', rightmoveId: id };
+    if (response.status === 404) return { status: 'withdrawn', rightmoveId: key };
     return {
       status: 'unreadable',
-      rightmoveId: id,
+      rightmoveId: key,
       message: e instanceof Error ? e.message : String(e),
     };
   }

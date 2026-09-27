@@ -40,6 +40,7 @@ export function FlatPanel({
   onSetStage,
   onSetOffMarket,
   stageSaving,
+  onOpen,
 }: {
   entry: ShortlistEntry;
   places: Place[];
@@ -56,6 +57,9 @@ export function FlatPanel({
   onSetStage: (stage: Stage, archiveReason: ArchiveReason | null) => void;
   onSetOffMarket: (off: boolean) => void;
   stageSaving: Stage | null;
+  /** Point the panel at a different flat without closing it — what the duplicate note needs, since
+   *  the whole act is comparing this one against that one. */
+  onOpen?: (rightmoveId: string) => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
 
@@ -110,6 +114,7 @@ export function FlatPanel({
             onSetStage={onSetStage}
             onSetOffMarket={onSetOffMarket}
             stageSaving={stageSaving}
+            onOpenDuplicate={onOpen}
           />
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { loadEnv } from 'vite';
 import { defineConfig } from 'wxt';
+import { allHosts } from '../../packages/core/src/sites';
 
 // Config lives in the workspace root's .env — see .env.example for the two keys it needs. Only
 // WXT_*-prefixed vars are exposed to the bundle, so nothing else in that file leaks into the
@@ -39,6 +40,25 @@ const webAppOrigin = new URL(env.WXT_WEB_APP_URL).origin;
  *  nothing. That is the failure that looks like success, so the placeholder is a name that could
  *  never be a real site and the hook throws if it is not there. */
 const BRIDGE_PLACEHOLDER = 'https://replaced-at-build-time.invalid/*';
+
+/** The panel carries this, and the hook below expands it into one pattern per site.
+ *
+ *  A literal for the same reason the bridge's is — WXT reads the entrypoint file to write the
+ *  manifest, and a computed `matches` there is a manifest that matches nothing while building
+ *  cleanly. Expanded from `allHosts()`, so a site added to `SITES` without a host listed on it is
+ *  a site whose panel never loads.
+ *
+ *  It expands to whole hosts rather than to each site's listing paths, and the panel then declines
+ *  to mount on a page `siteForUrl` does not claim. Path patterns here would be a second, quieter
+ *  copy of what a listing URL looks like on eight sites — the copy that gets forgotten, and whose
+ *  being wrong looks exactly like the panel being broken.
+ *
+ *  It lands in the manifest **twice**: on the content script, and on the `web_accessible_resources`
+ *  entry WXT writes for the panel's stylesheet, whose `matches` it copies from the same entrypoint.
+ *  Expanding only the first is a panel that mounts and has no styles — Chrome refuses the CSS with
+ *  "Resources must be listed in the web_accessible_resources manifest key", once, in the page's
+ *  console rather than the worker's, and the panel renders as unstyled text over the listing. */
+const SITE_HOSTS_PLACEHOLDER = 'https://replaced-with-site-hosts.invalid/*';
 
 // Two distributions, and they must not share an extension id.
 //
@@ -115,6 +135,35 @@ export default defineConfig({
         );
       }
       bridge.matches = [`${webAppOrigin}/*`];
+
+      // Both places the placeholder reaches, counted rather than assumed: WXT writes the panel's
+      // stylesheet into `web_accessible_resources` with the entrypoint's own `matches`, so there is
+      // a second copy that no amount of reading the entrypoint would suggest.
+      const sites = allHosts().map((host) => `https://${host}/*`);
+      const expand = (matches: string[]): string[] => [
+        ...matches.filter((m) => m !== SITE_HOSTS_PLACEHOLDER),
+        ...sites,
+      ];
+
+      let expanded = 0;
+      for (const script of manifest.content_scripts ?? []) {
+        if (!script.matches?.includes(SITE_HOSTS_PLACEHOLDER)) continue;
+        script.matches = expand(script.matches);
+        expanded += 1;
+      }
+      for (const resource of manifest.web_accessible_resources ?? []) {
+        if (typeof resource === 'string') continue;
+        if (!resource.matches?.includes(SITE_HOSTS_PLACEHOLDER)) continue;
+        resource.matches = expand(resource.matches);
+        expanded += 1;
+      }
+      if (expanded !== 2) {
+        throw new Error(
+          `expanded ${SITE_HOSTS_PLACEHOLDER} in ${expanded} place(s), expected 2 — the panel ` +
+            'content script and the web_accessible_resources entry for its stylesheet. A count ' +
+            'of 1 is a panel that mounts with no styles; 0 is one that never mounts at all',
+        );
+      }
     },
   },
   vite: () => ({

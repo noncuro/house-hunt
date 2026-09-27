@@ -18,6 +18,7 @@ import {
   type Example,
   type HubPoint,
   type HuntPreferences,
+  isPropertyKey,
   labelFor,
   type LabelMode,
   MIN_PER_CLASS,
@@ -165,12 +166,13 @@ export const POST = authedRoute(async (request, caller): Promise<Result> => {
   const excluded = new Set(exclusions.map((e) => e.rightmove_id));
   // `verdict` is keyed (project_id, rightmove_id) since the multi-tenant migration dropped `person`,
   // so a flat has exactly one rating here and this map cannot actually collapse anything. It stays a
-  // map rather than a list because it is also the filter — excluded flats and any non-numeric id are
-  // dropped before the ids reach a PostgREST `in.()` — and because keeping the last-write-wins rule
-  // means a key that widens back out degrades to "most recent" instead of "whichever row came last".
+  // map rather than a list because it is also the filter — excluded flats and any id that is not a
+  // key we could have written are dropped before the ids reach a PostgREST `in.()` — and because
+  // keeping the last-write-wins rule means a key that widens back out degrades to "most recent"
+  // instead of "whichever row came last".
   const rating = new Map<string, VerdictRow['rating']>();
   for (const v of verdicts) {
-    if (excluded.has(v.rightmove_id) || !/^\d+$/.test(v.rightmove_id)) continue;
+    if (excluded.has(v.rightmove_id) || !isPropertyKey(v.rightmove_id)) continue;
     rating.set(v.rightmove_id, v.rating);
   }
   const ids = [...rating.keys()];

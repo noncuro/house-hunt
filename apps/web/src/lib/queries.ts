@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   MutationCache,
   QueryCache,
@@ -29,7 +30,7 @@ import {
   type RetrainResult,
   type ShortlistEntry,
 } from '@house-hunt/core/db';
-import { sweepableHubs } from '@house-hunt/core';
+import { possibleDuplicates, sweepableHubs, type PossibleDuplicate } from '@house-hunt/core';
 import type {
   ArchiveReason,
   AuthState,
@@ -101,6 +102,17 @@ export const keys = {
 
 export function useShortlist() {
   return useQuery({ queryKey: keys.shortlist, queryFn: getShortlist });
+}
+
+/** The flats already here that might be this one again — see `packages/core/src/duplicates.ts`.
+ *
+ *  Reads the shortlist rather than taking it as a prop, because the answer needs the *whole* hunt
+ *  and every screen that opens a flat shows a subset of it: triage a pile, the board one column,
+ *  the map whatever is in view. A prop would have each of them pass down what it happened to be
+ *  holding, and the duplicate a filter had excluded would be the one that went unmentioned. */
+export function useDuplicates(entry: ShortlistEntry): PossibleDuplicate[] {
+  const { data: all } = useShortlist();
+  return useMemo(() => (all ? possibleDuplicates(entry, all) : []), [entry, all]);
 }
 
 /** Whether the Rightmove half is installed here, asked **once for the page**.

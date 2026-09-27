@@ -16,6 +16,7 @@ export * from './facts';
 export * from './filter';
 export * from './hubs';
 export * from './listing';
+export * from './sites';
 export * from './shortlist';
 export * from './stage';
 export * from './sweep';
@@ -50,3 +51,4 @@ export {
 // Deno copy that used to stand in for that import is gone — and `png` reaches it through that.
 // Re-exporting either here would put an image decoder in every bundle that wanted a type; a subpath
 // puts it only in the one that asks.
+export * from './duplicates';

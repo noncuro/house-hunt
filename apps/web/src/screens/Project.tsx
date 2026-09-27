@@ -1411,9 +1411,8 @@ function LocationNote({
  *  be typed twice to be both searched and commuted from. The tables are one table now (see the
  *  `places_are_hubs` migration) and so is this.
  *
- *  Searching around a place needs Rightmove's own name for it, which is resolved by a person
- *  pressing a button and never in the background — the standing no-crawl rule's one sanctioned
- *  fetch: one request, for one place, by somebody looking at the screen. */
+ *  Searching around a place needs Rightmove's own name for it, which is resolved by the button on
+ *  that row: one request, for one place, by somebody looking at the screen. */
 function Places({
   places,
   setPlaces,

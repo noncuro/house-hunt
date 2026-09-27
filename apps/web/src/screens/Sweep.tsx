@@ -7,12 +7,20 @@ import { toSweepHub, recheckTargets, RECHECK_AFTER_DAYS } from '@house-hunt/core
 import {
   getShortlist,
   listHubSweeps,
+  listOffMarket,
   locateProperties,
   pendingSightings,
   resetSweepProgress,
   type HubSweep,
 } from '@house-hunt/core/db';
-import { keys, useExtension, useHubs, useProjectSettings, useShortlist } from '@/lib/queries';
+import {
+  keys,
+  useExtension,
+  useHubs,
+  useOffMarket,
+  useProjectSettings,
+  useShortlist,
+} from '@/lib/queries';
 import { useCanHoldExtension } from '@/lib/platform';
 import { openTabExtension, type ExtensionState } from '@/lib/bridge';
 import {
@@ -237,6 +245,7 @@ function FullSweep({
         resetSweep: resetSweepProgress,
         pending: pendingSightings,
         shortlist: getShortlist,
+        offMarket: async () => new Set(await listOffMarket()),
         sleep: abortableSleep,
         now: () => new Date(),
       },
@@ -386,20 +395,30 @@ function Recheck() {
   // re-probed, and with no idea that a phone has no extension to probe for.
   const extension = useExtension();
   const extensionPossible = useCanHoldExtension();
+  // Which flats are already known to be gone. Read here rather than inferred from the funnel: off
+  // the market is a third fact and does not write the stage (AGENTS.md), so the shortlist row of a
+  // withdrawn flat is indistinguishable from a live one.
+  const offMarket = useOffMarket();
   const client = useQueryClient();
 
-  if (shortlist.isPending) return <p className="working">Working…</p>;
+  if (shortlist.isPending || offMarket.isPending) return <p className="working">Working…</p>;
   if (shortlist.isError) return <p className="error">Could not read the shortlist.</p>;
+  // Loudly, rather than running with an empty set: that would quietly put every withdrawn flat back
+  // on the worklist, which looks like a longer run and not like a failed read.
+  if (offMarket.isError) {
+    return <p className="error">Could not read which places are already off the market.</p>;
+  }
 
-  const targets = recheckTargets(shortlist.data ?? []);
+  const targets = recheckTargets(shortlist.data ?? [], offMarket.data ?? new Set());
   const present = extensionPresent(extension.data);
 
   if (targets.length === 0) {
     return (
       <p className="dim">
         Nothing in the funnel is due for a re-check — a reading holds for {RECHECK_AFTER_DAYS} days.
-        Places nobody has liked or staged are left alone, and so is anything archived: a flat you
-        have walked away from is not worth a tab to find out it has gone.
+        Places nobody has liked or staged are left alone, and so is anything archived or already off
+        the market: a flat you have walked away from is not worth a tab to find out it has gone, and
+        neither is one we know has.
       </p>
     );
   }
@@ -414,7 +433,8 @@ function Recheck() {
         {targets.length === 1 ? 'is' : 'are'} due for a re-check — last read over{' '}
         {RECHECK_AFTER_DAYS} days ago, or on a date we cannot read. Reopening tells us what they cost
         now and which have gone — the ones you love go first, so stopping halfway costs you the
-        least. Places nobody has liked or staged are left alone, and so is anything archived.
+        least. Places nobody has liked or staged are left alone, and so is anything archived or
+        already off the market.
       </p>
       <div className="sweep-fill">
         {extension.isPending ? null : present ? (
@@ -436,6 +456,13 @@ function Recheck() {
       </div>
     </>
   );
+}
+
+/** `Primrose Hill 3 · Angel 1` — a count per distinct string, in the order first seen. */
+function tally(values: string[]): string {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()].map(([what, n]) => `${what} ${n}`).join(' · ');
 }
 
 /** One place we search around: the link to go looking with, how far back that search reaches, and how much
@@ -565,21 +592,36 @@ function FillIn({
     );
   }
 
-  // Grouped only to say where the work is. The run itself goes newest-sighting-first across all
-  // hubs, because a flat that appeared this morning is the one worth opening before it goes.
-  const byHub = new Map<string, number>();
-  for (const row of pending) byHub.set(row.hub, (byHub.get(row.hub) ?? 0) + 1);
+  // Two states, two sentences. `missing` is empty only for a listing with no property row at all,
+  // which is the one this used to claim about every row here — so a listing that had been opened
+  // five times and came back short read as a run that had not happened, which is exactly the
+  // complaint. The reason was computed all along and thrown away before it reached the page.
+  const never = pending.filter((row) => row.missing.length === 0);
+  const short = pending.filter((row) => row.missing.length > 0);
 
   const present = extensionPresent(extension.data);
 
   return (
     <>
-      <p className="dim">
-        {pending.length} scanned {pending.length === 1 ? 'listing has' : 'listings have'} not been
-        opened yet, so we have no travel times, no floorplan reading and no map position for
-        {pending.length === 1 ? ' it' : ' them'}.{' '}
-        {[...byHub.entries()].map(([hub, n]) => `${hub} ${n}`).join(' · ')}
-      </p>
+      {never.length > 0 && (
+        <p className="dim">
+          {never.length} scanned {never.length === 1 ? 'listing has' : 'listings have'} not been
+          opened yet, so we have no travel times, no floorplan reading and no map position for
+          {never.length === 1 ? ' it' : ' them'}.{' '}
+          {/* Grouped only to say where the work is. The run itself goes newest-sighting-first across
+              all hubs, because a flat that appeared this morning is the one worth opening before it
+              goes. */}
+          {tally(never.map((row) => row.hub))}
+        </p>
+      )}
+      {short.length > 0 && (
+        <p className="dim">
+          {short.length} more {short.length === 1 ? 'has' : 'have'} been opened and came back short:{' '}
+          {tally(short.flatMap((row) => row.missing))}. Opening{' '}
+          {short.length === 1 ? 'it' : 'them'} again is worth one more try; anything still here after
+          a run is something a run cannot fix.
+        </p>
+      )}
       <div className="sweep-fill">
         {/* Nothing while the question is outstanding — the run either appears or the reason it
             cannot does, but not a flicker between them. */}
@@ -590,7 +632,7 @@ function FillIn({
                 rightmoveId: row.rightmoveId,
                 label: row.displayAddress || row.rightmoveId,
               }))}
-              what="we haven't opened yet"
+              what="still to fill in"
               onFinished={async () => {
                 setError(null);
                 setMapNote(null);

@@ -121,3 +121,43 @@ export function duplicateIds(entries: ShortlistEntry[]): Map<string, string[]> {
   }
   return twins;
 }
+
+/** One row per agent marketing something in this hunt, commonest first.
+ *
+ *  Grouped on the company and not the branch. Dexters has 72 offices and Chestertons a dozen, so
+ *  branch-grouping answers "how many offices are we dealing with", which nobody asked; the useful
+ *  question is how much of the pile is coming through one firm — six flats from one agent is one
+ *  phone call, and it is also the shape that says a search is narrower than it looks.
+ *
+ *  Flats with no agent read off the page are counted separately by the caller rather than bucketed
+ *  under a blank name: absent here means the listing was recorded before the agent was extracted,
+ *  which is a gap in what we have rather than a flat somebody is selling anonymously. */
+export interface AgentCount {
+  company: string;
+  /** Every branch of that company seen in this hunt, in first-seen order — "Dexters, Clapham High
+   *  Street" and "Dexters, Balham" are one agent and two numbers to ring. */
+  branches: string[];
+  /** The first number seen for the company. One number is what a person wants; which branch it
+   *  reaches is on the flat itself. */
+  phone: string | null;
+  count: number;
+}
+
+export function agentTally(entries: ShortlistEntry[]): AgentCount[] {
+  const byCompany = new Map<string, AgentCount>();
+  for (const entry of entries) {
+    const company = entry.agentCompany?.trim();
+    if (!company) continue;
+    const row = byCompany.get(company) ?? { company, branches: [], phone: null, count: 0 };
+    row.count += 1;
+    const branch = entry.agentBranch?.trim();
+    if (branch && !row.branches.includes(branch)) row.branches.push(branch);
+    row.phone ??= entry.agentPhone?.trim() || null;
+    byCompany.set(company, row);
+  }
+  // Commonest first, and alphabetical within a count so the order does not shuffle between renders
+  // for two agents with three flats each.
+  return [...byCompany.values()].sort(
+    (a, b) => b.count - a.count || a.company.localeCompare(b.company),
+  );
+}

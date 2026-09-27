@@ -1,3 +1,5 @@
+import type { SiteId } from './sites/types';
+
 /** Shapes shared across the extension. Kept deliberately narrow — we only model the parts of
  *  Rightmove's page blob we actually use, so a change elsewhere in their payload can't break us. */
 
@@ -23,9 +25,20 @@ export interface Floorplan {
   caption: string | null;
 }
 
-/** What the MAIN-world extractor pulls out of window.__PAGE_MODEL. */
+/** One listing, however it was read: Rightmove's `__PAGE_MODEL` in the MAIN world, or one of the
+ *  agent-site adapters in `packages/core/src/sites/`. */
 export interface Listing {
+  /** The primary key, across every site. Rightmove's is its bare numeric id, which is what keeps
+   *  every row written before there were other sites readable without being rewritten; every other
+   *  site's is `<site>_<its own id>`. Built by `propertyKey`, never by hand. The name is the one the
+   *  database column has and is now a misnomer for eight of the nine sites — renaming it would touch
+   *  ten tables, eight SQL functions and some five hundred references, which buys a better word and
+   *  no behaviour. */
   rightmoveId: string;
+  /** Which site this was read from. */
+  site: SiteId;
+  /** That site's own id for it, unprefixed — what its own URLs and its own staff use. */
+  externalId: string;
   url: string;
   /** Full postcode, e.g. "NW8 6HS" — outcode + incode, present even though the page hides it. */
   postcode: string | null;
@@ -40,8 +53,30 @@ export interface Listing {
   floorArea: FloorArea | null;
   /** "Furnished" / "Unfurnished" / "Part furnished", from lettings.furnishType. */
   furnishType: string | null;
+  /** When the flat is free, exactly as the page words it: "Now", or a dd/mm/yyyy string. Kept as
+   *  text rather than parsed into a date because those two are not the same kind of value, and a
+   *  parser that turns "Now" into today would state a move-in date the agent never gave. */
+  letAvailableDate: string | null;
+  /** Deposit in whole pounds, from lettings.deposit. Null on plenty of listings — 2 of the 4
+   *  fixtures — so absent means the agent did not say, never "no deposit". */
+  deposit: number | null;
+  /** "Long term" / "Short term", from lettings.letType. */
+  letType: string | null;
+  /** Council tax band, A-H, from livingCosts.councilTaxBand. */
+  councilTaxBand: string | null;
   /** "Reduced today", "Added on 05/08/2026", … from listingHistory.listingUpdateReason. */
   listingUpdate: string | null;
+  /** Who is marketing the flat. Rightmove names them on every listing (4 of 4 fixtures), so this
+   *  costs a read rather than a second source. Three fields because they answer different
+   *  questions: `agentBranchId` is the only stable one — a branch can be renamed — `agentBranch` is
+   *  what to show a person, and `agentCompany` is what to count by, since Dexters alone has 72
+   *  branches and grouping on the branch name would report it as 72 agents. */
+  agentBranchId: number | null;
+  agentBranch: string | null;
+  agentCompany: string | null;
+  /** The branch's own number, from contactInfo.telephoneNumbers.localNumber. The one field here
+   *  somebody acts on rather than reads: reaching out is a stage in the funnel. */
+  agentPhone: string | null;
   floorplans: Floorplan[];
   /** Gallery URLs, passed to the analyser. We store the URLs and never the images (ToS 13.4). */
   imageUrls: string[];

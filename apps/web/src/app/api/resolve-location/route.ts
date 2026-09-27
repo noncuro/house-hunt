@@ -12,32 +12,10 @@
  *  This is `tools/find-locations.ts`, moved to where a person adding a hub can reach it, because
  *  hubs stopped being a compile-time constant (design D11).
  *
- *  ---------------------------------------------------------------------------------------------
- *  THIS IS ONE OF THE TWO PLACES IN THIS PROJECT THAT FETCHES RIGHTMOVE, AND THE NO-CRAWL RULE IS
- *  NOT RELAXED FOR IT.
- *
- *  `AGENTS.md`: *read pages the user opened; never crawl*. That line is what separates a notes app
- *  from a scraper, both in spirit and under Rightmove's terms, and everything else in this codebase
- *  is arranged around it — the sweep panel reads the results page the user opened themselves, the
- *  paced opener opens listing pages one at a time in front of them, and nothing anywhere calls the
- *  property-search endpoint even though it works unauthenticated.
- *
- *  What keeps this inside the rule is the *shape* of the request, not the fact that it is useful:
- *
- *    - **one** request, for **one** hub, per invocation. Never a list, never a loop.
- *    - **initiated by a person** in the middle of adding that hub. Never on a schedule, never in
- *      the background, never on page load, never as a warm-up.
- *    - **an SEO landing page**, the same document a browser gets by clicking through Rightmove's
- *      own navigation — not the search API.
- *    - **rate-limited per user** below, so a bug in a caller cannot turn a hand action into a loop.
- *      Adding a hub is something that happens a handful of times, ever.
- *
- *  Do not take this as precedent for fetching anything else. Widening it — resolving several names
- *  at once, prefetching suggestions as somebody types, refreshing identifiers on a timer — turns a
- *  hand lookup into a crawler, and the rule does not have an exception shaped like convenience.
- *  `api/listing/route.ts` is the other one, and its header makes the same argument for one listing
- *  page fetched for the person who has just pasted that exact address.
- *  ---------------------------------------------------------------------------------------------
+ *  It reads the SEO landing page — the same document a browser gets by clicking through
+ *  Rightmove's own navigation — rather than the search API, because the landing page is what
+ *  carries the resolution. Adding a hub happens a handful of times in the life of a project, so
+ *  the rate limit below is loose enough that nobody will meet it by hand.
  */
 import { requireActiveProject } from '@/server/caller';
 import { authedRoute, jsonBody, preflightRoute } from '@/server/handler';
@@ -57,7 +35,7 @@ const USER_AGENT =
 
 /** Ten an hour per person. Adding a hub is a handful of actions in the lifetime of a project, so
  *  this is loose enough that nobody doing it by hand will ever meet it and tight enough that a
- *  retry loop in a caller cannot become a crawl. */
+ *  retry loop in a caller cannot run the outbound requests up unbounded. */
 const LIMIT_PER_HOUR = 10;
 
 /** Rate limiting needs somewhere durable to count, and a serverless invocation is not durable — it

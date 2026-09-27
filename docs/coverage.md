@@ -23,7 +23,7 @@ Timings are a warm run on a laptop, measured with `pnpm smoke:all`, and exclude 
 | `pnpm check:all` | 8s | Every pure function. No database, no browser. |
 | `pnpm smoke:search` | 2.2s | The extension on a saved search page. |
 | `pnpm smoke` | 6s, or ~35s cold | The extension's panel on a saved listing page. |
-| `pnpm smoke:web` | ~32s | The website, end to end, including joining and the refusals. |
+| `pnpm smoke:web` | ~35s | The website, end to end, including joining and the refusals. |
 | `pnpm check:rls` | ~25s | 180 assertions on the security boundary. |
 | `pnpm check:spend` | ~15s | 53 assertions on the cap arithmetic. |
 
@@ -52,8 +52,8 @@ because three findings from one run beat three runs.
 
 `smoke:web` takes names of its own, for the same reason and with the same rule about a name that
 matches nothing: `pnpm smoke:web list rating`, or `pnpm smoke:web joining`. The sections are
-`session`, `list`, `rating`, `funnel`, `table`, `map`, `triage`, `tabs`, `refusals` and `joining`, and they
-always run in that order. What a subset cannot skip is the setup — the fixture and a production
+`session`, `list`, `agents`, `sites`, `rating`, `funnel`, `offmarket`, `table`, `map`, `triage`,
+`sweep`, `tabs`, `refusals` and `joining`, and they always run in that order. What a subset cannot skip is the setup — the fixture and a production
 build of the website — so the saving is the browser work: six seconds for the list
 and the rating against forty for all of it, and nearly all of those six are the setup. Every
 section is written to stand on its own against that setup, which is what makes running one of them
@@ -76,6 +76,28 @@ sighting rows are genuine sightings of genuine listings, which is why it never *
 be quietly wrong), the default showing rules, verdict attribution, the compare table, the map
 *including its tiles*, triage in both layouts, the bulk-rate buttons being dead until something is
 ticked, and the Settings / Your Hunt / Sweep / Install tabs each rendering their own content.
+
+**Who is marketing the flats** (`smoke:web` `agents`, `check:shortlist`, `check:facts`) — the tally
+under the flats and the agent line on one of them, asserted across both lenses because it counts
+what the filter left on screen. The fixture is built so that grouping wrongly is visible either
+way: one company appears under two branch names and one of them twice, so grouping on the branch
+over-counts and failing to collapse the repeat over-counts differently. The flat itself carries all
+four tenancy terms, including the "Now" that a formatter treating it as a date would mangle, and a
+short let among long ones — the case `letLength` suppresses the common value in order to show.
+
+**Nine sites, and one flat arriving twice** (`check:sites`, `check:duplicates`, `smoke:web`
+`sites`) — `check:sites` decodes every saved agent page and asserts the same six things of each:
+the key round-trips, the address and the price are read, the postcode is a postcode, every image
+URL is absolute https, and `listingUrl` refuses seven doctored ids rather than rebuilding one. It
+prints a per-site coverage line, so a field a site stopped serving shows as a number that fell
+rather than as a failure — those pages are somebody else's and half the fields are optional by
+design.
+
+`smoke:web sites` is the part that needs a browser: a flat keyed `foxtons_chpk0000001` opens from a
+card, its link out goes to Foxtons and to that reference, and the duplicate note appears on both it
+and the Rightmove listing of the same flat. The two are on opposite sides of the funnel on purpose
+— a note that only found its pair inside the current filter would look right on every screen
+anybody built it on.
 
 **Rating a flat** (`smoke:web`) — the note typed in, the button clicked, and then the row read back
 out of Postgres: the rating, the note, the author, and the archived previous value in
@@ -146,6 +168,7 @@ worth work there is an issue, and the issue is where the argument for doing it b
 | **The other writes** (#126). Adding a place, adding a hub, marking off-market, renaming a project, and bulk rating from triage are all asserted up to the button and no further. | These are the actions, and the reads are well covered only because reads are easy to assert. Rating one flat now goes all the way to Postgres, which is the pattern the rest should follow: click it, then read the row. Bulk rating is the deliberate exception — it writes verdicts nobody gave onto every ticked row, so it stops at the buttons being dead until something is ticked. |
 | **The phone half** (#126). Nothing drives the service worker, the offline restore, the share target, adding a flat by address beyond `check:listing`'s URL cases, or what the map does on a phone. | This is the whole of what a phone can do, and every piece of it fails quietly: a worker that caches nothing looks identical online, a restore that never runs looks like a slow load, and a share target that mis-parses lands somebody on the shortlist with no dialog and nothing to read. Most of it is drivable offline and belongs in `smoke:web` — `?add=<url>` must open the dialog prefilled, a paste that is not a listing must say so before the button does anything, `navigator.serviceWorker.ready` must resolve and `caches.match('/')` must find the shell, and the offline notice must appear under `context.setOffline(true)` over a shortlist that is still drawn. The map's phone behaviour is the newest of these and is drivable the same way: under a mobile viewport a tap on a pin must open the flat's panel and draw no dock, and a refused position must put `map-locate-error` on the screen — Chromium will hand a stubbed or denied `geolocation` to a context, and `check:geo` pins only the sentence, never that anything renders it. The one part that cannot be smoked is the fetch itself: `app/api/listing` reaches Rightmove, and no harness here may (`tools/offline.ts`). |
 | **The gallery's gestures** (#126). `smoke` opens it from the panel and asserts it paints over Rightmove; nothing drives the swipe, and nothing opens it on the website at all. | The swipe was checked by hand in a mobile-emulated Chromium driving real touch input through CDP — Playwright's own `touchscreen` only taps — and the cases worth keeping are the ones that are not the happy path: a short drag must not advance *or* dismiss, a cancelled gesture must not advance either, the arrows must still work after a pointer capture, and a tap on the photo must not close it. `smoke:web` could open it from a card's photo strip. |
+| **The panel on the eight agents' sites** (#126). `check:sites` asserts that each adapter decodes its saved pages; nothing renders the panel on one, live or saved. | The two are different failures. Decoding is a pure function over a string and is well covered; mounting is `siteForUrl` against a live URL, a Shadow DOM on somebody else's stylesheet, and the manifest's generated match patterns — and a panel that does not appear looks exactly like a page the extension was never meant to run on. `pnpm smoke` could drive a saved agent page the way it drives a saved Rightmove one; the saved pages already exist, and the harness's own rule about reaching a live site is what stops it going further. |
 | **The Admin tab** (#126). | Never opened by anything. It is admin-only, so the fixture would need an admin — one row in `admin_email`. Users, projects, invites and spend all render there against real queries. |
 | **The extension↔website bridge** (#126). `check:bridge` covers the contract as a pure function; nothing drives the actual handover. | It is how signing in on the website signs the extension in. It fails silently by design (`handOver` swallows), so a break shows up as "the extension is signed out" days later. |
 | **The Detail view** and the flat-by-URL deep link (`#card-<id>`) (#126). | The reason the app moved off `chrome-extension://` at all. |

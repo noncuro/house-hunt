@@ -1,5 +1,5 @@
 import type { UiHost } from '@house-hunt/ui';
-import { listingUrl } from '@house-hunt/core';
+import { listingUrlForKey } from '@house-hunt/core';
 import { requestStationWalks } from '@house-hunt/core/db';
 import { queryClient } from './queries';
 import { openTabExtension } from './bridge';
@@ -34,7 +34,11 @@ export const webHost: UiHost = {
     }),
 
   async openListing(rightmoveId) {
-    const reply = await openTabExtension(listingUrl(rightmoveId));
+    // See the note on the extension's copy: the key names the site, and Rightmove's builder would
+    // turn an agent-site key into a plausible Rightmove URL for a flat that is not this one.
+    const url = listingUrlForKey(rightmoveId);
+    if (!url) throw new Error(`${rightmoveId} names no site this build reads`);
+    const reply = await openTabExtension(url);
     if (!reply) {
       throw new Error(
         'the extension did not answer — a fill-in run opens each listing in a background tab, ' +

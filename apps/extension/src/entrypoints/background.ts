@@ -62,7 +62,7 @@ import {
   setVerdict,
   spendSummary,
 } from '@house-hunt/core/db';
-import { logWarn } from '@house-hunt/core';
+import { logError, logWarn } from '@house-hunt/core';
 
 /** The analysis runs on the website's server, not on anyone's laptop.
  *
@@ -256,7 +256,16 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
 
     // --- listings --------------------------------------------------------------------------
     case 'listing:seen':
-      await recordProperty(request.listing);
+      // Logged here and not in the panel that asks: core emits through a sink, `configureCore()`
+      // registers it in this worker, and a line written from a content script goes nowhere. So a
+      // failure written there would be missing from the log at exactly the moment somebody was
+      // reading the log to find out why a listing never registered.
+      try {
+        await recordProperty(request.listing);
+      } catch (e) {
+        logError('listing', `could not record ${request.listing.rightmoveId}`, { error: describe(e) });
+        throw e;
+      }
       // The property row has to exist before the analyser can read its image URLs, so this is
       // deliberately after the upsert. Fire-and-forget: the panel polls for the result.
       void requestAnalysis(request.listing.rightmoveId);
@@ -420,8 +429,7 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       // Two shapes and no more: a listing, and a rental search (`find.html`, the one page the sweep
       // panel runs on). The second is what lets the website's unattended sweep page through a
       // neighbourhood's results the way a person would — each page is a real navigation in a real
-      // background tab, recorded by the same panel that records a page you opened yourself. Nothing
-      // here fetches a search; see the standing rule in AGENTS.md.
+      // background tab, recorded by the same panel that records a page you opened yourself.
       const isSearch = SEARCH_URL.test(request.url);
       if (!isSearch && !LISTING_URL.test(request.url)) {
         throw new Error(`refusing to open ${request.url} — only Rightmove listings and rental searches`);
