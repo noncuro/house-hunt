@@ -668,31 +668,39 @@ check(
 console.log('\nmissingFor');
 check(
   'a listing with photos and no analysis is still worth opening',
-  missingFor({ postcode: 'N1 7GU', imageCount: 12, analysed: false }),
+  missingFor({ postcode: 'N1 7GU', imageCount: 12, floorplanCount: 1, analysed: false }),
   ['photos not analysed yet'],
 );
 check(
   'and once analysed it is complete',
-  missingFor({ postcode: 'N1 7GU', imageCount: 12, analysed: true }),
+  missingFor({ postcode: 'N1 7GU', imageCount: 12, floorplanCount: 1, analysed: true }),
   [],
 );
 // The fix. A listing with no pictures cannot be analysed, so waiting for its analysis is waiting
 // for something no number of tabs will produce.
 check(
   'a listing with no photos at all is complete without an analysis',
-  missingFor({ postcode: 'W1H 1AA', imageCount: 0, analysed: false }),
+  missingFor({ postcode: 'W1H 1AA', imageCount: 0, floorplanCount: 0, analysed: false }),
   [],
 );
 // And not a general forgiveness of failure: photos that exist and have not been read are still a
 // reason to open it, which is what keeps a genuine timeout being retried.
+// A floorplan is an image too. Counting only `image_urls` reported a listing whose sole picture is
+// its floorplan as having nothing to analyse, so it was never offered and never read — and the
+// floorplan is the image the analyser most wants, since the room dimensions are only on it.
+check(
+  'a listing whose only image is a floorplan is worth opening',
+  missingFor({ postcode: 'N1 7GU', imageCount: 0, floorplanCount: 1, analysed: false }),
+  ['photos not analysed yet'],
+);
 check(
   'no postcode is always worth opening for',
-  missingFor({ postcode: null, imageCount: 0, analysed: false }),
+  missingFor({ postcode: null, imageCount: 0, floorplanCount: 0, analysed: false }),
   ['no postcode read from the listing'],
 );
 check(
   'and both can be missing at once',
-  missingFor({ postcode: null, imageCount: 3, analysed: false }),
+  missingFor({ postcode: null, imageCount: 3, floorplanCount: 0, analysed: false }),
   ['no postcode read from the listing', 'photos not analysed yet'],
 );
 

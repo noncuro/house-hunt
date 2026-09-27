@@ -13,10 +13,9 @@
  *  holds from a completely independent source. Two sources agreeing to a tenth of a mile is the
  *  actual verification; the identifier alone would just be a number someone wrote down.
  *
- *  This is a development-time tool, run once per hub and then not again until a hub changes.
- *  Nothing in the extension resolves a location at runtime. One page fetch per hub, spaced out,
- *  is the same act as opening each of them in a browser tab — it is not the search endpoint, and
- *  it is not a crawl.
+ *  This is a development-time tool, run once per hub and then not again until a hub changes. One
+ *  page fetch per hub, spaced out, and it reads the SEO landing page rather than the search
+ *  endpoint — the landing page is the thing that carries the resolution.
  *
  *    pnpm find:locations                    # re-check all five
  *    pnpm find:locations Kentish-Town-Station Tufnell-Park-Station

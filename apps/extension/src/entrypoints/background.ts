@@ -429,8 +429,7 @@ async function handle(request: Request): Promise<ResponseMap[Request['type']]> {
       // Two shapes and no more: a listing, and a rental search (`find.html`, the one page the sweep
       // panel runs on). The second is what lets the website's unattended sweep page through a
       // neighbourhood's results the way a person would — each page is a real navigation in a real
-      // background tab, recorded by the same panel that records a page you opened yourself. Nothing
-      // here fetches a search; see the standing rule in AGENTS.md.
+      // background tab, recorded by the same panel that records a page you opened yourself.
       const isSearch = SEARCH_URL.test(request.url);
       if (!isSearch && !LISTING_URL.test(request.url)) {
         throw new Error(`refusing to open ${request.url} — only Rightmove listings and rental searches`);

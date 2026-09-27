@@ -26,6 +26,9 @@ import {
   type Stage,
 } from '@house-hunt/core';
 import {
+  availableFrom,
+  availableOn,
+  depositAmount,
   duplicateIds,
   groupOf,
   parseMonthlyPrice,
@@ -611,6 +614,45 @@ function buildColumns(
       label: 'Furnished',
       value: (e) => e.furnishType,
       render: (e) => e.furnishType ?? dash('Not stated on the listing.'),
+    },
+    {
+      // Sorts on the company rather than the branch, so one agent's flats gather even when they
+      // came from three of its offices — which is the question this column answers. The branch is
+      // what gets shown, because it is what tells two Dexters listings apart.
+      key: 'agent',
+      label: 'Agent',
+      offByDefault: true,
+      value: (e) => e.agentCompany,
+      render: (e) => e.agentBranch ?? e.agentCompany ?? dash('Not read from the listing.'),
+    },
+    {
+      key: 'deposit',
+      label: 'Deposit',
+      numeric: true,
+      offByDefault: true,
+      value: (e) => e.deposit,
+      render: (e) =>
+        depositAmount(e.deposit)?.replace(' deposit', '') ?? dash('Not stated on the listing.'),
+    },
+    {
+      // A to H is a real order and it is the one that matters — a band is a bill.
+      key: 'councilTax',
+      label: 'Council tax',
+      offByDefault: true,
+      value: (e) => e.councilTaxBand,
+      render: (e) => e.councilTaxBand ?? dash('Not stated on the listing.'),
+    },
+    {
+      // Sorted on `availableOn`, not on the text: "Now" is the soonest and has to sort that way,
+      // and a flat whose date we cannot read sorts as unknown rather than as far future.
+      key: 'available',
+      label: 'Available',
+      numeric: true,
+      offByDefault: true,
+      value: (e) => availableOn(e.letAvailableDate),
+      render: (e) =>
+        availableFrom(e.letAvailableDate)?.replace(/^Available /, '') ??
+        dash('Not stated on the listing.'),
     },
   ];
 

@@ -25,7 +25,7 @@ import { db, ensureSession } from './client';
 import { requireSession } from './session';
 import { callRoute } from './route';
 import { MIN_PASSWORD_LENGTH } from '../contracts';
-import { rightmoveListingId } from '../listing';
+import { isSiteId, siteForUrl, type SiteId } from '../sites';
 import { logWarn } from '../log';
 import type {
   AddListingResult,
@@ -379,6 +379,9 @@ export async function recordProperty(listing: Listing): Promise<boolean> {
     p_project_id: projectId,
     p_property: {
       rightmove_id: listing.rightmoveId,
+      // `site` and `external_id` are deliberately not sent: they are generated columns, read off
+      // the key by the database, and sending them would be a second copy of the same fact that a
+      // future edit could put out of step.
       url: listing.url,
       postcode: listing.postcode,
       display_address: listing.displayAddress,
@@ -395,6 +398,14 @@ export async function recordProperty(listing: Listing): Promise<boolean> {
       floorplan_url: listing.floorplans[0]?.url ?? null,
       furnish_type: listing.furnishType,
       listing_update: listing.listingUpdate,
+      let_available_date: listing.letAvailableDate,
+      deposit: listing.deposit,
+      let_type: listing.letType,
+      council_tax_band: listing.councilTaxBand,
+      agent_branch_id: listing.agentBranchId,
+      agent_branch: listing.agentBranch,
+      agent_company: listing.agentCompany,
+      agent_phone: listing.agentPhone,
       // Stored so the analyser can read it. Two of the five amenities are only ever stated here.
       // `last_seen_at` is not passed: `record_property` stamps it itself, in the same transaction
       // as the project link, so a client clock cannot disagree with the row it wrote.
@@ -426,19 +437,21 @@ export async function recordProperty(listing: Listing): Promise<boolean> {
  *  `record_property`.
  *
  *  The URL is checked here as well as on the server. Not belt-and-braces: a paste that is a search
- *  page, or a link to the agent's own site, is by far the commonest mistake, and answering it from
- *  the field the reader is looking at beats a round trip to be told the same thing. The server's
- *  check is the one that matters — this one is only allowed to be a *quicker* no, never a yes the
- *  server would refuse.
+ *  page, or a link to a site nobody has written an adapter for, is by far the commonest mistake, and
+ *  answering it from the field the reader is looking at beats a round trip to be told the same
+ *  thing. The server's check is the one that matters — this one is only allowed to be a *quicker*
+ *  no, never a yes the server would refuse, which is why both ends call `siteForUrl` rather than
+ *  each carrying their own idea of what a listing address looks like.
  */
 export async function addListingByUrl(url: string): Promise<AddListingResult> {
-  const id = rightmoveListingId(url);
-  if (!id) return { status: 'not-a-listing' };
+  const found = siteForUrl(url);
+  if (!found) return { status: 'not-a-listing' };
+  const id = found.key;
 
   await requireSession();
   const projectId = await activeProjectId();
 
-  // Asked before the fetch, so a flat this hunt already has costs nobody a request to Rightmove,
+  // Asked before the fetch, so a flat this hunt already has costs nobody a request to the site,
   // which is the common case when somebody shares a link that has already been round the group.
   const { data: existing, error: lookupError } = await db()
     .from('project_property')
@@ -475,8 +488,8 @@ export async function addListingByUrl(url: string): Promise<AddListingResult> {
   if (reply?.status === 'withdrawn') return { status: 'withdrawn', rightmoveId: reply.rightmoveId ?? id };
   if (reply?.status !== 'read' || !reply.listing) {
     // Including `unreadable`, whose message names what failed to decode. Said rather than
-    // swallowed: this is the shape that means Rightmove has changed the page, and the panel on the
-    // laptop is about to stop working too.
+    // swallowed: this is the shape that means the site has changed the page, and on Rightmove it
+    // means the panel on the laptop is about to stop working too.
     return { status: 'failed', message: reply?.message ?? 'that listing could not be read' };
   }
 
@@ -1066,6 +1079,10 @@ export function toAnalysis(data: Record<string, any>): Analysis {
  *  back to Rightmove. Read by the shortlist page. */
 export interface ShortlistEntry {
   rightmoveId: string;
+  /** Which site the flat was read from. Carried so a view can say where a flat came from without
+   *  splitting the key, and so the duplicate note can compare a Rightmove flat against an agent's
+   *  own page for the same place. */
+  site: SiteId;
   url: string;
   displayAddress: string;
   postcode: string | null;
@@ -1080,6 +1097,17 @@ export interface ShortlistEntry {
   /** Rightmove's own URLs. We link and display; we never re-host (their ToS 13.4). */
   imageUrls: string[];
   furnishType: string | null;
+  /** The tenancy's own terms, as the listing states them. `letAvailableDate` is text because the
+   *  page says "Now" as often as a date — see the `Listing` field it comes from. */
+  letAvailableDate: string | null;
+  deposit: number | null;
+  letType: string | null;
+  councilTaxBand: string | null;
+  /** Who is marketing it. `agentBranchId` is the stable one, `agentCompany` the one to count by. */
+  agentBranchId: number | null;
+  agentBranch: string | null;
+  agentCompany: string | null;
+  agentPhone: string | null;
   listingUpdate: string | null;
   nearestStations: Station[];
   lastSeenAt: string;
@@ -1107,7 +1135,7 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
   const { data, error } = await db()
     .from('property')
     .select(
-      'rightmove_id, url, display_address, postcode, price, bedrooms, bathrooms, floor_area_sqft, floor_area_source, floorplan_url, image_urls, furnish_type, listing_update, nearest_stations, last_seen_at, latitude, longitude, postcode_lat, postcode_lon, verdict(*), property_stage(*), ' +
+      'rightmove_id, site, url, display_address, postcode, price, bedrooms, bathrooms, floor_area_sqft, floor_area_source, floorplan_url, image_urls, furnish_type, let_available_date, deposit, let_type, council_tax_band, agent_branch_id, agent_branch, agent_company, agent_phone, listing_update, nearest_stations, last_seen_at, latitude, longitude, postcode_lat, postcode_lon, verdict(*), property_stage(*), ' +
         // Named columns, not `*` — see `ANALYSIS_COLUMNS` for the two this leaves behind and why.
         `property_analysis(${ANALYSIS_COLUMNS}), project_property!inner(project_id, last_seen_at)`,
     )
@@ -1144,6 +1172,9 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
 
     return {
       rightmoveId: row.rightmove_id,
+      // Defaulted rather than trusted: a row written before the column existed has no site, and it
+      // is Rightmove's — every row predating multi-site is.
+      site: isSiteId(row.site) ? row.site : 'rightmove',
       url: row.url,
       displayAddress: row.display_address,
       postcode: row.postcode,
@@ -1155,6 +1186,14 @@ export async function getShortlist(): Promise<ShortlistEntry[]> {
       floorplanUrl: row.floorplan_url,
       imageUrls: (row.image_urls ?? []) as string[],
       furnishType: row.furnish_type ?? null,
+      letAvailableDate: row.let_available_date ?? null,
+      deposit: row.deposit ?? null,
+      letType: row.let_type ?? null,
+      councilTaxBand: row.council_tax_band ?? null,
+      agentBranchId: row.agent_branch_id ?? null,
+      agentBranch: row.agent_branch ?? null,
+      agentCompany: row.agent_company ?? null,
+      agentPhone: row.agent_phone ?? null,
       listingUpdate: row.listing_update ?? null,
       nearestStations: (row.nearest_stations ?? []) as Station[],
       // This project's last sighting, not the global one. `property.last_seen_at` is bumped by

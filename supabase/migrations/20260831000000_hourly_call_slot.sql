@@ -6,9 +6,8 @@
 -- concurrency rather than by the limit.
 --
 -- Neither shape was new — both predate the move to Vercel routes and were ported unchanged — and a
--- handful of extra requests in a burst does not breach anything. A caller stuck in a retry loop
--- does, and the no-crawl rule those limits enforce (`resolve-location/route.ts`) is the thing that
--- is worth defending against exactly that.
+-- handful of extra requests in a burst costs nothing worth counting. A caller stuck in a retry loop
+-- does, and bounding what one account can send is what these limits are for.
 --
 -- This is `claim_analysis`'s argument on a cheaper resource: an advisory lock held for the
 -- transaction is what makes the read and the write one step. It is deliberately *not* the same

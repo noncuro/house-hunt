@@ -36,6 +36,8 @@ const missing = [
   listing.nearestStations.length === 0 && 'nearestStations',
   listing.floorArea === null && 'floorArea',
   listing.floorplans.length === 0 && 'floorplans',
+  listing.agentBranch === null && 'agentBranch',
+  listing.agentBranchId === null && 'agentBranchId',
 ].filter((x): x is string => typeof x === 'string');
 
 console.log(missing.length === 0 ? '\nAll fields present.' : `\nEmpty (may be genuine): ${missing.join(', ')}`);

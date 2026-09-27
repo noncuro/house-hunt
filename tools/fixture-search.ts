@@ -6,9 +6,9 @@
  *  `sweepSearchUrl` the panel puts in its links, so the saved page is exactly the page the sweep
  *  opens.
  *
- *  One page, one hub, when you ask for it. Not a crawl: this is the same act as opening the
- *  search in a browser and hitting save, and it exists so `check:sweep` and `smoke:search` can
- *  run against a real page without touching the network.
+ *  One page, one hub, when you ask for it — the same act as opening the search in a browser and
+ *  hitting save. It exists so `check:sweep` and `smoke:search` can run against a real page without
+ *  touching the network.
  *
  *    pnpm fixture:search "Hampstead"
  */
@@ -16,18 +16,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SWEEP_HUBS } from '../packages/core/src/hubs';
 import { sweepSearchUrl, WIDEST_WINDOW } from '../packages/core/src/sweep';
-
-/** The filters this harness searches with. A hunt's criteria are project data now and there is no
- *  built-in band to fall back on (see `RENTAL_SEARCH`), so a harness has to state its own — the
- *  same standing as its use of `SEED_HUBS`, and it must never be read by a surface. */
-const HARNESS_CRITERIA = {
-  minPrice: '4000',
-  maxPrice: '6000',
-  minBedrooms: '1',
-  maxBedrooms: '3',
-  radius: '1.0',
-  _includeLetAgreed: 'on',
-};
+import { HARNESS_CRITERIA } from './harness-criteria';
 
 const wanted = process.argv[2];
 if (!wanted) {

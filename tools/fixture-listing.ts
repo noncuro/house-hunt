@@ -6,8 +6,8 @@
  *  command never parsed — `pnpm fixture <id>` failed with a shell syntax error, which meant the
  *  fixture the smoke harness needs could not be produced at all.
  *
- *  One page, when you ask for it, by id — the same act as opening the listing and hitting save.
- *  Never a crawl (AGENTS.md): nothing in the extension fetches Rightmove, and this is run by hand.
+ *  One page, when you ask for it, by id — the same act as opening the listing and hitting save,
+ *  and run by hand.
  *
  *    pnpm fixture 88023648
  */

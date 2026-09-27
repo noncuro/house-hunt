@@ -4,7 +4,7 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   MIN_PASSWORD_LENGTH,
-  listingUrl,
+  listingUrlForKey,
   type AdminAction,
   type AdminProject,
   type AdminUser,
@@ -975,9 +975,9 @@ function Charges({
                   <td>{named(row.userId, userName)}</td>
                   <td>{named(row.projectId, projectName)}</td>
                   <td>
-                    {row.rightmoveId ? (
+                    {row.rightmoveId && listingUrlForKey(row.rightmoveId) ? (
                       <a
-                        href={listingUrl(row.rightmoveId)}
+                        href={listingUrlForKey(row.rightmoveId)!}
                         target="_blank"
                         rel="noopener"
                       >

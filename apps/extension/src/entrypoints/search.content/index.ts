@@ -91,9 +91,8 @@ function decorate(card: HTMLElement, rightmoveId: string, verdict: Verdict | nul
     event.preventDefault();
     event.stopPropagation();
     // A listing we have never opened has no stored data and no photo analysis, and the only way
-    // to get them is for the page to be loaded so the content script can read __PAGE_MODEL. We
-    // open it in a foreground tab rather than fetching it in the background: fetching pages
-    // nobody asked for is the crawling behaviour this extension deliberately avoids.
+    // to get them from here is for the page to be loaded so the content script can read
+    // __PAGE_MODEL.
     window.open(`https://www.rightmove.co.uk/properties/${rightmoveId}`, '_blank', 'noopener');
   });
   bar.append(open);

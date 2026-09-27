@@ -1,5 +1,5 @@
 import type { UiHost } from '@house-hunt/ui';
-import { listingUrl } from '@house-hunt/core';
+import { listingUrlForKey } from '@house-hunt/core';
 import { send } from './messages';
 
 /** What the shared components need, done the way an extension does it.
@@ -25,7 +25,12 @@ export const extensionHost: UiHost = {
   },
 
   async openListing(rightmoveId) {
-    const reply = await send({ type: 'tab:open', url: listingUrl(rightmoveId) });
+    // Built by whichever site owns the key. Rightmove's is a bare number and everyone else's is
+    // prefixed, so a builder that assumed Rightmove would open a page on the wrong site — under a
+    // path that exists — rather than fail.
+    const url = listingUrlForKey(rightmoveId);
+    if (!url) throw new Error(`${rightmoveId} names no site this build reads`);
+    const reply = await send({ type: 'tab:open', url });
     if (!reply.ok) throw new Error(reply.error);
   },
 };

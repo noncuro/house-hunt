@@ -118,7 +118,7 @@ const context = await chromium.launchPersistentContext(PROFILE, {
     // worth running on time. Without them a window that nobody is looking at — which is every
     // window here, and under Xvfb there is not even a compositor to say otherwise — gets its
     // timers throttled towards one tick a minute. That does not fail: it produces a sweep that
-    // crawls, blows the budget below, and looks from the log like Rightmove being slow.
+    // inches along, blows the budget below, and looks from the log like Rightmove being slow.
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',

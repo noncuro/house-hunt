@@ -3,9 +3,14 @@
  *  pin down — and both are places where being quietly wrong looks exactly like being right. */
 import {
   addressBesidePostcode,
+  availableFrom,
+  availableOn,
   claimLabel,
+  councilTax,
+  depositAmount,
   dedupeStations,
   flagsFor,
+  letLength,
   relativeUpdate,
   resolveReading,
 } from '../packages/core/src/facts';
@@ -506,6 +511,51 @@ check(
   2,
 );
 check('nothing in, nothing out', dedupeStations([]), []);
+
+// --------------------------------------------------------------------------------------------- //
+// The tenancy terms. Each is absent on a real share of listings, so the case that matters most in
+// every one of these is what "we were not told" renders as — null, never a zero or a blank that
+// reads as an answer.
+
+check('"Now" is a phrase, not a date', availableFrom('Now'), 'Available now');
+check('and it is matched however it is cased', availableFrom('now'), 'Available now');
+check('a date is passed through as written', availableFrom('10/09/2026'), 'Available 10/09/2026');
+// An agent who typed words has said something; reformatting or dropping it loses the only answer
+// there is.
+check('and so is anything else the agent wrote', availableFrom('Late September'), 'Available Late September');
+check('nothing stated is nothing shown', availableFrom(null), null);
+check('and neither is an empty string', availableFrom('   '), null);
+
+check('a deposit is money, grouped', depositAmount(1615), '£1,615 deposit');
+check('and rounded to the pound', depositAmount(1615.4), '£1,615 deposit');
+// The half of listings that state no deposit must not read as a free one.
+check('no deposit stated is not a deposit of zero', depositAmount(null), null);
+check('and neither is a stated zero', depositAmount(0), null);
+
+check('a band is labelled', councilTax('B'), 'Council tax B');
+check('and upper-cased', councilTax('b'), 'Council tax B');
+check('no band is no label', councilTax(null), null);
+
+// "Long term" is on every fixture and on every default lettings search, so it is a word that never
+// varies sitting beside ones that do.
+check('the ordinary tenancy length is not worth the space', letLength('Long term'), null);
+check('however it is punctuated', letLength('long-term'), null);
+// A short let changes what the flat is, so that is the case the column exists for.
+check('a short let is', letLength('Short term'), 'Short term');
+check('nothing stated is nothing shown', letLength(null), null);
+
+// Sorting. "Now" is the soonest and has to order that way against real dates.
+check('"Now" sorts before every date', availableOn('Now'), 0);
+check('a UK date is read day-first', availableOn('10/09/2026'), Date.UTC(2026, 8, 10));
+check('...and 09/10 is a different day', availableOn('09/10/2026'), Date.UTC(2026, 9, 9));
+// Date.UTC rolls 31/02 forward to 03/03 rather than refusing it, which would sort a flat by a day
+// nobody wrote.
+check('a date that does not exist is unknown, not rolled forward', availableOn('31/02/2026'), null);
+check('a month past twelve is unknown', availableOn('10/13/2026'), null);
+// Words are not a position in an ordering. Unknown sorts as unknown, like every other unmeasured
+// figure here.
+check('prose has no place in the order', availableOn('Late September'), null);
+check('and nothing stated has none either', availableOn(null), null);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

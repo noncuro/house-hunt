@@ -33,10 +33,12 @@ import {
   type Stage,
 } from '@house-hunt/core';
 import type { ShortlistEntry } from '@house-hunt/core/db';
+import { Duplicates } from './Duplicates';
+import { AgentLine, TermFacts } from './Letting';
 import { CardMap } from '@/components/CardMap';
 import { RightmoveLink } from '@/components/RightmoveLink';
 import { pinColour } from '@/lib/pin';
-import { useTravel } from '@/lib/queries';
+import { useDuplicates, useTravel } from '@/lib/queries';
 import { isSurprise } from '@/lib/score';
 
 /** The whole of one flat: what it is, where it is, what the photos said, and what we think.
@@ -77,6 +79,9 @@ export function FlatDetail({
    *  pane is open at all, so having to scroll past the photographs to reach three buttons is the
    *  scroll you do on every single flat. */
   verdictFirst = false,
+  /** Opens another flat in the panel, for the "this may be the same flat as" note. Absent where
+   *  there is no panel to open, in which case the note still says what it found and names it. */
+  onOpenDuplicate,
 }: {
   entry: ShortlistEntry;
   places: Place[];
@@ -94,9 +99,11 @@ export function FlatDetail({
   stageSaving?: Stage | null;
   keys?: boolean;
   verdictFirst?: boolean;
+  onOpenDuplicate?: (rightmoveId: string) => void;
 }) {
   const [galleryAt, setGalleryAt] = useState<number | null>(null);
   const images = galleryFor(entry);
+  const duplicates = useDuplicates(entry);
 
   // Space opens the photographs and closes them again, on the screen where both hands are already on
   // the keyboard. It is the one thing triage could not do without reaching for the mouse: the flags
@@ -206,6 +213,7 @@ export function FlatDetail({
           <SizeFact source={sizeOf(entry)} missing="size unknown" />
         </span>
         {entry.furnishType && <span>{entry.furnishType}</span>}
+        <TermFacts entry={entry} />
         {/* The same fix the panel draws, from the same component — a detail view that placed a flat
             against a different neighbourhood would be the two views disagreeing about where it is. */}
         <HubFact point={point} hubs={hubs} approximate={!entry.exactLocation} />
@@ -221,6 +229,12 @@ export function FlatDetail({
           </Hint>
         )}
       </p>
+
+      <AgentLine entry={entry} />
+
+      {/* Under the agent and above the map: this is a question about which listing you are looking
+          at, so it belongs with the other facts about the listing rather than with the flat. */}
+      <Duplicates duplicates={duplicates} onOpen={onOpenDuplicate} />
 
       {/* The streets, under the sentence that names the neighbourhood and above everything the
           photographs said. Behind a button — see `CardMap` — and coloured by the verdict, so the

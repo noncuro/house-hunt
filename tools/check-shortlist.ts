@@ -10,7 +10,7 @@
  *  The third case is the one that reads as a feature working. `null` is the set not having loaded,
  *  which is not an empty set: hiding on a fact we do not have yet blanks flats for the first frame
  *  of every load and, after a failed read, leaves a shortlist quietly missing things. */
-import { groupOf, withoutOffMarket } from '../packages/core/src/shortlist';
+import { agentTally, groupOf, withoutOffMarket } from '../packages/core/src/shortlist';
 import type { Verdict } from '../packages/core/src/types';
 
 let failures = 0;
@@ -56,6 +56,52 @@ check(
 );
 // Nothing is lost by hiding: the flat is still there to be shown again, with everything it had.
 check('the hidden flat is intact when it comes back', withoutOffMarket(entries, gone, true)[1], entries[1]);
+
+// --------------------------------------------------------------------------------------------- //
+// Who is marketing the pile.
+
+/** Only the four fields the tally reads; the rest of a ShortlistEntry is irrelevant to it. */
+const marketed = (company: string | null, branch: string | null, phone: string | null) =>
+  ({ agentCompany: company, agentBranch: branch, agentPhone: phone }) as never;
+
+const pile = [
+  marketed('Dexters', 'Dexters, Clapham High Street', '020 1111 1111'),
+  marketed('Dexters', 'Dexters, Balham', '020 2222 2222'),
+  marketed('Dexters', 'Dexters, Clapham High Street', '020 1111 1111'),
+  marketed('Foxtons', 'Foxtons, Islington', '020 3333 3333'),
+  marketed(null, null, null),
+];
+
+check('the commonest agent comes first', agentTally(pile).map((a) => [a.company, a.count]), [
+  ['Dexters', 3],
+  ['Foxtons', 1],
+]);
+// The point of grouping on the company: three flats from two Dexters offices is one agent to ring,
+// and branch-grouping would have reported it as two.
+check('branches of one company are one row', agentTally(pile)[0].branches, [
+  'Dexters, Clapham High Street',
+  'Dexters, Balham',
+]);
+check('and a repeated branch is listed once', agentTally(pile)[0].branches.length, 2);
+check('the first number seen is the one offered', agentTally(pile)[0].phone, '020 1111 1111');
+// A flat whose agent was never read is not an agent called "". It is left out entirely, and the
+// screen states the shortfall separately — a blank row would read as a flat sold by nobody.
+check('a flat with no agent is not a row', agentTally(pile).length, 2);
+check('nothing marketed is no rows at all', agentTally([]), []);
+// Two agents on the same count must not swap places between renders.
+check(
+  'a tie is broken alphabetically, not by chance',
+  agentTally([marketed('Savills', null, null), marketed('Portico', null, null)]).map((a) => a.company),
+  ['Portico', 'Savills'],
+);
+// Rightmove pads these — `companyTradingName` arrives as "Oyster Properties " — and an untrimmed
+// key would report one agent twice.
+check(
+  'a padded name is the same agent',
+  agentTally([marketed('Oyster Properties ', null, null), marketed('Oyster Properties', null, null)])
+    .map((a) => [a.company, a.count]),
+  [['Oyster Properties', 2]],
+);
 
 if (failures > 0) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall ok');

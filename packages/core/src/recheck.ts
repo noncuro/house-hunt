@@ -5,10 +5,8 @@
  *  three weeks to be taken, to be reduced, or to be quietly withdrawn — and nothing in this app
  *  would notice, because every fact about a flat is written once, when somebody opens it, and never
  *  looked at again. The shortlist can therefore show a flat at a price that no longer exists, on a
- *  market it has already left, and give no sign of it.
- *
- */
-import { parseMonthlyPrice } from './predict';
+ *  market it has already left, and give no sign of it. */
+import { parseMonthlyPrice } from './facts';
 import type { ShortlistEntry } from './db/supabase';
 import type { Rating } from './types';
 

@@ -7,6 +7,7 @@ import {
   groupOf,
   hubsFromProject,
   parseFilter,
+  isPropertyKey,
   splitByHuntFloor,
   withKnownPlaces,
   type ArchiveReason,
@@ -346,8 +347,8 @@ function App({
   const jumped = useRef<string | null>(null);
   useEffect(() => {
     if (!all) return;
-    const id = /^#card-(\d+)$/.exec(window.location.hash)?.[1];
-    if (!id || jumped.current === id) return;
+    const id = /^#card-([A-Za-z0-9_-]+)$/.exec(window.location.hash)?.[1];
+    if (!id || !isPropertyKey(id) || jumped.current === id) return;
     if (!all.some((e) => e.rightmoveId === id)) return;
     jumped.current = id;
     setOpen(id);
@@ -537,6 +538,10 @@ function App({
           score={scores?.get(openEntry.rightmoveId)}
           offMarket={offMarket ?? EMPTY}
           onClose={() => setOpen(null)}
+          // The duplicate note points the panel at the other listing rather than opening a second
+          // one: the act is comparing this flat against that flat, and two panels would be two
+          // things to close.
+          onOpen={setOpen}
           // j and k walk the list the panel was opened from, so reading through a shortlist is one
           // key rather than close, find where you were, open the next. The lens's order, which is
           // the order Places is showing: the table's own sort and the cards' grouping rearrange

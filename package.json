@@ -38,6 +38,8 @@
     "check:shortlist": "tsx tools/check-shortlist.ts",
     "check:sort": "tsx tools/check-sort.ts",
     "check:sweep": "tsx tools/check-sweep.ts",
+    "check:sites": "tsx tools/check-sites.ts",
+    "check:duplicates": "tsx tools/check-duplicates.ts",
     "check:png": "tsx tools/check-png.ts",
     "check:analysis": "tsx tools/check-analysis.ts",
     "check:predict": "tsx tools/check-predict.ts",
@@ -45,7 +47,7 @@
     "check:spend": "tsx tools/check-spend.ts",
     "check:rls": "tsx tools/check-rls.ts",
     "check:zip": "tsx tools/check-zip.ts",
-    "check:all": "pnpm check && pnpm check:one-client && pnpm check:migrations && pnpm check:routes && pnpm check:bridge && pnpm check:area && pnpm check:facts && pnpm check:filter && pnpm check:listing && pnpm check:invite && pnpm check:platform && pnpm check:geo && pnpm check:hubs && pnpm check:stage && pnpm check:shortlist && pnpm check:sort && pnpm check:sweep && pnpm check:travel && pnpm check:png && pnpm check:analysis && pnpm check:predict && pnpm check:withdrawn && pnpm check:recheck && pnpm check:full-sweep && pnpm check:zip",
+    "check:all": "pnpm check && pnpm check:one-client && pnpm check:migrations && pnpm check:routes && pnpm check:bridge && pnpm check:area && pnpm check:facts && pnpm check:filter && pnpm check:listing && pnpm check:invite && pnpm check:platform && pnpm check:geo && pnpm check:hubs && pnpm check:stage && pnpm check:shortlist && pnpm check:sort && pnpm check:sweep && pnpm check:sites && pnpm check:duplicates && pnpm check:travel && pnpm check:png && pnpm check:analysis && pnpm check:predict && pnpm check:withdrawn && pnpm check:recheck && pnpm check:full-sweep && pnpm check:zip",
     "smoke": "tsx tools/smoke.ts",
     "smoke:search": "tsx tools/smoke-search.ts",
     "smoke:web": "tsx tools/smoke-web.ts",
@@ -54,7 +56,8 @@
     "icons": "tsx tools/app-icons.ts",
     "find:locations": "tsx tools/find-locations.ts",
     "fixture": "tsx tools/fixture-listing.ts",
-    "fixture:search": "tsx tools/fixture-search.ts"
+    "fixture:search": "tsx tools/fixture-search.ts",
+    "fixture:site": "tsx tools/fixture-site.ts"
   },
   "devDependencies": {
     "@supabase/supabase-js": "^2.112.2",

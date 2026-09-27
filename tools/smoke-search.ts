@@ -213,7 +213,10 @@ try {
   const incompleteHere =
     Number(/(\d+)\s*new/.exec(flat)?.[1] ?? 0) + Number(/(\d+)\s*part-filled/.exec(flat)?.[1] ?? 0);
   const pointer = (await panel.innerText()).replace(/\s+/g, ' ');
-  const points = /Sweep tab on the website/i.test(pointer);
+  // The tab by name, not merely "the website". Sending somebody to the wrong tab is the failure
+  // worth catching: filling in moved from this panel to Triage, and a pointer at the Sweep tab —
+  // where it used to live — reads as correct and wastes the trip.
+  const points = /Triage on the website/i.test(pointer);
   console.log(`${incompleteHere} not filled in here; points at the website: ${points}`);
   if (incompleteHere > 0 && !points) {
     problems.push('the panel does not say where filling in happens now');
@@ -227,7 +230,11 @@ try {
   // against what the project actually has, because the constant and the database agreeing is a
   // property of this fixture rather than of the feature: for any other project the old assertion
   // was true of nothing on screen.
-  await panel.locator('.rm-sweep-hubs summary').click();
+  // Set rather than clicked. A `<details>` renders its summary and nothing else until it is open,
+  // so the rows have to be asked for — and `open` is DOM state React carries across a re-render,
+  // so a click that lands either side of one toggles it shut and this reads the empty list as a
+  // panel that lost its hubs.
+  await panel.locator('.rm-sweep-hubs').evaluate((el: HTMLDetailsElement) => { el.open = true; });
   const hubs = await panel.locator('.rm-sweep-hubs li').allInnerTexts();
   console.log('\nhubs:', hubs.map((h) => h.replace(/\s+/g, ' ').trim()).join(' | '));
   if (hubs.length !== projectHubs.length) {
