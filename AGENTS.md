@@ -466,11 +466,16 @@ instead (`.github/workflows/check.yml`: `check:all`, `check:rls`, `check:spend`,
   The panel is in a Shadow DOM — go through `.shadowRoot`.
 - Read the database directly when a view disagrees with reality:
   `PGPASSWORD="$SUPABASE_DB_PASSWORD" psql -h aws-1-eu-west-1.pooler.supabase.com -p 5432 -U "postgres.$SUPABASE_PROJECT_REF" -d postgres`
-  (source `.env` first). **Migrations reach production on merge** —
-  `.github/workflows/migrate.yml` runs `supabase db push` when anything under `supabase/migrations/`
-  lands on main, and `supabase_migrations.schema_migrations` records what has run. Applying one by
-  hand with `psql -f` still works and is what you want mid-review, but the table has to agree
-  afterwards or the workflow will run it a second time.
+  (source `.env` first; `SETUP.md` says where the password comes from on a new machine).
+  **Migrations reach production on merge**, applied by Supabase's GitHub integration ("Deploy to
+  production", branch `main`, working directory `.`), which posts its result as the "Supabase
+  Preview" check on the merge commit. `supabase_migrations.schema_migrations` records what has run.
+  It runs each migration file in one transaction, so nothing that refuses a transaction block
+  (`create index concurrently`) belongs in one. Applying one by hand with `psql -f` still works and
+  is what you want mid-review, but the table has to agree afterwards or the integration will run it
+  a second time. This replaced a `migrate.yml` Action running `supabase db push`, which needed the
+  database password as a repository secret and went red the first time the password changed, while
+  the integration applied the same migration beside it.
 - Admin identity and the first project's name are deployment data, not schema: copy
   `supabase/seed.example.sql` to the untracked `supabase/seed.sql`.
 - Extraction broke after a Rightmove deploy? `pnpm check:extractor`, then

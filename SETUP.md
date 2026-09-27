@@ -107,6 +107,38 @@ Two things that look like bugs and are not:
   $20 a month against the owner's OpenAI key. Past that, analysis stops until the month rolls over;
   everything else — travel times, verdicts, the shortlist, sweeping — keeps working.
 
+## The database from a new machine (admins only)
+
+Nothing in production uses the database password. The website and the extension reach Supabase with
+API keys, and migrations are applied by Supabase's GitHub integration on merge. The password is for
+the tools that connect with `psql` from your own machine: the connection line in AGENTS.md,
+`tools/set-password.py` and `tools/export-predict-fixture.ts`.
+
+1. Put it in the workspace-root `.env` as `SUPABASE_DB_PASSWORD`, next to `SUPABASE_PROJECT_REF`.
+   Take it from wherever you keep it. If nobody has it, reset it in the Supabase dashboard (Project
+   Settings → Database → Reset database password). A reset breaks every other machine's copy and
+   nothing else.
+2. Type it into `.env` and nowhere else: not a chat with an agent, not a command-line argument. The
+   tools read it from `.env`, so it never needs to appear on screen.
+3. Check it:
+
+   ```bash
+   set -a; . ./.env; set +a
+   PGPASSWORD="$SUPABASE_DB_PASSWORD" psql -h aws-1-eu-west-1.pooler.supabase.com -p 5432 \
+     -U "postgres.$SUPABASE_PROJECT_REF" -d postgres \
+     -c "select max(version) from supabase_migrations.schema_migrations"
+   ```
+
+   It should print the newest file under `supabase/migrations/`.
+
+A login per machine, so that one machine's password could be revoked alone, was tried and does not
+work here. Migrations have to act as `postgres`, because `postgres` owns every table and function
+they alter, and that needs a role that is a member of `postgres`. On Supabase's Postgres (16 and
+later), granting membership in `postgres` needs the ADMIN option on it, which only Supabase's internal
+superuser holds, so `create role … in role postgres` fails with "permission denied to grant role".
+The local stack runs Postgres 15, where the same statement succeeds, so trying it locally proves
+nothing.
+
 ## Deploying the server side (admins only)
 
 There is nothing to deploy but the website. `analyse`, `invite`, `password`, `resolve-location`,
