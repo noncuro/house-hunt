@@ -2,46 +2,29 @@
  *
  *    pnpm icons
  *
- *  The mark is two letters and a rounded square — six rectangles and four corners — so drawing it is
- *  shorter than the alternatives and better than all of them. Scaling the extension's 128px icon up
- *  to 512 gives a blurred or blocky 512; keeping four hand-made PNGs in the repo gives four files
- *  that drift the day the colour changes; adding a rasteriser gives this repo an image dependency it
- *  has managed to avoid everywhere else (`packages/core/src/png.ts` decodes floorplans by hand for
- *  the same reason). Every size here is drawn at its own resolution, so 512 is crisp because it was
- *  never 128.
- *
- *  The proportions and both colours are measured off `apps/extension/public/icon/128.png`, so the
- *  icon on the phone's home screen and the icon in Chrome's toolbar are the same mark. They are
- *  written down here as fractions of the canvas rather than pixels, which is what lets any size be
- *  drawn — and it is why this file, not the PNGs beside it, is where the mark is edited.
+ *  The mark itself — HH as two townhouses — is defined once in `packages/ui/src/mark.ts` as a list of
+ *  shapes, and `Mark.tsx` draws the same list as SVG for the app and the video. This file only
+ *  rasterises it. Keeping four hand-made PNGs in the repo gives four files that drift the day the
+ *  colour changes; adding a rasteriser gives this repo an image dependency it has managed to avoid
+ *  everywhere else (`packages/core/src/png.ts` decodes floorplans by hand for the same reason).
+ *  Every size here is drawn at its own resolution, so 512 is crisp because it was never 128.
  */
 import { deflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { CANVAS, TILE_RADIUS, houses, tile, type Fill, type RGBA, type Shape } from '../packages/ui/src/mark';
 
-const GREEN = [0x1a, 0x7f, 0x5a] as const;
-const WHITE = [0xfd, 0xfe, 0xfe] as const;
-
-/** Every measurement, as a fraction of the canvas, from the 128px original. */
-const RADIUS = 23 / 128;
-const GLYPH_TOP = 40 / 128;
-const GLYPH_BOTTOM = 87 / 128;
-const GLYPH_LEFT = 21 / 128;
-const STROKE = 9 / 128;
-const LETTER = 38 / 128;
-const GAP = 11 / 128;
-
-/** Drawn at four times the size and averaged down. The only curves here are the four corners, and
- *  without this they are a staircase — which on a 192px icon is the first thing anybody sees. */
+/** Drawn at four times the size and averaged down. Without it every curve — the tile's corners, the
+ *  arches — is a staircase, which on a 192px icon is the first thing anybody sees. */
 const SUPERSAMPLE = 4;
 
 interface Icon {
   file: string;
   size: number;
   /** Maskable icons are cropped by the platform to whatever shape it likes — a circle on most
-   *  Android launchers — so they are drawn full-bleed with the mark pulled into the middle 80%,
+   *  Android launchers — so they are drawn full-bleed with the houses pulled into the middle 80%,
    *  which is the safe zone every launcher shape contains. An icon that is merely rounded gets its
-   *  own corners cut off and its letters clipped; hence two files rather than one clever one. */
+   *  own corners cut off and its chimneys clipped; hence two files rather than one clever one. */
   maskable?: boolean;
   /** iOS composites the home-screen icon onto white and rounds it itself, so transparent corners
    *  come out as white triangles. Full-bleed, square, no alpha. */
@@ -58,67 +41,90 @@ const ICONS: Icon[] = [
 /** RGBA, one byte a channel, row-major. */
 function draw({ size, maskable = false, opaque = false }: Icon): Uint8Array {
   const s = size * SUPERSAMPLE;
+  const unit = CANVAS / s;
   // Full-bleed for the two the platform will crop or composite itself; rounded for the ones drawn
   // as they are.
-  const radius = maskable || opaque ? 0 : RADIUS * s;
-  // The safe zone, and the only thing `maskable` changes about the letters: same mark, 80% of the
-  // size, still centred.
-  const scale = maskable ? 0.8 : 1;
-  const inset = ((1 - scale) * s) / 2;
-  const at = (fraction: number) => inset + fraction * s * scale;
-
-  const top = at(GLYPH_TOP);
-  const bottom = at(GLYPH_BOTTOM);
-  const stroke = STROKE * s * scale;
-  const bar = (top + bottom - stroke) / 2;
-
-  /** Both H's: two uprights and a crossbar each, laid out from the left edge. */
-  const letters = [0, 1].map((n) => at(GLYPH_LEFT) + n * (LETTER + GAP) * s * scale);
-  const glyph: Array<[number, number, number, number]> = letters.flatMap((x) => {
-    const right = x + LETTER * s * scale - stroke;
-    return [
-      [x, top, stroke, bottom - top],
-      [right, top, stroke, bottom - top],
-      [x, bar, LETTER * s * scale, stroke],
-    ] as Array<[number, number, number, number]>;
-  });
+  const shapes = [tile(maskable || opaque ? 0 : TILE_RADIUS), ...houses(maskable ? 0.8 : 1)];
+  const background = colourAt(shapes[0]!.fill, CANVAS / 2);
 
   const big = new Uint8Array(s * s * 4);
   for (let y = 0; y < s; y++) {
+    const cy = (y + 0.5) * unit;
     for (let x = 0; x < s; x++) {
-      const inside = radius === 0 || withinRounded(x + 0.5, y + 0.5, s, radius);
-      const on = glyph.some(([gx, gy, gw, gh]) => x >= gx && x < gx + gw && y >= gy && y < gy + gh);
+      const cx = (x + 0.5) * unit;
+      // Outside the tile's corner: transparent, but still *paper*. The colour of a fully
+      // transparent pixel is supposed to be unobservable, and here it is not — `downsample`
+      // averages the four channels independently, so a pixel half inside the corner takes half its
+      // colour from whatever is written here. Left at zero that is black, and the corners come out
+      // with a dark fringe. Writing the tile's own colour underneath is what makes the average
+      // come back right.
+      let [r, g, b] = background;
+      let a = 0;
+      for (const shape of shapes) {
+        if (!inside(shape, cx, cy)) continue;
+        const [sr, sg, sb, sa] = colourAt(shape.fill, cy);
+        r = r + (sr - r) * sa;
+        g = g + (sg - g) * sa;
+        b = b + (sb - b) * sa;
+        a = a + (1 - a) * sa;
+      }
       const o = (y * s + x) * 4;
-      // Outside the corner: transparent, but still *green*. The colour of a fully transparent pixel
-      // is supposed to be unobservable, and here it is not — `downsample` averages the four
-      // channels independently, so a pixel that is half inside the corner takes half its colour
-      // from whatever is written here. Left at the zeroes the array starts as, that is black, and
-      // the rounded corners came out with a dark fringe: (13,64,45) at alpha 128 where the green
-      // beside it is (26,127,90). Writing the green under the transparency is what makes the
-      // average come back green.
-      const [r, g, b] = on && inside ? WHITE : GREEN;
       big[o] = r;
       big[o + 1] = g;
       big[o + 2] = b;
-      big[o + 3] = inside ? 255 : 0;
+      big[o + 3] = Math.round(a * 255);
     }
   }
 
   return downsample(big, s, size, opaque);
 }
 
-/** Is this point inside a rounded square? Only the four corner discs need testing — everywhere else
- *  the square's own edges decide it. */
-function withinRounded(x: number, y: number, s: number, r: number): boolean {
-  const cx = Math.min(Math.max(x, r), s - r);
-  const cy = Math.min(Math.max(y, r), s - r);
+function colourAt(fill: Fill, y: number): RGBA {
+  if (!('from' in fill)) return fill;
+  const t = Math.min(1, Math.max(0, (y - fill.y0) / (fill.y1 - fill.y0)));
+  return [0, 1, 2, 3].map((i) => fill.from[i]! + (fill.to[i]! - fill.from[i]!) * t) as unknown as RGBA;
+}
+
+function inside(shape: Shape, x: number, y: number): boolean {
+  switch (shape.kind) {
+    case 'rect':
+      return withinRounded(x - shape.x, y - shape.y, shape.w, shape.h, shape.r);
+    case 'disc':
+      return (x - shape.cx) ** 2 + (y - shape.cy) ** 2 <= shape.r ** 2;
+    case 'half':
+      return y <= shape.cy && (x - shape.cx) ** 2 + (y - shape.cy) ** 2 <= shape.r ** 2;
+    case 'arch': {
+      const spring = shape.top + shape.r;
+      if (y > shape.bottom || Math.abs(x - shape.cx) > shape.r) return false;
+      return y >= spring || (x - shape.cx) ** 2 + (y - spring) ** 2 <= shape.r ** 2;
+    }
+    case 'poly': {
+      // Even-odd crossings of a ray to the right.
+      let within = false;
+      const pts = shape.points;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const [xi, yi] = pts[i]!;
+        const [xj, yj] = pts[j]!;
+        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) within = !within;
+      }
+      return within;
+    }
+  }
+}
+
+/** Is this point inside a rounded rectangle whose top-left is the origin? Only the four corner discs
+ *  need testing — everywhere else the rectangle's own edges decide it. */
+function withinRounded(x: number, y: number, w: number, h: number, r: number): boolean {
+  if (x < 0 || y < 0 || x > w || y > h) return false;
+  const cx = Math.min(Math.max(x, r), w - r);
+  const cy = Math.min(Math.max(y, r), h - r);
   return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
 }
 
 /** Box filter, averaging in straight (non-premultiplied) RGBA.
  *
  *  Averaging straight RGBA is wrong in general — a transparent pixel's colour gets a vote it has not
- *  earned. It is right here only because `draw` writes the background green underneath the
+ *  earned. It is right here only because `draw` writes the tile's colour underneath the
  *  transparent corners rather than leaving them black, so the vote is for the colour that is
  *  actually there. That is a property of the caller, not of this function; see the note in `draw`. */
 function downsample(big: Uint8Array, from: number, to: number, opaque: boolean): Uint8Array {
@@ -150,8 +156,8 @@ function downsample(big: Uint8Array, from: number, to: number, opaque: boolean):
   return out;
 }
 
-/** A minimal PNG: one IHDR, one IDAT, one IEND, filter byte 0 on every row. No filtering because
- *  these are flat colours that zlib already compresses to nothing — the 512 comes out under 3kB. */
+/** A minimal PNG: one IHDR, one IDAT, one IEND, filter byte 0 on every row. No filtering: these are
+ *  mostly flat colours and soft gradients, and zlib does well enough on them unaided. */
 function encode(size: number, pixels: Uint8Array): Buffer {
   const stride = size * 4;
   const raw = Buffer.alloc((stride + 1) * size);

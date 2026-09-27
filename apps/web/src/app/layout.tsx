@@ -1,10 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { IBM_Plex_Mono, IBM_Plex_Sans, Newsreader } from 'next/font/google';
-import { Providers } from './providers';
 import '@house-hunt/ui/tokens.css';
-import './style.css';
-import './hunt.css';
-import './admin.css';
 
 /** Three faces, each doing one job.
  *
@@ -85,9 +81,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en-GB" className={`${sans.variable} ${serif.variable} ${mono.variable}`}>
-      <body>
-        <Providers>{children}</Providers>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -30,3 +30,5 @@ export * from './Stations';
 export * from './Toast';
 export * from './Verdict';
 export * from './ratings';
+export * from './Mark';
+export { splashAt, SPLASH_MS, type SplashFrame } from './mark';

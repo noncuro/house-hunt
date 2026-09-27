@@ -311,7 +311,7 @@ because a shortlist with no project is not an empty shortlist — each state has
 testid.
 
 **Still true because** `apps/extension/src/entrypoints/panel.content/index.tsx:23,143`,
-`apps/web/src/server/caller.ts`, `apps/web/src/app/page.tsx:70`,
+`apps/web/src/server/caller.ts`, `apps/web/src/app/(app)/page.tsx:70`,
 `apps/web/src/screens/Project.tsx:60,661`.
 
 ### D14 — Deferred: any signed-in user can enumerate the shared fact tables
@@ -356,3 +356,17 @@ The migrations are the contract. The departures that still constrain changes:
 
 **Still true because** `supabase/migrations/20260809310000_multi_tenant.sql:1301-1523`,
 `apps/web/src/screens/Admin.tsx:245`, `packages/core/src/hubs.ts:97`.
+
+### D16 — The landing page is `/welcome`, and `/` sends strangers there itself
+
+`/` stays the app: it is the manifest's `start_url`, the share target, the extension's button and
+the one page the service worker keeps for offline. The landing page is a separate static route,
+`/welcome`, in its own route group so it renders without `Providers` (which draw nothing until a
+Supabase client exists) and is the only path left out of `noindex`. The server cannot tell a
+stranger from a member, because the session is in `localStorage`, so the app's layout decides with
+an inline script before hydration: the bare `/`, online, with no session, is replaced by
+`/welcome`. Anything with a query or a hash is left alone, which is why the landing page's buttons
+go to `/?signin` and why offline never redirects to a page the worker has not cached.
+
+**Still true because** `apps/web/src/app/(app)/layout.tsx`, `apps/web/src/app/(site)/welcome/page.tsx`,
+`apps/web/next.config.ts` (the `X-Robots-Tag` rule), `tools/smoke-web.ts` (`signedOutPage`).

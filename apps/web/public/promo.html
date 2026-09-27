@@ -1,0 +1,62 @@
+<!doctype html>
+<!-- House hunt in forty-five seconds. Served at /promo (the rewrite is in next.config.ts); the video
+     is rendered by tools/promo. A static file with no script, so the site's CSP needs nothing new:
+     the video, the poster and this page are all this origin. -->
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>House hunt</title>
+    <meta name="description" content="A shared shortlist for finding somewhere to live in London." />
+    <meta property="og:title" content="House hunt" />
+    <meta property="og:description" content="A shared shortlist for finding somewhere to live in London." />
+    <meta property="og:image" content="https://www.househunt.london/promo.jpg" />
+    <meta property="og:video" content="https://www.househunt.london/promo.mp4" />
+    <meta name="theme-color" content="#faf8f4" />
+    <link rel="icon" href="/icon-192.png" />
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #faf8f4;
+        color: #241f1a;
+        font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+      main {
+        width: min(1100px, 100% - 32px);
+        padding: 32px 0;
+      }
+      video {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border-radius: 12px;
+        border: 1px solid #e5e0d6;
+        box-shadow: 0 30px 80px rgb(36 31 26 / 14%);
+        background: #faf8f4;
+      }
+      p {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px 24px;
+        margin: 20px 4px 0;
+        color: #6e6659;
+      }
+      a {
+        color: #241f1a;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <video src="/promo.mp4" poster="/promo.jpg" controls playsinline preload="metadata"></video>
+      <p>
+        <span>A shared shortlist for finding somewhere to live in London.</span>
+        <a href="https://github.com/noncuro/house-hunt">github.com/noncuro/house-hunt</a>
+      </p>
+    </main>
+  </body>
+</html>

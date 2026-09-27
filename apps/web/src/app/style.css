@@ -3168,3 +3168,44 @@ input[type='checkbox'] {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+
+/* The launch screen (`components/Splash.tsx`): the mark, the glass finding the lit window, the
+   name under it, on the page's own paper, over the app while it loads. */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: var(--paper);
+  transition: opacity 280ms ease;
+}
+.splash-out {
+  opacity: 0;
+  pointer-events: none;
+}
+.splash svg {
+  filter: drop-shadow(0 16px 30px rgba(26, 127, 90, 0.22));
+}
+.splash-name {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 30px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  animation: splash-name 600ms 300ms ease both;
+}
+@keyframes splash-name {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-name {
+    animation: none;
+  }
+}
