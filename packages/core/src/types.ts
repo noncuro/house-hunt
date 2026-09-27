@@ -51,7 +51,7 @@ export interface Listing {
   /** Off the market according to the page itself: `propertyData.status.archived` is true (and
    *  `published` false) once a listing is let-agreed or taken down. Null when the status object is
    *  absent — unknown, not "still on" — so a missing field never auto-withholds a live flat. The
-   *  panel uses this to offer to mark the flat off the market without anyone having to notice. */
+   *  panel marks the flat off the market when this is true, so nobody has to notice. */
   archived: boolean | null;
   /** When this page was read, ISO. Stamped by the decoder rather than by whoever writes the row,
    *  because those are different moments and only the first one orders two readings: a tab open

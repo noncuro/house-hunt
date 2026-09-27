@@ -104,9 +104,6 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
    *  withheld only from the score's training. Read alongside the verdict, toggled from the footer. */
   const [offMarket, setOffMarket] = useState(false);
   const [offMarketBusy, setOffMarketBusy] = useState(false);
-  /** The page says this flat is off the market and it is rated love/maybe, so we ask before
-   *  withholding it rather than doing so silently — see the load effect. */
-  const [confirmOffMarket, setConfirmOffMarket] = useState(false);
   /** The listing on screen right now, readable from inside an in-flight async without capturing a
    *  stale closure — so a reply for the flat you were just looking at cannot paint the one you have
    *  moved on to. */
@@ -140,11 +137,10 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
     setAnalysis(null);
     setRequest(null);
     setAnalysisPending(true);
-    // A new listing starts from "on the market, not asking, not saving" until its own read lands.
+    // A new listing starts from "on the market, not saving" until its own read lands.
     // Left standing, a failed off-market read would keep the previous flat's status on screen.
     setOffMarket(false);
     setOffMarketBusy(false);
-    setConfirmOffMarket(false);
 
     // A new listing starts outside the funnel until its own read lands, for the same reason the
     // analysis is cleared above: the previous flat's viewing is not this one's.
@@ -194,17 +190,17 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
         setNote(current?.note ?? '');
       }
 
-      // Off the market according to Rightmove itself, and not yet marked here. The model should not
-      // keep learning from a flat nobody can rent, so mark it — but only silently when there is no
-      // positive verdict to reconsider. A love or maybe is a judgement worth a second thought before
-      // it is withheld, so that case asks first (the banner below) rather than acting behind your
-      // back. Decided here, with the verdict and the off-market state both freshly in hand, so it
-      // cannot race a half-loaded verdict and auto-withhold a flat it should have asked about.
-      setConfirmOffMarket(false);
+      // Off the market according to Rightmove itself, and not yet marked here: mark it, whatever it
+      // is rated. This used to ask first for a love or maybe, and the re-check sweep reopens exactly
+      // those flats — liking one is what puts it in the funnel — in tabs nobody is watching, so the
+      // question sat unanswered and nothing was ever marked. Nothing is lost by not asking: the
+      // verdict and the stage are kept, the toast says it happened, and "Back on the market" undoes
+      // it.
       if (listing.archived === true && offState.ok && !offState.data) {
-        const rating = existing.ok ? (existing.data[0]?.rating ?? null) : null;
-        if (rating === 'love' || rating === 'maybe') setConfirmOffMarket(true);
-        else void toggleOffMarket(true, 'Marked off the market — it is no longer listed on Rightmove.');
+        void toggleOffMarket(true, {
+          announce: 'Marked off the market — it is no longer listed on Rightmove.',
+          reason: 'Off the market on Rightmove',
+        });
       }
 
       // Surface the first failure. Swallowing these is what made a broken background look like an
@@ -388,13 +384,14 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
 
   /** Off the market, or back on. Optimistic like the rating, and rolled back with a toast on
    *  failure — a control that silently did nothing would leave the model still learning from a flat
-   *  you meant to withhold. */
-  async function toggleOffMarket(next: boolean, announce?: string) {
+   *  you meant to withhold. `auto` is the panel acting on what the page said rather than on a click:
+   *  it says so in a toast, and records a reason so `training_exclusion` can tell the two apart. */
+  async function toggleOffMarket(next: boolean, auto?: { announce: string; reason: string }) {
     const id = listing.rightmoveId;
     const before = offMarket;
     setOffMarketBusy(true);
     setOffMarket(next);
-    const result = await send({ type: 'off-market:set', rightmoveId: id, off: next });
+    const result = await send({ type: 'off-market:set', rightmoveId: id, off: next, reason: auto?.reason });
     // The listing may have changed while this was in flight; a late reply must not touch the flat
     // now on screen, whose own load has already set its state.
     if (listingIdRef.current !== id) return;
@@ -405,7 +402,7 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
       return;
     }
     // An auto-mark says so, so an unattended change is never silent; a hand toggle stays quiet.
-    if (announce) push(announce);
+    if (auto) push(auto.announce);
   }
 
   if (collapsed) {
@@ -638,30 +635,6 @@ export function Panel({ listing, user }: { listing: Listing; user: SessionUser }
           setNote={setNote}
           save={(text) => verdict && void rate(verdict.rating, text)}
         />
-        {/* The page said this is off the market and it is rated love/maybe, so we asked rather than
-            withdrawing that judgement from the model behind your back. */}
-        {confirmOffMarket && (
-          <div className="rm-offmarket-confirm">
-            <span>
-              This listing looks off the market. Mark it off — kept in your shortlist, just withheld
-              from the score?
-            </span>
-            <div className="rm-offmarket-confirm-actions">
-              <button
-                type="button"
-                onClick={() => {
-                  setConfirmOffMarket(false);
-                  void toggleOffMarket(true);
-                }}
-              >
-                Mark off
-              </button>
-              <button type="button" onClick={() => setConfirmOffMarket(false)}>
-                Keep on
-              </button>
-            </div>
-          </div>
-        )}
         {/* Same control, and same rules for when it shows, as the website card — one renderer in
             packages/ui. Offered only where there is a positive verdict to withhold, or where it is
             already off. */}
