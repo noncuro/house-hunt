@@ -9,7 +9,7 @@
  *
  *    pnpm check:sweep [path/to/saved-search.html]
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SEED_HUBS, toSweepHub } from '../packages/core/src/hubs';
 import type { Place } from '../packages/core/src/types';
@@ -314,8 +314,11 @@ if (!existsSync(fixture)) {
     // On this saved page one card was first visible 27 days before the search and came back
     // anyway, because its price had been cut 5 days earlier. Asserting against `firstVisibleAt`
     // here would fail, and asserting nothing would have let the misreading through.
+    // Ages are taken from when the page was saved, not from today: against `Date.now()` this went
+    // red fourteen days after any save, with nothing about the reader having changed.
+    const savedAt = statSync(fixture).mtimeMs;
     const oldestBy = (pick: (c: SearchPage['cards'][number]) => string | null) =>
-      page.cards.map((c) => (Date.now() - new Date(pick(c)!).getTime()) / 86_400_000).reduce((a, b) => Math.max(a, b), 0);
+      page.cards.map((c) => (savedAt - new Date(pick(c)!).getTime()) / 86_400_000).reduce((a, b) => Math.max(a, b), 0);
     check(
       `nothing has changed longer ago than the ${page.maxDaysSinceAdded}-day window`,
       oldestBy((c) => c.listingUpdateAt) <= page.maxDaysSinceAdded! + 1,

@@ -28,7 +28,7 @@
     "apps/extension/src/lib/ui-host.ts": "7cdc25668cd5773ef55fc22667c55dd51693227e4ef0074e4516eed30013e0fb",
     "apps/extension/src/lib/web-app.ts": "1e7f143e24b0c14b5904d07c13781d50b3de328fa2fc7249e32194d477aeed70",
     "apps/extension/tsconfig.json": "bd6d16d37f11622dca4bbdc89b0c8e861cd1f2475b477be559588e911ac11c26",
-    "apps/extension/wxt.config.ts": "288a3a350881ec38ec2a9cfc2e5e290afa374a5d5ca0d7c854e8e57fba278e62",
+    "apps/extension/wxt.config.ts": "aa03960fd2d4086486f3d5f986399116507d6d2d1b99df05ff657c557390a4c3",
     "packages/core/package.json": "48d98d18d4e4583921f2bd34a66a0b42cec43600772ad945594980635815d7a9",
     "packages/core/src/analysis.ts": "1b586d2506e6fba66f9f8c09209e01980995c563de87d0f40179a1f6eaf916ee",
     "packages/core/src/bridge.ts": "4db8ecea8fa508cad61f21a1872d73ae042b9b760a6a401b4b42bc82a95e7a49",
@@ -129,6 +129,6 @@
     "icon/16.png": "0cf57f42e0911939c5110daa329391e8fee43b7917a27d831d867faeea5c8b94",
     "icon/32.png": "da90cc0d5e9c4f42a37e9e99382faa2064c3b5ea7cdff9a027771140472ad966",
     "icon/48.png": "024a0e6ecf9b4aa36acf9468b400d6eabf030e59d24c29c3a4594f0bfe213343",
-    "manifest.json": "3dcf1f1cff85d5e5611497f57f4e982eb17be878f74dfd56464430555d1df5e2"
+    "manifest.json": "80a623506b7d701931e5f3fe217c926e5115a5edda30ff44eddf56a17ea3e73f"
   }
 }

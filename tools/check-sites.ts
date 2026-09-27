@@ -31,6 +31,7 @@ import {
   SITE_IDS,
   SITES,
   type Site,
+  type SiteId,
 } from '../packages/core/src/sites';
 import { ListingWithdrawn } from '../packages/core/src/listing';
 import type { Listing } from '../packages/core/src/types';
@@ -175,15 +176,35 @@ for (const site of SITES) {
   );
 }
 
+/** One id of the right shape per site, read off the saved pages. Nothing fetches them and they are
+ *  not expected to still be on the market. A `Record` over `SiteId` so a new site cannot be added
+ *  without one — the skip line below used to fall back to `000000`, which Foxtons' `listingUrl`
+ *  rightly refuses, and on a machine with no saved pages (CI) the check threw instead of skipping. */
+const SAMPLE_ID: Record<SiteId, string> = {
+  rightmove: '91972128',
+  austinhomes: 'mount-pleasant-dorset-house-wc1x-3',
+  chestertons: '22062858',
+  dexters: '278989',
+  foxtons: 'chpk3392427',
+  johndwood: '20620728',
+  portico: 'pdu250192',
+  savills: 'gbisreclv675394l',
+  tkinternational: '24-maresfield-gardens-london-nw3-5sx',
+};
+
+// The URL the server fetches has to read back as the id it was built from, or `app/api/listing`
+// fetches a page and files it under a different key.
+for (const site of SITES) {
+  const id = SAMPLE_ID[site.id];
+  const back = site.listingId(site.listingUrl(id));
+  check(back === id, `${site.id}: listingId(listingUrl(${id})) gives it back${back === id ? '' : ` (got ${back})`}`);
+}
+
 // ------------------------------------------------------------------------------------------------
 // The adapters, against saved pages.
 // ------------------------------------------------------------------------------------------------
 
 console.log('\n— adapters —');
-
-/** Only so the skip line can print a URL of the right shape. Any live listing does — these are not
- *  expected to still be on the market, and nothing reads them. */
-const SAMPLE_ID: Partial<Record<string, string>> = { rightmove: '88023648' };
 
 const POSTCODE = /^[A-Z]{1,2}\d[A-Z\d]? \d[A-Z]{2}$/;
 const OUTCODE = /^[A-Z]{1,2}\d[A-Z\d]?$/;
@@ -197,7 +218,7 @@ for (const site of SITES) {
     skipped++;
     console.log(
       `skip ${site.id} — no .fixtures/sites/${site.id}.html ` +
-        `(pnpm fixture:site ${site.listingUrl(SAMPLE_ID[site.id] ?? '000000')} — any live listing will do)`,
+        `(pnpm fixture:site ${site.listingUrl(SAMPLE_ID[site.id])} — any live listing will do)`,
     );
     continue;
   }
